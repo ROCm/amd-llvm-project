@@ -589,7 +589,8 @@ template <class ELFT> void Writer<ELFT>::run() {
     return;
 
   if (!config->oFormatBinary) {
-    writeTrapInstr();
+    if (config->zSeparate != SeparateSegmentKind::None)
+      writeTrapInstr();
     writeHeader();
     writeSections();
   } else {
@@ -705,7 +706,7 @@ template <class ELFT> void Writer<ELFT>::addSectionSymbols() {
     });
     if (i == sec->sectionCommands.end())
       continue;
-    InputSection *isec = cast<InputSectionDescription>(*i)->sections[0];
+    InputSectionBase *isec = cast<InputSectionDescription>(*i)->sections[0];
 
     // Relocations are not using REL[A] section symbols.
     if (isec->type == SHT_REL || isec->type == SHT_RELA)
@@ -1500,6 +1501,12 @@ template <class ELFT> void Writer<ELFT>::resolveShfLinkOrder() {
     if (!(sec->flags & SHF_LINK_ORDER))
       continue;
 
+    // The ARM.exidx section use SHF_LINK_ORDER, but we have consolidated
+    // this processing inside the ARMExidxsyntheticsection::finalizeContents().
+    if (!config->relocatable && config->emachine == EM_ARM &&
+        sec->type == SHT_ARM_EXIDX)
+      continue;
+
     // Link order may be distributed across several InputSectionDescriptions
     // but sort must consider them all at once.
     std::vector<InputSection **> scriptSections;
@@ -1509,14 +1516,16 @@ template <class ELFT> void Writer<ELFT>::resolveShfLinkOrder() {
         for (InputSection *&isec : isd->sections) {
           scriptSections.push_back(&isec);
           sections.push_back(isec);
+
+          InputSection *link = isec->getLinkOrderDep();
+          if (!link->getParent())
+            error(toString(isec) + ": sh_link points to discarded section " +
+                  toString(link));
         }
       }
     }
 
-    // The ARM.exidx section use SHF_LINK_ORDER, but we have consolidated
-    // this processing inside the ARMExidxsyntheticsection::finalizeContents().
-    if (!config->relocatable && config->emachine == EM_ARM &&
-        sec->type == SHT_ARM_EXIDX)
+    if (errorCount())
       continue;
 
     llvm::stable_sort(sections, compareByFilePosition);
@@ -1894,6 +1903,8 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
   // SHFLinkOrder processing must be processed after relative section placements are
   // known but before addresses are allocated.
   resolveShfLinkOrder();
+  if (errorCount())
+    return;
 
   // This is used to:
   // 1) Create "thunks":
@@ -2223,7 +2234,8 @@ template <class ELFT> void Writer<ELFT>::fixSectionAlignments() {
       // maximum page size boundary so that we can find the ELF header at the
       // start. We cannot benefit from overlapping p_offset ranges with the
       // previous segment anyway.
-      if ((config->zSeparateCode && prev &&
+      if (config->zSeparate == SeparateSegmentKind::Loadable ||
+          (config->zSeparate == SeparateSegmentKind::Code && prev &&
            (prev->p_flags & PF_X) != (p->p_flags & PF_X)) ||
           cmd->type == SHT_LLVM_PART_EHDR)
         cmd->addrExpr = [] {
@@ -2332,7 +2344,8 @@ template <class ELFT> void Writer<ELFT>::assignFileOffsets() {
     // If this is a last section of the last executable segment and that
     // segment is the last loadable segment, align the offset of the
     // following section to avoid loading non-segments parts of the file.
-    if (config->zSeparateCode && lastRX && lastRX->lastSec == sec)
+    if (config->zSeparate != SeparateSegmentKind::None && lastRX &&
+        lastRX->lastSec == sec)
       off = alignTo(off, config->commonPageSize);
   }
 
@@ -2604,9 +2617,6 @@ static void fillTrap(uint8_t *i, uint8_t *end) {
 // We'll leave other pages in segments as-is because the rest will be
 // overwritten by output sections.
 template <class ELFT> void Writer<ELFT>::writeTrapInstr() {
-  if (!config->zSeparateCode)
-    return;
-
   for (Partition &part : partitions) {
     // Fill the last page.
     for (PhdrEntry *p : part.phdrs)

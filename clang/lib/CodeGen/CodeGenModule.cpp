@@ -459,10 +459,7 @@ void CodeGenModule::Release() {
   if (SanStats)
     SanStats->finish();
 
-  // Disable linker.options for HIP device compilation. This is a workaround
-  // to get things going until https://reviews.llvm.org/D57829 is committed.
   if (CodeGenOpts.Autolink &&
-      !(Context.getLangOpts().CUDAIsDevice && Context.getLangOpts().HIP) &&
       (Context.getLangOpts().Modules || !LinkerOptionsMetadata.empty())) {
     EmitModuleLinkOptions();
   }
@@ -5298,7 +5295,9 @@ void CodeGenModule::EmitObjCIvarInitializations(ObjCImplementationDecl *D) {
 // EmitLinkageSpec - Emit all declarations in a linkage spec.
 void CodeGenModule::EmitLinkageSpec(const LinkageSpecDecl *LSD) {
   if (LSD->getLanguage() != LinkageSpecDecl::lang_c &&
-      LSD->getLanguage() != LinkageSpecDecl::lang_cxx) {
+      LSD->getLanguage() != LinkageSpecDecl::lang_cxx &&
+      LSD->getLanguage() != LinkageSpecDecl::lang_cxx_11 &&
+      LSD->getLanguage() != LinkageSpecDecl::lang_cxx_14) {
     ErrorUnsupported(LSD, "linkage spec");
     return;
   }

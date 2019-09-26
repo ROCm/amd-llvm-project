@@ -1684,13 +1684,6 @@ void Clang::AddMIPSTargetArgs(const ArgList &Args,
     CmdArgs.push_back("hard");
   }
 
-  if (Arg *A = Args.getLastArg(options::OPT_mxgot, options::OPT_mno_xgot)) {
-    if (A->getOption().matches(options::OPT_mxgot)) {
-      CmdArgs.push_back("-mllvm");
-      CmdArgs.push_back("-mxgot");
-    }
-  }
-
   if (Arg *A = Args.getLastArg(options::OPT_mldc1_sdc1,
                                options::OPT_mno_ldc1_sdc1)) {
     if (A->getOption().matches(options::OPT_mno_ldc1_sdc1)) {
@@ -4831,6 +4824,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Forward -cl options to -cc1
   RenderOpenCLOptions(Args, CmdArgs);
+
+  if (Args.hasFlag(options::OPT_fhip_new_launch_api,
+                   options::OPT_fno_hip_new_launch_api, false))
+    CmdArgs.push_back("-fhip-new-launch-api");
 
   if (Arg *A = Args.getLastArg(options::OPT_fcf_protection_EQ)) {
     CmdArgs.push_back(
