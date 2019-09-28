@@ -16,6 +16,7 @@
 #include "clang/AST/DeclVisitor.h"
 #include "clang/AST/DeclarationName.h"
 #include "clang/AST/Expr.h"
+#include "clang/AST/ExprCXX.h"
 #include "clang/AST/ExprObjC.h"
 #include "clang/AST/NestedNameSpecifier.h"
 #include "clang/AST/PrettyPrinter.h"
@@ -449,6 +450,12 @@ Optional<ReferenceLoc> refInExpr(const Expr *E) {
                          E->getMemberNameInfo().getLoc(),
                          {E->getFoundDecl()}};
     }
+
+    void VisitOverloadExpr(const OverloadExpr *E) {
+      Ref = ReferenceLoc{E->getQualifierLoc(), E->getNameInfo().getLoc(),
+                         llvm::SmallVector<const NamedDecl *, 1>(
+                             E->decls().begin(), E->decls().end())};
+    }
   };
 
   Visitor V;
@@ -470,22 +477,36 @@ Optional<ReferenceLoc> refInTypeLoc(TypeLoc L) {
       Ref->Qualifier = L.getQualifierLoc();
     }
 
-    void VisitDeducedTemplateSpecializationTypeLoc(
-        DeducedTemplateSpecializationTypeLoc L) {
-      Ref = ReferenceLoc{
-          NestedNameSpecifierLoc(), L.getNameLoc(),
-          explicitReferenceTargets(DynTypedNode::create(L.getType()))};
-    }
-
     void VisitTagTypeLoc(TagTypeLoc L) {
       Ref =
           ReferenceLoc{NestedNameSpecifierLoc(), L.getNameLoc(), {L.getDecl()}};
     }
 
+    void VisitTemplateTypeParmTypeLoc(TemplateTypeParmTypeLoc L) {
+      Ref =
+          ReferenceLoc{NestedNameSpecifierLoc(), L.getNameLoc(), {L.getDecl()}};
+    }
+
     void VisitTemplateSpecializationTypeLoc(TemplateSpecializationTypeLoc L) {
+      // We must ensure template type aliases are included in results if they
+      // were written in the source code, e.g. in
+      //    template <class T> using valias = vector<T>;
+      //    ^valias<int> x;
+      // 'explicitReferenceTargets' will return:
+      //    1. valias with mask 'Alias'.
+      //    2. 'vector<int>' with mask 'Underlying'.
+      //  we want to return only #1 in this case.
       Ref = ReferenceLoc{
           NestedNameSpecifierLoc(), L.getTemplateNameLoc(),
-          explicitReferenceTargets(DynTypedNode::create(L.getType()))};
+          explicitReferenceTargets(DynTypedNode::create(L.getType()),
+                                   DeclRelation::Alias)};
+    }
+    void VisitDeducedTemplateSpecializationTypeLoc(
+        DeducedTemplateSpecializationTypeLoc L) {
+      Ref = ReferenceLoc{
+          NestedNameSpecifierLoc(), L.getNameLoc(),
+          explicitReferenceTargets(DynTypedNode::create(L.getType()),
+                                   DeclRelation::Alias)};
     }
 
     void VisitDependentTemplateSpecializationTypeLoc(
