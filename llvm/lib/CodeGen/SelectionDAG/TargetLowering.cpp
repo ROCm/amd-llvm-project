@@ -2589,8 +2589,9 @@ void TargetLowering::computeKnownBitsForTargetNode(const SDValue Op,
 }
 
 void TargetLowering::computeKnownBitsForTargetInstr(
-    Register R, KnownBits &Known, const APInt &DemandedElts,
-    const MachineRegisterInfo &MRI, unsigned Depth) const {
+    GISelKnownBits &Analysis, Register R, KnownBits &Known,
+    const APInt &DemandedElts, const MachineRegisterInfo &MRI,
+    unsigned Depth) const {
   Known.resetAll();
 }
 
@@ -6907,24 +6908,19 @@ void TargetLowering::expandSADDSUBO(
 
   SDValue Zero = DAG.getConstant(0, dl, LHS.getValueType());
 
-  //   LHSSign -> LHS >= 0
-  //   RHSSign -> RHS >= 0
-  //   SumSign -> Result >= 0
-  //
-  //   Add:
-  //   Overflow -> (LHSSign == RHSSign) && (LHSSign != SumSign)
-  //   Sub:
-  //   Overflow -> (LHSSign != RHSSign) && (LHSSign != SumSign)
-  SDValue LHSSign = DAG.getSetCC(dl, OType, LHS, Zero, ISD::SETGE);
-  SDValue RHSSign = DAG.getSetCC(dl, OType, RHS, Zero, ISD::SETGE);
-  SDValue SignsMatch = DAG.getSetCC(dl, OType, LHSSign, RHSSign,
-                                    IsAdd ? ISD::SETEQ : ISD::SETNE);
+  // For an addition, the result should be less than one of the operands (LHS)
+  // if and only if the other operand (RHS) is negative, otherwise there will
+  // be overflow.
+  // For a subtraction, the result should be less than one of the operands
+  // (LHS) if and only if the other operand (RHS) is (non-zero) positive,
+  // otherwise there will be overflow.
+  SDValue ResultLowerThanLHS = DAG.getSetCC(dl, OType, Result, LHS, ISD::SETLT);
+  SDValue ConditionRHS =
+      DAG.getSetCC(dl, OType, RHS, Zero, IsAdd ? ISD::SETLT : ISD::SETGT);
 
-  SDValue SumSign = DAG.getSetCC(dl, OType, Result, Zero, ISD::SETGE);
-  SDValue SumSignNE = DAG.getSetCC(dl, OType, LHSSign, SumSign, ISD::SETNE);
-
-  SDValue Cmp = DAG.getNode(ISD::AND, dl, OType, SignsMatch, SumSignNE);
-  Overflow = DAG.getBoolExtOrTrunc(Cmp, dl, ResultType, ResultType);
+  Overflow = DAG.getBoolExtOrTrunc(
+      DAG.getNode(ISD::XOR, dl, OType, ConditionRHS, ResultLowerThanLHS), dl,
+      ResultType, ResultType);
 }
 
 bool TargetLowering::expandMULO(SDNode *Node, SDValue &Result,
