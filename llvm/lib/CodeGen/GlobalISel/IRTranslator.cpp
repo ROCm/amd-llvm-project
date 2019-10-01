@@ -1143,6 +1143,11 @@ bool IRTranslator::translateMemFunc(const CallInst &CI,
     DstAlign = std::max<unsigned>(MSI->getDestAlignment(), 1);
   }
 
+  // We need to propagate the tail call flag from the IR inst as an argument.
+  // Otherwise, we have to pessimize and assume later that we cannot tail call
+  // any memory intrinsics.
+  ICall.addImm(CI.isTailCall() ? 1 : 0);
+
   // Create mem operands to store the alignment and volatile info.
   auto VolFlag = IsVol ? MachineMemOperand::MOVolatile : MachineMemOperand::MONone;
   ICall.addMemOperand(MF->getMachineMemOperand(
@@ -2188,6 +2193,20 @@ void IRTranslator::finalizeFunction() {
   FuncInfo.clear();
 }
 
+/// Returns true if a BasicBlock \p BB within a variadic function contains a
+/// variadic musttail call.
+static bool checkForMustTailInVarArgFn(bool IsVarArg, const BasicBlock &BB) {
+  if (!IsVarArg)
+    return false;
+
+  // Walk the block backwards, because tail calls usually only appear at the end
+  // of a block.
+  return std::any_of(BB.rbegin(), BB.rend(), [](const Instruction &I) {
+    const auto *CI = dyn_cast<CallInst>(&I);
+    return CI && CI->isMustTailCall();
+  });
+}
+
 bool IRTranslator::runOnMachineFunction(MachineFunction &CurMF) {
   MF = &CurMF;
   const Function &F = MF->getFunction();
@@ -2249,6 +2268,9 @@ bool IRTranslator::runOnMachineFunction(MachineFunction &CurMF) {
   SwiftError.setFunction(CurMF);
   SwiftError.createEntriesInEntryBlock(DbgLoc);
 
+  bool IsVarArg = F.isVarArg();
+  bool HasMustTailInVarArgFn = false;
+
   // Create all blocks, in IR order, to preserve the layout.
   for (const BasicBlock &BB: F) {
     auto *&MBB = BBToMBB[&BB];
@@ -2258,7 +2280,12 @@ bool IRTranslator::runOnMachineFunction(MachineFunction &CurMF) {
 
     if (BB.hasAddressTaken())
       MBB->setHasAddressTaken();
+
+    if (!HasMustTailInVarArgFn)
+      HasMustTailInVarArgFn = checkForMustTailInVarArgFn(IsVarArg, BB);
   }
+
+  MF->getFrameInfo().setHasMustTailInVarArgFunc(HasMustTailInVarArgFn);
 
   // Make our arguments/constants entry block fallthrough to the IR entry block.
   EntryBB->addSuccessor(&getMBB(F.front()));

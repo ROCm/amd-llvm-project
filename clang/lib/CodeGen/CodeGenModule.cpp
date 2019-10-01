@@ -3961,9 +3961,9 @@ void CodeGenModule::EmitGlobalVarDefinition(const VarDecl *D,
     return;
 
   llvm::Constant *Init = nullptr;
-  CXXRecordDecl *RD = ASTTy->getBaseElementTypeUnsafe()->getAsCXXRecordDecl();
   bool NeedsGlobalCtor = false;
-  bool NeedsGlobalDtor = RD && !RD->hasTrivialDestructor();
+  bool NeedsGlobalDtor =
+      D->needsDestruction(getContext()) == QualType::DK_cxx_destructor;
 
   const VarDecl *InitDecl;
   const Expr *InitExpr = D->getAnyInitializer(InitDecl);
