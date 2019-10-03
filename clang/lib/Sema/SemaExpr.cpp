@@ -4017,7 +4017,7 @@ static void captureVariablyModifiedType(ASTContext &Context, QualType T,
 #define NON_CANONICAL_TYPE(Class, Base)
 #define DEPENDENT_TYPE(Class, Base) case Type::Class:
 #define NON_CANONICAL_UNLESS_DEPENDENT_TYPE(Class, Base)
-#include "clang/AST/TypeNodes.def"
+#include "clang/AST/TypeNodes.inc"
       T = QualType();
       break;
     // These types are never variably-modified.
@@ -13470,7 +13470,6 @@ ExprResult Sema::CreateBuiltinUnaryOp(SourceLocation OpLoc,
     if (Input.isInvalid())
       return ExprError();
     resultType = Input.get()->getType();
-
     if (resultType->isDependentType())
       break;
     // C99 6.5.3.3p1. We allow complex int and float as a GCC extension.
@@ -13478,6 +13477,9 @@ ExprResult Sema::CreateBuiltinUnaryOp(SourceLocation OpLoc,
       // C99 does not support '~' for complex conjugation.
       Diag(OpLoc, diag::ext_integer_complement_complex)
           << resultType << Input.get()->getSourceRange();
+    else if (Input.get()->IgnoreParenImpCasts()->getType()->isBooleanType())
+      Diag(OpLoc, diag::warn_bitwise_negation_bool)
+          << FixItHint::CreateReplacement(OpLoc, "!");
     else if (resultType->hasIntegerRepresentation())
       break;
     else if (resultType->isExtVectorType() && Context.getLangOpts().OpenCL) {
