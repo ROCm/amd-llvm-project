@@ -3321,11 +3321,18 @@ def OMPDeclareVariant : InheritableAttr {
   let Documentation = [OMPDeclareVariantDocs];
   let Args = [
     ExprArgument<"VariantFuncRef">,
+    ExprArgument<"Score">,
     EnumArgument<"CtxSelectorSet", "CtxSelectorSetType",
                  [ "", "implementation"
                  ],
                  [
                    "CtxSetUnknown", "CtxSetImplementation"
+                 ]>,
+    EnumArgument<"CtxScore", "ScoreType",
+                 [ "", "score"
+                 ],
+                 [
+                   "ScoreUnknown", "ScoreSpecified"
                  ]>,
     EnumArgument<"CtxSelector", "CtxSelectorType",
                  [ "", "vendor"
@@ -3336,6 +3343,13 @@ def OMPDeclareVariant : InheritableAttr {
     StringArgument<"ImplVendor", 1>
   ];
   let AdditionalMembers = [{
+    void printScore(raw_ostream & OS, const PrintingPolicy &Policy) const {
+      if (const Expr *E = getScore()) {
+        OS << "score(";
+        E->printPretty(OS, nullptr, Policy);
+        OS << "):";
+      }
+    }
     void printPrettyPragma(raw_ostream & OS, const PrintingPolicy &Policy)
         const {
       assert(getCtxSelectorSet() != CtxSetUnknown &&
@@ -3353,6 +3367,7 @@ def OMPDeclareVariant : InheritableAttr {
         switch (getCtxSelector()) {
         case CtxVendor:
           OS << "vendor(";
+          printScore(OS, Policy);
           OS << getImplVendor();
           OS << ")";
           break;
