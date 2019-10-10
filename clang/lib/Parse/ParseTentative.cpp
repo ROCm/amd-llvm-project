@@ -683,11 +683,22 @@ Parser::isCXX11AttributeSpecifier(bool Disambiguate,
   // Check to see if this is a lambda-expression.
   // FIXME: If this disambiguation is too slow, fold the tentative lambda parse
   // into the tentative attribute parse below.
+  LambdaIntroducer Intro;
+  ParsedAttributes AttrIntro(AttrFactory);
+  if (!TryParseLambdaIntroducer(Intro, AttrIntro)) {
+    // A lambda cannot end with ']]', and an attribute must.
+    bool IsAttribute = Tok.is(tok::r_square);
+
+    if (IsAttribute)
+      // Case 1: C++11 attribute.
+      return CAK_AttributeSpecifier;
+  }
+
   {
     RevertingTentativeParsingAction LambdaTPA(*this);
     LambdaIntroducer Intro;
     LambdaIntroducerTentativeParse Tentative;
-    if (ParseLambdaIntroducer(Intro, &Tentative)) {
+    if (ParseLambdaIntroducer(Intro, AttrIntro, &Tentative)) {
       // We hit a hard error after deciding this was not an attribute.
       // FIXME: Don't parse and annotate expressions when disambiguating
       // against an attribute.
@@ -2036,6 +2047,17 @@ Parser::TPResult Parser::TryParseFunctionDeclarator() {
   // ref-qualifier[opt]
   if (Tok.isOneOf(tok::amp, tok::ampamp))
     ConsumeToken();
+  
+  // C++AMP
+  // 'restrict' is an identifier, not a keyword
+  if (getLangOpts().CPlusPlusAMP && Tok.is(tok::identifier) && (Tok.getIdentifierInfo()->getName() == "restrict")) {
+    ConsumeToken();
+    if (Tok.isNot(tok::l_paren))
+      return TPResult::Error;
+    ConsumeParen();
+    if (!SkipUntil(tok::r_paren))
+      return TPResult::Error;
+  }
 
   // exception-specification
   if (Tok.is(tok::kw_throw)) {

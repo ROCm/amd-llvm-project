@@ -2712,6 +2712,8 @@ def warn_attribute_address_multiple_identical_qualifiers : Warning<
   InGroup<DuplicateDeclSpecifier>;
 def err_attribute_address_function_type : Error<
   "function type may not be qualified with an address space">;
+def err_attribute_amdgpu_invalid_isa_version : Error<
+  "invalid AMD GPU ISA version parameter '%0'">;
 def err_as_qualified_auto_decl : Error<
   "automatic variable qualified with an%select{| invalid}0 address space">;
 def err_arg_with_address_space : Error<
@@ -6211,6 +6213,8 @@ def err_invalid_qualified_function_type : Error<
 def err_compound_qualified_function_type : Error<
   "%select{block pointer|pointer|reference}0 to function type %select{%2 |}1"
   "cannot have '%3' qualifier">;
+def err_qualified_function_typeid : Error<
+  "type operand %0 of 'typeid' cannot have '%1' qualifier">;
 
 def err_ref_qualifier_overload : Error<
   "cannot overload a member function %select{without a ref-qualifier|with "
@@ -6635,6 +6639,9 @@ def note_member_declared_here : Note<
   "member %0 declared here">;
 def note_member_first_declared_here : Note<
   "member %0 first declared here">;
+def warn_bitwise_negation_bool : Warning<
+  "bitwise negation of a boolean expression always evaluates to 'true'">,
+  InGroup<DiagGroup<"bool-operation">>;
 def err_decrement_bool : Error<"cannot decrement expression of type bool">;
 def warn_increment_bool : Warning<
   "incrementing expression of type bool is deprecated and "
@@ -7414,8 +7421,9 @@ def err_cuda_device_exceptions : Error<
 def err_dynamic_var_init : Error<
     "dynamic initialization is not supported for "
     "__device__, __constant__, and __shared__ variables.">;
-def err_shared_var_init : Error<
-    "initialization is not supported for __shared__ variables.">;
+def warn_shared_var_init : Warning<
+    "initialization is not supported for __shared__ variables.">,
+    InGroup<DiagGroup<"cuda-shared-init">>, DefaultError;
 def err_device_static_local_var : Error<
     "within a %select{__device__|__global__|__host__|__host__ __device__}0 "
     "function, only __shared__ variables or const variables without device "
@@ -8963,6 +8971,84 @@ def err_opencl_builtin_to_addr_arg_num : Error<
   "invalid number of arguments to function: %0">;
 def err_opencl_builtin_to_addr_invalid_arg : Error<
   "invalid argument %0 to function: %1, expecting a generic pointer argument">;
+
+// C++AMP support.
+def err_amp_data_member_offset_not_natural_alignment : Error<
+"data member offset not in natural alignment">;
+def err_amp_function_redefinition : Error<
+" '%0' redefinition; overlapping restriction specifiers">;
+def err_amp_using_static_or_global_variables : Error<
+" '%0' using global or static variables is unsupported in amp restricted code">;
+def err_amp_function_conversion : Error<
+"conversion to a function with incompatible restriction specifiers">;
+def err_amp_virtual_member_function : Error<
+"virtual member function is not supported">;
+def err_amp_arithmetic_operation_on_pointer_to_bool : Error<
+" '%0' cannot perform pointer arithmetic on pointer to bool in amp restricted code">;
+def err_amp_bad_reinterpret_cast_from_pointer_to_int : Error<
+"cast from pointer to %2 is unsupported in amp restricted code">;
+def err_amp_bad_reinterpret_cast_from_pointer_to_functionptr : Error<
+"pointer to member functions, function pointers, references to functions with 'amp' restriction specifier are not allowed">;
+def err_amp_memory_operation : Error<
+"operator is not supported in amp-compatible codes'">;
+def err_amp_unsupported_reference_or_pointer : Error<
+"pointer or reference is not allowed as pointed to type, array element type or data member type (except reference to concurrency::array/texture)">;
+def err_amp_incompatible : Error<
+"the field type is not amp-compatible">;
+def err_amp_type_unsupported : Error<
+"'%0': unsupported type in amp restricted code">;
+def err_amp_tile_static_on_function_return_result : Error<
+" tile_static can only be applied to a variable declaration">;
+def err_amp_destructor_overloading : Error <
+"destructors are not allowed to be overloaded">;
+def err_amp_ellipsis_param_on_function_declarator : Error <
+"ellipsis ... is not supported on a amp restricted function declarator">;
+def err_amp_tile_static_unsupported_usage : Error<
+" tile_static cannot be used in a non-amp restricted scope">;
+def err_amp_using_nullptr_in_tile_static : Error<
+" '0': is not allowed on tile_static">;
+def err_amp_tile_static_pointer_or_reference : Error<
+" tile_static variables cannot contain pointer or reference type">;
+def err_amp_constant_out_of_supported_range : Error<
+"constant value is out of supported range in amp restricted code">;
+def err_amp_constant_too_big : Error<
+"constant too big">;
+def err_amp_float_overflow : Error<
+"magnitude of floating-point constant too large for type %0; maximum is %1">;
+def err_amp_unsupported_string_literals : Error<
+"'%0': unsupported usage of string literals in amp restricted code">;
+def err_amp_int_to_pointer_cast : Error<
+"cast to %1 from %0 is unsupported in amp restricted code">;
+def err_amp_virtual_base_class_unsupported : Error<
+"'%0' has has virtual base class which is not supported">;
+def err_amp_call_from_cpu_to_amp : Error<
+"call from CPU-restricted function to AMP-restricted function">;
+def err_amp_call_from_amp_to_cpu : Error<
+"call from AMP-restricted function to CPU-restricted function">;
+def err_amp_call_from_both_amp_and_cpu_to_disctint : Error<
+"call from both amp and cpu restricted function to disctint restricted function">;
+def err_amp_need_4_byte_aligned : Error<
+"variables in AMP-restricted function shall be 4-bytes aligned">;
+def err_amp_captured_variable_type : Error<
+" '%0': variable captured by lambda has unsupported type in amp restricted code">;
+def err_amp_c_linkage_function_has_multiple_restrictions : Error<
+"'%0': multiple restriction specifiers are not supported on C linkage functions">;
+def err_amp_has_second_c_linkage_overloaded_function : Error<
+"'%0': second C linkage of overloaded function not allowed">;
+def err_amp_captured_array_type_by_value : Error<
+" %0 is not allowed to be captured by value if the lambda is amp restricted">;
+def err_amp_captured_by_reference_for_variables : Error<
+" '%0' by-reference capture or 'this' capture is unsupported  if the lambda is amp restricted">;
+def err_amp_has_no_copy_constructor : Error<
+" '%0': no copy constructor available or copy constructor is declared 'explicit'">;
+def err_amp_has_no_copy_assign_or_move_assign : Error<
+" '%0':  is unavailable in '%1'">;
+def err_amp_overloaded_member_function : Error<
+" '%0':  no overloaded function has restriction specifiers that are compatible with the ambient context '%1'">;
+def err_amp_has_no_default_ctor : Error<
+" '%0': no appropriate default constructor available">;
+def err_amp_dtor_rest_cover_all_ctor : Error<
+"Destructor's restriction specifiers must cover the union of restrictions on all constructors">;
 
 // OpenCL v2.0 s6.13.17 Enqueue kernel restrictions.
 def err_opencl_enqueue_kernel_incorrect_args : Error<

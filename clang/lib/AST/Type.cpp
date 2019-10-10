@@ -4106,6 +4106,20 @@ CXXRecordDecl *MemberPointerType::getMostRecentCXXRecordDecl() const {
   return getClass()->getAsCXXRecordDecl()->getMostRecentNonInjectedDecl();
 }
 
+bool Type::isGPUArrayType() const {
+  bool gpu_array_flag = false;
+  const Type *type = this;
+  if (type->isClassType()) {
+    CXXRecordDecl* ClassDecl = type->getAsCXXRecordDecl();
+    NamespaceDecl* NSDecl = dyn_cast<NamespaceDecl>(ClassDecl->getEnclosingNamespaceContext());
+    if (ClassDecl && (ClassDecl->getName() == "array")
+        && NSDecl && (NSDecl->getName() == "hc" || NSDecl->getName() == "Concurrency")) {
+      gpu_array_flag = true;
+    }
+  }
+  return gpu_array_flag;
+}
+
 void clang::FixedPointValueToString(SmallVectorImpl<char> &Str,
                                     llvm::APSInt Val, unsigned Scale) {
   FixedPointSemantics FXSema(Val.getBitWidth(), Scale, Val.isSigned(),

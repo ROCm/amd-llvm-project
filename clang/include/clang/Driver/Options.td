@@ -186,6 +186,8 @@ def gfortran_Group : OptionGroup<"<gfortran group>">,
 Flags that will be passed onto the ``gfortran`` compiler when Clang is given
 a Fortran input.}]>;
 
+def cxxamp_Group          : OptionGroup<"<C++AMP group>">;
+
 def Link_Group : OptionGroup<"<T/e/s/t/u group>">, DocName<"Linker flags">,
                  DocBrief<[{Flags that are passed on to the linker}]>;
 def T_Group : OptionGroup<"<T group>">, Group<Link_Group>, DocFlatten;
@@ -503,6 +505,18 @@ def bind__at__load : Flag<["-"], "bind_at_load">;
 def bundle__loader : Separate<["-"], "bundle_loader">;
 def bundle : Flag<["-"], "bundle">;
 def b : JoinedOrSeparate<["-"], "b">, Flags<[Unsupported]>;
+def hc_mode : Flag<["-"], "hc">, Flags<[DriverOption]>,
+  HelpText<"Enable Heterogeneous C++ (HC) mode">;
+def cxxamp_kernel_mode : Flag<["-"], "gpu">, Flags<[DriverOption]>,Group<cxxamp_Group>,
+  HelpText<"C++AMP only.  This option allows the compiler to emit kernel-specific artifacts"> ;
+def cxxamp_cpu_mode : Flag<["-"], "cpu">, Flags<[DriverOption]>,Group<cxxamp_Group>,
+  HelpText<"C++AMP only.  This option allows the compiler to emit CPU kernel-specific artifacts"> ;
+def amdgpu_target_EQ : Joined<["-", "--"], "amdgpu-target=">, Flags<[DriverOption]>,
+  HelpText<"Specify AMDGPU ISA version (ex: gfx803). Could be specified only once.">;
+def hcc_path_EQ : Joined<["--"], "hcc-path=">, Group<i_Group>,
+  HelpText<"HCC installation path">;
+def hcc_extra_libs_EQ : Joined<["-", "--"], "hcc-extra-libs=">, Flags<[DriverOption]>,
+  HelpText<"Specify hcc extra libraries to be linked in.">;
 def cfguard : Flag<["-"], "cfguard">, Flags<[CC1Option]>,
   HelpText<"Emit tables required for Windows Control Flow Guard.">;
 def cl_opt_disable : Flag<["-"], "cl-opt-disable">, Group<opencl_Group>, Flags<[CC1Option]>,
@@ -1590,6 +1604,8 @@ def fno_objc_nonfragile_abi : Flag<["-"], "fno-objc-nonfragile-abi">, Group<f_Gr
 
 def fobjc_sender_dependent_dispatch : Flag<["-"], "fobjc-sender-dependent-dispatch">, Group<f_Group>;
 def fomit_frame_pointer : Flag<["-"], "fomit-frame-pointer">, Group<f_Group>;
+def famp : Flag<["-"], "famp">, Group<f_Group>, Flags<[CC1Option, NoArgumentUnused]>,
+  HelpText<"Enable C++AMP extensions.">;
 def fopenmp : Flag<["-"], "fopenmp">, Group<f_Group>, Flags<[CC1Option, NoArgumentUnused]>,
   HelpText<"Parse OpenMP pragmas and generate parallel code.">;
 def fno_openmp : Flag<["-"], "fno-openmp">, Group<f_Group>, Flags<[NoArgumentUnused]>;

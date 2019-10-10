@@ -25,9 +25,11 @@ __host__ __device__ void baz();
 __host__ __device__ void bar() {
   // DEVICE: call void @_Z3bazv() [[CALL_ATTR:#[0-9]+]]
   baz();
-  // DEVICE: call i32 asm "trap;", "=l"() [[ASM_ATTR:#[0-9]+]]
+  #ifdef NVPTX
+  // NVPTX: call i32 asm "trap;", "=l"() [[ASM_ATTR:#[0-9]+]]
   int x;
   asm ("trap;" : "=l"(x));
+  #endif
   // DEVICE: call void asm sideeffect "trap;", ""() [[ASM_ATTR:#[0-9]+]]
   asm volatile ("trap;");
 }

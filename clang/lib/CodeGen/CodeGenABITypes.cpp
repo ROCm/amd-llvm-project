@@ -34,8 +34,9 @@ CodeGen::arrangeObjCMessageSendSignature(CodeGenModule &CGM,
 
 const CGFunctionInfo &
 CodeGen::arrangeFreeFunctionType(CodeGenModule &CGM,
-                                 CanQual<FunctionProtoType> Ty) {
-  return CGM.getTypes().arrangeFreeFunctionType(Ty);
+                                 CanQual<FunctionProtoType> Ty,
+								 const FunctionDecl *FD) {
+  return CGM.getTypes().arrangeFreeFunctionType(Ty, FD);
 }
 
 const CGFunctionInfo &

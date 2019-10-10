@@ -1006,7 +1006,7 @@ Sema::BuildMemberReferenceExpr(Expr *BaseExpr, QualType BaseExprType,
     // Rederive where we looked up.
     DeclContext *DC = (SS.isSet()
                        ? computeDeclContext(SS, false)
-                       : BaseType->getAs<RecordType>()->getDecl());
+                       : BaseType->castAs<RecordType>()->getDecl());
 
     if (ExtraArgs) {
       ExprResult RetryExpr;
@@ -1136,6 +1136,79 @@ Sema::BuildMemberReferenceExpr(Expr *BaseExpr, QualType BaseExprType,
   }
 
   if (CXXMethodDecl *MemberFn = dyn_cast<CXXMethodDecl>(MemberDecl)) {
+    // C++AMP
+    if(getLangOpts().CPlusPlusAMP) {
+      bool ParentCPU = false;
+      bool ParentAMP = false;
+      std::string name;
+      if(getCurFunctionDecl()) {
+        ParentCPU = getCurFunctionDecl()->hasAttr<CXXAMPRestrictCPUAttr>();
+        ParentAMP = getCurFunctionDecl()->hasAttr<CXXAMPRestrictAMPAttr>();
+        name = getCurFunctionDecl()->getNameAsString();
+      }
+      if(ParentCPU || ParentAMP) {
+        // Lambda if any will inheritate AMP restrictions from Parent RECURSIVELY
+      } else if(getCurLambda() && getCurLambda()->CallOperator) {
+        // Suppress the restrictions
+        ParentCPU = getCurLambda()->CallOperator->hasAttr<CXXAMPRestrictCPUAttr>();
+        ParentAMP = getCurLambda()->CallOperator->hasAttr<CXXAMPRestrictAMPAttr>();
+        name = getCurLambda()->CallOperator->getNameAsString();
+      }
+      // Check local
+      // FIXME: the class should inheritate AMP restriction from parent RECURSIVELY
+      //             especially the class.local. Any missing of that can cause unexpected errors
+      bool MemberAMP = MemberFn->hasAttr<CXXAMPRestrictAMPAttr>();
+      bool MemberCPU = MemberFn->hasAttr<CXXAMPRestrictCPUAttr>() || !MemberAMP;
+      const CXXRecordDecl * RDecl = MemberFn->getParent();
+
+      // Logic for auto-compile-for-accelerator:
+      // In both CPU and device path, if auto-compile-for-accelerator flag is on,
+      // and caller has GPU attribute (CXXAMPRestrictAMPAttr),
+      // and callee method doesn't have GPU attribute (CXXAMPRestrictAMPAttr),
+      // and callee is not within C++ or HCC default library,
+      // then annotate callee with one, and recalculate related boolean flags
+
+      if (getLangOpts().AutoCompileForAccelerator) {
+        if (ParentAMP && !MemberAMP) {
+          std::string QualifiedName = MemberDecl->getQualifiedNameAsString();
+          // Skip self implementation and unwanted
+          if(QualifiedName.find("Kalmar::")!=std::string::npos ||
+             QualifiedName.find("hc::")!=std::string::npos ||
+             QualifiedName.find("Concurrency::")!=std::string::npos ||
+             QualifiedName.find("std::")!=std::string::npos ||
+             QualifiedName.find("__cxxamp_serialize")!=std::string::npos ||
+             QualifiedName.find("__cxxamp_trampoline_name")!=std::string::npos) {
+          } else {
+            //llvm::errs() << "add [[hc]] to member: " << MemberFn->getName() << "\n";
+            MemberFn->addAttr(::new (Context) CXXAMPRestrictAMPAttr(Context, MemberFn->getLocation()));
+            MemberAMP = MemberFn->hasAttr<CXXAMPRestrictAMPAttr>();
+            MemberCPU = MemberFn->hasAttr<CXXAMPRestrictCPUAttr>() || !MemberAMP;
+          }
+        }
+      }
+
+      if(RDecl && RDecl->isLocalClass()) {
+        // Do nothing
+      } else if(ParentCPU== MemberCPU && ParentAMP== MemberAMP) {
+        // The function is not overloaded
+      } else if((!MemberCPU &&!MemberAMP && (ParentCPU ||ParentAMP)) ||
+        (!ParentCPU&&!ParentAMP && (!MemberCPU && MemberAMP)) ||
+        (ParentCPU== (!ParentAMP) && MemberCPU == (!MemberAMP) && ParentCPU!=MemberCPU)) {
+        std::string QualifiedName = MemberDecl->getQualifiedNameAsString();
+        // Skip self implementation and unwanted
+        if(QualifiedName.find("::accelerator_view")!=std::string::npos ||
+          QualifiedName.find("array_view<")!=std::string::npos ||
+          QualifiedName.find("::accelerator")!=std::string::npos ||
+          QualifiedName.find("Concurrency::")!=std::string::npos ||
+          QualifiedName.find("std::")!=std::string::npos ||
+          QualifiedName.find("__cxxamp_serialize")!=std::string::npos) {
+        } else {
+          Diag(MemberLoc, diag::err_amp_overloaded_member_function)
+               << MemberDecl->getQualifiedNameAsString() << name;
+        }
+      }
+    }
+
     ExprValueKind valueKind;
     QualType type;
     if (MemberFn->isInstance()) {

@@ -279,6 +279,9 @@ void HIPToolChain::addClangTargetOptions(
                          false))
     CC1Args.push_back("-fgpu-rdc");
 
+  CC1Args.push_back("-fcuda-allow-variadic-functions");
+  CC1Args.push_back("-fcuda-force-lambda-odr");
+
   // Default to "hidden" visibility, as object level linking will not be
   // supported for the foreseeable future.
   if (!DriverArgs.hasArg(options::OPT_fvisibility_EQ,

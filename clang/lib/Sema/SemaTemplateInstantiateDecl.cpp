@@ -388,6 +388,10 @@ static void instantiateOMPDeclareVariantAttr(
   if (Expr *E = Attr.getVariantFuncRef())
     VariantFuncRef = Subst(E);
 
+  ExprResult Score;
+  if (Expr *E = Attr.getScore())
+    Score = Subst(E);
+
   // Check function/variant ref.
   Optional<std::pair<FunctionDecl *, Expr *>> DeclVarData =
       S.checkOpenMPDeclareVariantFunction(
@@ -395,8 +399,9 @@ static void instantiateOMPDeclareVariantAttr(
   if (!DeclVarData)
     return;
   // Instantiate the attribute.
-  Sema::OpenMPDeclareVariantCtsSelectorData Data(
-      Attr.getCtxSelectorSet(), Attr.getCtxSelector(), Attr.getImplVendor());
+  Sema::OpenMPDeclareVariantCtsSelectorData Data(Attr.getCtxSelectorSet(),
+                                                 Attr.getCtxSelector(),
+                                                 Attr.getImplVendor(), Score);
   S.ActOnOpenMPDeclareVariantDirective(DeclVarData.getValue().first,
                                        DeclVarData.getValue().second,
                                        Attr.getRange(), Data);
@@ -1749,6 +1754,31 @@ static QualType adjustFunctionTypeForInstantiation(ASTContext &Context,
                                  NewFunc->getParamTypes(), NewEPI);
 }
 
+static void MarkByValueRecordsPassedToHIPGlobalFN(FunctionDecl *FDecl)
+{ // TODO: this is a temporary kludge; a preferable solution shall be provided
+  //       in the future, which shall eschew FE involvement.
+  static constexpr const char HIPLaunch[]{"hipLaunchKernelGGL"};
+
+  if (!FDecl) return;
+  if (FDecl->getDeclName().isIdentifier() &&
+    FDecl->getNameAsString().find(HIPLaunch) == std::string::npos) return;
+
+  for (auto &&Parameter : FDecl->parameters()) {
+    if (Parameter->getOriginalType()->isPointerType()) continue;
+    if (Parameter->getOriginalType()->isReferenceType()) continue;
+    if (!Parameter->getOriginalType()->isRecordType()) continue;
+
+    if (auto RD = Parameter->getOriginalType()->getAsCXXRecordDecl()) {
+      if (RD->hasAttr<PackedAttr>()) continue; // Spurious for lambdas.
+      if (!RD->isLambda()) continue;
+
+      static constexpr const char HIPKernargRecord[]{"__HIP_KERNARG_RECORD__"};
+      RD->addAttr(
+        AnnotateAttr::CreateImplicit(RD->getASTContext(), HIPKernargRecord));
+    }
+  }
+}
+
 /// Normal class members are of more specific types and therefore
 /// don't make it here.  This function serves three purposes:
 ///   1) instantiating function templates
@@ -2050,6 +2080,13 @@ Decl *TemplateDeclInstantiator::VisitFunctionDecl(FunctionDecl *D,
     PrincipalDecl->setNonMemberOperator();
 
   assert(!D->isDefaulted() && "only methods should be defaulted");
+
+
+  if (SemaRef.getLangOpts().CPlusPlusAMP) {
+    // TODO: kludge warning, to be removed.
+    MarkByValueRecordsPassedToHIPGlobalFN(Function);
+  }
+
   return Function;
 }
 

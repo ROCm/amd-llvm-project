@@ -858,6 +858,7 @@ int main(int argc, const char **argv) {
     KindIsValid = KindIsValid && StringSwitch<bool>(Kind)
                                      .Case("host", true)
                                      .Case("openmp", true)
+                                     .Case("hcc", true)
                                      .Case("hip", true)
                                      .Default(false);
 

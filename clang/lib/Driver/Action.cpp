@@ -96,6 +96,8 @@ std::string Action::getOffloadingKindPrefix() const {
     return "device-cuda";
   case OFK_OpenMP:
     return "device-openmp";
+  case OFK_HCC:
+    return "device-hcc";
   case OFK_HIP:
     return "device-hip";
 
@@ -115,6 +117,9 @@ std::string Action::getOffloadingKindPrefix() const {
     Res += "-hip";
   if (ActiveOffloadKindMask & OFK_OpenMP)
     Res += "-openmp";
+
+  if (ActiveOffloadKindMask & OFK_HCC)
+    Res += "-hcc";
 
   // TODO: Add other programming models here.
 
@@ -149,6 +154,8 @@ StringRef Action::GetOffloadKindName(OffloadKind Kind) {
     return "cuda";
   case OFK_OpenMP:
     return "openmp";
+  case OFK_HCC:
+    return "hcc";
   case OFK_HIP:
     return "hip";
 
@@ -156,6 +163,23 @@ StringRef Action::GetOffloadKindName(OffloadKind Kind) {
   }
 
   llvm_unreachable("invalid offload kind");
+}
+
+bool Action::ContainsActions(ActionClass kind,
+                             types::ID typesID,
+                             bool singleInputActionsOnly,
+                             bool startsWithActionKind) const {
+  if (startsWithActionKind && getKind() != kind)
+    return false;
+  if (singleInputActionsOnly && size() != 1)
+    return false;
+  if (getType() == typesID)
+    return true;
+  for (const Action *A : inputs()) {
+    if (A->ContainsActions(kind, typesID, singleInputActionsOnly, false))
+      return true;
+  }
+  return false;
 }
 
 void InputAction::anchor() {}

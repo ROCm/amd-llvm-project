@@ -420,8 +420,15 @@ public:
   //===--------------------------------------------------------------------===//
 
   Value *Visit(Expr *E) {
+    if (getenv("DBG_CG_SCALAR_EXPR")) {
+      llvm::errs() << "Expr: "; E->dump();
+    }
     ApplyDebugLocation DL(CGF, E);
-    return StmtVisitor<ScalarExprEmitter, Value*>::Visit(E);
+    auto Res = StmtVisitor<ScalarExprEmitter, Value*>::Visit(E);
+    if (getenv("DBG_CG_SCALAR_EXPR")) {
+      llvm::errs() << " => " << *Res << '\n';
+    }
+    return Res;
   }
 
   Value *VisitStmt(Stmt *S) {
@@ -569,6 +576,18 @@ public:
     return EmitNullValue(E->getType());
   }
   Value *VisitExplicitCastExpr(ExplicitCastExpr *E) {
+    // TODO: HCC specific kludge due to how ROCDL feels it is OK to force
+    //       address spaces unto everyone.
+    if (auto CCE = dyn_cast_or_null<CStyleCastExpr>(E)) {
+      auto DstTy = ConvertType(CCE->getTypeAsWritten());
+      auto SrcTy = ConvertType(CCE->getSubExpr()->getType());
+
+      if (DstTy->isPointerTy() && SrcTy->isPointerTy() &&
+          DstTy->getPointerAddressSpace() != SrcTy->getPointerAddressSpace())
+        if (CCE->getCastKind() != CK_AddressSpaceConversion)
+          CCE->setCastKind(CK_AddressSpaceConversion);
+    }
+
     CGF.CGM.EmitExplicitCastExprType(E, &CGF);
     return VisitCastExpr(E);
   }
@@ -2662,7 +2681,7 @@ Value *ScalarExprEmitter::VisitOffsetOfExpr(OffsetOfExpr *E) {
 
     case OffsetOfNode::Field: {
       FieldDecl *MemberDecl = ON.getField();
-      RecordDecl *RD = CurrentType->getAs<RecordType>()->getDecl();
+      RecordDecl *RD = CurrentType->castAs<RecordType>()->getDecl();
       const ASTRecordLayout &RL = CGF.getContext().getASTRecordLayout(RD);
 
       // Compute the index of the field in its parent.
@@ -2695,7 +2714,7 @@ Value *ScalarExprEmitter::VisitOffsetOfExpr(OffsetOfExpr *E) {
         continue;
       }
 
-      RecordDecl *RD = CurrentType->getAs<RecordType>()->getDecl();
+      RecordDecl *RD = CurrentType->castAs<RecordType>()->getDecl();
       const ASTRecordLayout &RL = CGF.getContext().getASTRecordLayout(RD);
 
       // Save the element type.

@@ -2809,8 +2809,8 @@ void X86_64ABIInfo::classify(QualType Ty, uint64_t OffsetBase,
       for (const auto &I : CXXRD->bases()) {
         assert(!I.isVirtual() && !I.getType()->isDependentType() &&
                "Unexpected base class!");
-        const CXXRecordDecl *Base =
-          cast<CXXRecordDecl>(I.getType()->getAs<RecordType>()->getDecl());
+        const auto *Base =
+            cast<CXXRecordDecl>(I.getType()->castAs<RecordType>()->getDecl());
 
         // Classify this field.
         //
@@ -3071,8 +3071,8 @@ static bool BitsContainNoUserData(QualType Ty, unsigned StartBit,
       for (const auto &I : CXXRD->bases()) {
         assert(!I.isVirtual() && !I.getType()->isDependentType() &&
                "Unexpected base class!");
-        const CXXRecordDecl *Base =
-          cast<CXXRecordDecl>(I.getType()->getAs<RecordType>()->getDecl());
+        const auto *Base =
+            cast<CXXRecordDecl>(I.getType()->castAs<RecordType>()->getDecl());
 
         // If the base is after the span we care about, ignore it.
         unsigned BaseOffset = Context.toBits(Layout.getBaseClassOffset(Base));
@@ -7694,6 +7694,8 @@ public:
   ABIArgInfo classifyArgumentType(QualType Ty, unsigned &NumRegsLeft) const;
 
   void computeInfo(CGFunctionInfo &FI) const override;
+  Address EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
+                    QualType Ty) const override;
 };
 
 bool AMDGPUABIInfo::isHomogeneousAggregateBaseType(QualType Ty) const {
@@ -7755,6 +7757,11 @@ void AMDGPUABIInfo::computeInfo(CGFunctionInfo &FI) const {
       Arg.info = classifyArgumentType(Arg.type, NumRegsLeft);
     }
   }
+}
+
+Address AMDGPUABIInfo::EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
+                                 QualType Ty) const {
+  llvm_unreachable("AMDGPU does not support varargs");
 }
 
 ABIArgInfo AMDGPUABIInfo::classifyReturnType(QualType RetTy) const {
@@ -7821,7 +7828,8 @@ ABIArgInfo AMDGPUABIInfo::classifyArgumentType(QualType Ty,
 
   Ty = useFirstFieldIfTransparentUnion(Ty);
 
-  if (isAggregateTypeForABI(Ty)) {
+  if (isAggregateTypeForABI(Ty)
+      && !getContext().getLangOpts().CPlusPlusAMP) {
     // Records with non-trivial destructors/copy-constructors should not be
     // passed by value.
     if (auto RAA = getRecordArgABI(Ty, getCXXABI()))
@@ -7929,6 +7937,18 @@ static bool requiresAMDGPUDefaultVisibility(const Decl *D,
   return isa<VarDecl>(D) && D->hasAttr<HIPPinnedShadowAttr>();
 }
 
+namespace {
+inline llvm::APSInt getConstexprInt(const Expr *E, const ASTContext &Ctx) {
+  clang::Expr::EvalResult r;
+  APValue Val(llvm::APSInt(32));
+  r.Val = Val;
+  if (E)
+    E->EvaluateAsInt(r, Ctx);
+
+  return r.Val.getInt();
+}
+} // namespace
+
 void AMDGPUTargetCodeGenInfo::setTargetAttributes(
     const Decl *D, llvm::GlobalValue *GV, CodeGen::CodeGenModule &M) const {
   if (requiresAMDGPUDefaultVisibility(D, GV)) {
@@ -7945,6 +7965,7 @@ void AMDGPUTargetCodeGenInfo::setTargetAttributes(
   if (!FD)
     return;
 
+  auto GPU = M.getTarget().getTargetOpts().CPU;
   llvm::Function *F = cast<llvm::Function>(GV);
 
   const auto *ReqdWGS = M.getLangOpts().OpenCL ?
@@ -7961,6 +7982,7 @@ void AMDGPUTargetCodeGenInfo::setTargetAttributes(
 
   const auto *FlatWGS = FD->getAttr<AMDGPUFlatWorkGroupSizeAttr>();
   if (ReqdWGS || FlatWGS) {
+
     unsigned Min = 0;
     unsigned Max = 0;
     if (FlatWGS) {
@@ -7971,13 +7993,16 @@ void AMDGPUTargetCodeGenInfo::setTargetAttributes(
                 ->EvaluateKnownConstInt(M.getContext())
                 .getExtValue();
     }
+
     if (ReqdWGS && Min == 0 && Max == 0)
       Min = Max = ReqdWGS->getXDim() * ReqdWGS->getYDim() * ReqdWGS->getZDim();
 
     if (Min != 0) {
-      assert(Min <= Max && "Min must be less than or equal Max");
-
-      std::string AttrVal = llvm::utostr(Min) + "," + llvm::utostr(Max);
+      std::string AttrVal = llvm::utostr(Min);
+      if (Max != 0) {
+        assert(Min <= Max && "Min must be less than or equal Max");
+        AttrVal = AttrVal + "," + llvm::utostr(Max);
+      }
       F->addFnAttr("amdgpu-flat-work-group-size", AttrVal);
     } else
       assert(Max == 0 && "Max must be zero");
@@ -8000,6 +8025,7 @@ void AMDGPUTargetCodeGenInfo::setTargetAttributes(
       std::string AttrVal = llvm::utostr(Min);
       if (Max != 0)
         AttrVal = AttrVal + "," + llvm::utostr(Max);
+
       F->addFnAttr("amdgpu-waves-per-eu", AttrVal);
     } else
       assert(Max == 0 && "Max must be zero");
@@ -8018,6 +8044,27 @@ void AMDGPUTargetCodeGenInfo::setTargetAttributes(
     if (NumVGPR != 0)
       F->addFnAttr("amdgpu-num-vgpr", llvm::utostr(NumVGPR));
   }
+
+  if (const auto *Attr = FD->getAttr<AMDGPUMaxWorkGroupDimAttr>()) {
+    llvm::APSInt x = getConstexprInt(Attr->getX(), FD->getASTContext());
+    llvm::APSInt y = getConstexprInt(Attr->getY(), FD->getASTContext());
+    llvm::APSInt z = getConstexprInt(Attr->getZ(), FD->getASTContext());
+
+    unsigned X = x.getZExtValue();
+    unsigned Y = y.getZExtValue();
+    unsigned Z = z.getZExtValue();
+    std::string AttrVal = llvm::utostr(X) + "," + llvm::utostr(Y) + "," +
+        llvm::utostr(Z);
+    F->addFnAttr("amdgpu-max-work-group-dim", AttrVal);
+    if (FD->getAttr<AMDGPUFlatWorkGroupSizeAttr>() == nullptr) {
+      uint64_t MaxFlat = (uint64_t)X * Y * Z;
+      if (MaxFlat > UINT_MAX)
+        MaxFlat = UINT_MAX;
+      AttrVal = std::string("1,") + llvm::utostr((unsigned)MaxFlat);
+      F->addFnAttr("amdgpu-flat-work-group-size", AttrVal);
+    }
+  }
+
 }
 
 unsigned AMDGPUTargetCodeGenInfo::getOpenCLKernelCallingConv() const {
@@ -8085,7 +8132,7 @@ AMDGPUTargetCodeGenInfo::getLLVMSyncScopeID(const LangOptions &LangOpts,
     Name = "wavefront";
   }
 
-  if (Ordering != llvm::AtomicOrdering::SequentiallyConsistent) {
+  if(Ordering != llvm::AtomicOrdering::SequentiallyConsistent) {
     if (!Name.empty())
       Name = Twine(Twine(Name) + Twine("-")).str();
 
@@ -9688,7 +9735,7 @@ public:
 //===----------------------------------------------------------------------===//
 
 bool CodeGenModule::supportsCOMDAT() const {
-  return getTriple().supportsCOMDAT();
+  return (!getLangOpts().CPlusPlusAMP && getTriple().supportsCOMDAT());
 }
 
 const TargetCodeGenInfo &CodeGenModule::getTargetCodeGenInfo() {

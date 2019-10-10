@@ -264,6 +264,12 @@ Retry:
     return ParseForStatement(TrailingElseLoc);
 
   case tok::kw_goto:                // C99 6.8.6.1: goto-statement
+    // C++ AMP-specific, reject if we are in an AMP-restricted function
+    if (getLangOpts().CPlusPlusAMP && getLangOpts().DevicePath) {
+      if (!getLangOpts().HSAExtension && IsInAMPFunction(getCurScope())) {
+        Diag(Tok, diag::err_amp_illegal_keyword_goto);
+      }
+    }
     Res = ParseGotoStatement();
     SemiError = "goto";
     break;
@@ -285,6 +291,15 @@ Retry:
     break;
 
   case tok::kw_asm: {
+
+    // C++ AMP-specific, reject if we are in an AMP-restricted function 
+    if (getLangOpts().CPlusPlusAMP &&
+        !getLangOpts().HSAExtension &&
+        getLangOpts().DevicePath) {
+      if (IsInAMPFunction(getCurScope())) {
+        Diag(Tok, diag::err_amp_illegal_keyword_asm);
+      }
+    }
     ProhibitAttributes(Attrs);
     bool msAsm = false;
     Res = ParseAsmStatement(msAsm);
@@ -303,6 +318,12 @@ Retry:
     return StmtEmpty();
 
   case tok::kw_try:                 // C++ 15: try-block
+    // C++ AMP-specific, reject if we are in an AMP-restricted function
+    if (getLangOpts().CPlusPlusAMP && getLangOpts().DevicePath) {
+      if (IsInAMPFunction(getCurScope())) {
+        Diag(Tok, diag::err_amp_illegal_keyword_trycatch);
+      }
+    }
     return ParseCXXTryBlock();
 
   case tok::kw___try:

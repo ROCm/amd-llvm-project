@@ -174,26 +174,42 @@ static void appendParameterTypes(const CodeGenTypes &CGT,
 static const CGFunctionInfo &
 arrangeLLVMFunctionInfo(CodeGenTypes &CGT, bool instanceMethod,
                         SmallVectorImpl<CanQualType> &prefix,
-                        CanQual<FunctionProtoType> FTP) {
+                        CanQual<FunctionProtoType> FTP, const FunctionDecl *FD) {
   SmallVector<FunctionProtoType::ExtParameterInfo, 16> paramInfos;
   RequiredArgs Required = RequiredArgs::forPrototypePlus(FTP, prefix.size());
   // FIXME: Kill copy.
   appendParameterTypes(CGT, prefix, paramInfos, FTP);
   CanQualType resultType = FTP->getReturnType().getUnqualifiedType();
 
+  // HCC (HIP) specific: for HIP we want __global__ functions to represent
+  // actual kernel entry-points, i.e. we want them to have AMDGPU_KERNEL as
+  // their calling convention. The only way to get that early enough appears to
+  // be the below, wherein the mark them as OpenCL kernels before the layout is
+  // generated. This is temporary and somewhat unpleasant, the correct solution
+  // would be to bubble up AMDGPU_KERNEL as a full blown calling convention
+  // which can be used orthogonally to OpenCL, such as e.g. __stdcall.
+  FunctionType::ExtInfo Tmp = FTP->getExtInfo();
+
+  if (FD &&
+      FD->hasAttr<AnnotateAttr>() &&
+      FD->getAttr<AnnotateAttr>()->getAnnotation() ==
+        "__HIP_global_function__") {
+    Tmp = Tmp.withCallingConv(CallingConv::CC_OpenCLKernel);
+  }
+
   return CGT.arrangeLLVMFunctionInfo(resultType, instanceMethod,
                                      /*chainCall=*/false, prefix,
-                                     FTP->getExtInfo(), paramInfos,
+                                     Tmp, paramInfos,
                                      Required);
 }
 
 /// Arrange the argument and result information for a value of the
 /// given freestanding function type.
 const CGFunctionInfo &
-CodeGenTypes::arrangeFreeFunctionType(CanQual<FunctionProtoType> FTP) {
+CodeGenTypes::arrangeFreeFunctionType(CanQual<FunctionProtoType> FTP, const FunctionDecl *FD) {
   SmallVector<CanQualType, 16> argTypes;
   return ::arrangeLLVMFunctionInfo(*this, /*instanceMethod=*/false, argTypes,
-                                   FTP);
+                                   FTP, FD);
 }
 
 static CallingConv getCallingConventionForDecl(const Decl *D, bool IsWindows) {
@@ -257,7 +273,7 @@ CodeGenTypes::arrangeCXXMethodType(const CXXRecordDecl *RD,
 
   return ::arrangeLLVMFunctionInfo(
       *this, true, argTypes,
-      FTP->getCanonicalTypeUnqualified().getAs<FunctionProtoType>());
+      FTP->getCanonicalTypeUnqualified().getAs<FunctionProtoType>(), MD);
 }
 
 /// Set calling convention for CUDA/HIP kernel.
@@ -289,7 +305,7 @@ CodeGenTypes::arrangeCXXMethodDeclaration(const CXXMethodDecl *MD) {
     return arrangeCXXMethodType(ThisType, prototype.getTypePtr(), MD);
   }
 
-  return arrangeFreeFunctionType(prototype);
+  return arrangeFreeFunctionType(prototype, MD);
 }
 
 bool CodeGenTypes::inheritingCtorHasParams(
@@ -448,7 +464,7 @@ CodeGenTypes::arrangeFunctionDeclaration(const FunctionDecl *FD) {
         /*chainCall=*/false, None, noProto->getExtInfo(), {},RequiredArgs::All);
   }
 
-  return arrangeFreeFunctionType(FTy.castAs<FunctionProtoType>());
+  return arrangeFreeFunctionType(FTy.castAs<FunctionProtoType>(), FD);
 }
 
 /// Arrange the argument and result information for the declaration or
@@ -1059,14 +1075,13 @@ void CodeGenFunction::ExpandTypeToArgs(
   if (auto CAExp = dyn_cast<ConstantArrayExpansion>(Exp.get())) {
     Address Addr = Arg.hasLValue() ? Arg.getKnownLValue().getAddress()
                                    : Arg.getKnownRValue().getAggregateAddress();
-    forConstantArrayExpansion(
-        *this, CAExp, Addr, [&](Address EltAddr) {
-          CallArg EltArg = CallArg(
-              convertTempToRValue(EltAddr, CAExp->EltTy, SourceLocation()),
-              CAExp->EltTy);
-          ExpandTypeToArgs(CAExp->EltTy, EltArg, IRFuncTy, IRCallArgs,
-                           IRCallArgPos);
-        });
+    forConstantArrayExpansion(*this, CAExp, Addr, [&](Address EltAddr) {
+      CallArg EltArg =
+          CallArg(convertTempToRValue(EltAddr, CAExp->EltTy, SourceLocation()),
+                  CAExp->EltTy);
+      ExpandTypeToArgs(CAExp->EltTy, EltArg, IRFuncTy, IRCallArgs,
+                       IRCallArgPos);
+    });
   } else if (auto RExp = dyn_cast<RecordExpansion>(Exp.get())) {
     Address This = Arg.hasLValue() ? Arg.getKnownLValue().getAddress()
                                    : Arg.getKnownRValue().getAggregateAddress();
@@ -1254,8 +1269,10 @@ static llvm::Value *CreateCoercedLoad(Address Src, llvm::Type *Ty,
 
   // Otherwise do coercion through memory. This is stupid, but simple.
   Address Tmp = CreateTempAllocaForCoercion(CGF, Ty, Src.getAlignment());
-  Address Casted = CGF.Builder.CreateElementBitCast(Tmp,CGF.Int8Ty);
-  Address SrcCasted = CGF.Builder.CreateElementBitCast(Src,CGF.Int8Ty);
+  Address Casted =
+    CGF.Builder.CreatePointerBitCastOrAddrSpaceCast(Tmp, CGF.AllocaInt8PtrTy);
+  Address SrcCasted =
+    CGF.Builder.CreatePointerBitCastOrAddrSpaceCast(Src, CGF.AllocaInt8PtrTy);
   CGF.Builder.CreateMemCpy(Casted, SrcCasted,
       llvm::ConstantInt::get(CGF.IntPtrTy, SrcSize),
       false);
@@ -1332,8 +1349,10 @@ static void CreateCoercedStore(llvm::Value *Src,
     // to that information.
     Address Tmp = CreateTempAllocaForCoercion(CGF, SrcTy, Dst.getAlignment());
     CGF.Builder.CreateStore(Src, Tmp);
-    Address Casted = CGF.Builder.CreateElementBitCast(Tmp,CGF.Int8Ty);
-    Address DstCasted = CGF.Builder.CreateElementBitCast(Dst,CGF.Int8Ty);
+    Address Casted =
+      CGF.Builder.CreatePointerBitCastOrAddrSpaceCast(Tmp, CGF.AllocaInt8PtrTy);
+    Address DstCasted =
+      CGF.Builder.CreatePointerBitCastOrAddrSpaceCast(Dst, CGF.AllocaInt8PtrTy);
     CGF.Builder.CreateMemCpy(DstCasted, Casted,
         llvm::ConstantInt::get(CGF.IntPtrTy, DstSize),
         false);
@@ -1621,8 +1640,8 @@ CodeGenTypes::GetFunctionType(const CGFunctionInfo &FI) {
       assert(NumIRArgs == 1);
       // indirect arguments are always on the stack, which is alloca addr space.
       llvm::Type *LTy = ConvertTypeForMem(it->type);
-      ArgTypes[FirstIRArg] = LTy->getPointerTo(
-          CGM.getDataLayout().getAllocaAddrSpace());
+      ArgTypes[FirstIRArg] =
+          LTy->getPointerTo(CGM.getDataLayout().getAllocaAddrSpace());
       break;
     }
 
@@ -1663,7 +1682,8 @@ CodeGenTypes::GetFunctionType(const CGFunctionInfo &FI) {
   bool Erased = FunctionsBeingProcessed.erase(&FI); (void)Erased;
   assert(Erased && "Not in set?");
 
-  return llvm::FunctionType::get(resultType, ArgTypes, FI.isVariadic());
+  auto *FT = llvm::FunctionType::get(resultType, ArgTypes, FI.isVariadic());
+  return FT;
 }
 
 llvm::Type *CodeGenTypes::GetFunctionTypeForVTable(GlobalDecl GD) {
@@ -1918,7 +1938,8 @@ void CodeGenModule::ConstructAttributeList(
   }
 
   if (TargetDecl && TargetDecl->hasAttr<OpenCLKernelAttr>()) {
-    if (getLangOpts().OpenCLVersion <= 120) {
+    if (getLangOpts().OpenCL &&
+        getLangOpts().OpenCLVersion <= 120) {
       // OpenCL v1.2 Work groups are always uniform
       FuncAttrs.addAttribute("uniform-work-group-size", "true");
     } else {
@@ -2327,8 +2348,8 @@ void CodeGenFunction::EmitFunctionProlog(const CGFunctionInfo &FI,
           // copy.
           CharUnits Size = getContext().getTypeSizeInChars(Ty);
           auto SizeVal = llvm::ConstantInt::get(IntPtrTy, Size.getQuantity());
-          Address Dst = Builder.CreateBitCast(AlignedTemp, Int8PtrTy);
-          Address Src = Builder.CreateBitCast(ParamAddr, Int8PtrTy);
+          Address Dst = Builder.CreateBitCast(AlignedTemp, AllocaInt8PtrTy);
+          Address Src = Builder.CreateBitCast(ParamAddr, AllocaInt8PtrTy);
           Builder.CreateMemCpy(Dst, Src, SizeVal, false);
           V = AlignedTemp;
         }
@@ -2446,8 +2467,12 @@ void CodeGenFunction::EmitFunctionProlog(const CGFunctionInfo &FI,
         // type in the function type. Since we are codegening the callee
         // in here, add a cast to the argument type.
         llvm::Type *LTy = ConvertType(Arg->getType());
-        if (V->getType() != LTy)
-          V = Builder.CreateBitCast(V, LTy);
+        if (V->getType() != LTy) {
+          if (V->getType()->isIntegerTy(1))
+            V = Builder.CreateZExt(V, LTy);
+          else
+            V = Builder.CreateBitCast(V, LTy);
+        }
 
         ArgVals.push_back(ParamValue::forDirect(V));
         break;
@@ -3092,7 +3117,7 @@ void CodeGenFunction::EmitDelegateCallArg(CallArgList &args,
 
   // Deactivate the cleanup for the callee-destructed param that was pushed.
   if (hasAggregateEvaluationKind(type) && !CurFuncIsThunk &&
-      type->getAs<RecordType>()->getDecl()->isParamDestroyedInCallee() &&
+      type->castAs<RecordType>()->getDecl()->isParamDestroyedInCallee() &&
       param->needsDestruction(getContext())) {
     EHScopeStack::stable_iterator cleanup =
         CalleeDestructedParamCleanups.lookup(cast<ParmVarDecl>(param));
@@ -3577,7 +3602,7 @@ void CodeGenFunction::EmitCallArg(CallArgList &args, const Expr *E,
   // However, we still have to push an EH-only cleanup in case we unwind before
   // we make it to the call.
   if (HasAggregateEvalKind &&
-      type->getAs<RecordType>()->getDecl()->isParamDestroyedInCallee()) {
+      type->castAs<RecordType>()->getDecl()->isParamDestroyedInCallee()) {
     // If we're using inalloca, use the argument memory.  Otherwise, use a
     // temporary.
     AggValueSlot Slot;
@@ -3832,19 +3857,19 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
   if (llvm::StructType *ArgStruct = CallInfo.getArgStruct()) {
     const llvm::DataLayout &DL = CGM.getDataLayout();
     llvm::Instruction *IP = CallArgs.getStackBase();
-    llvm::AllocaInst *AI;
+    llvm::Instruction *CastedAI;
     if (IP) {
       IP = IP->getNextNode();
-      AI = new llvm::AllocaInst(ArgStruct, DL.getAllocaAddrSpace(),
-                                "argmem", IP);
+      CastedAI = CreateAlloca(ArgStruct, "argmem", IP);
     } else {
-      AI = CreateTempAlloca(ArgStruct, "argmem");
+      CastedAI = CreateTempAlloca(ArgStruct, "argmem");
     }
     auto Align = CallInfo.getArgStructAlignment();
-    AI->setAlignment(llvm::MaybeAlign(Align.getQuantity()));
+    auto *AI = getAddrSpaceCastedAlloca(CastedAI);
+    AI->setAlignment(Align.getAsAlign());
     AI->setUsedWithInAlloca(true);
     assert(AI->isUsedWithInAlloca() && !AI->isStaticAlloca());
-    ArgMemory = Address(AI, Align);
+    ArgMemory = Address(CastedAI, Align);
   }
 
   ClangToLLVMArgMapping IRFunctionArgs(CGM.getContext(), CallInfo);
@@ -3929,6 +3954,14 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
     }
 
     case ABIArgInfo::Indirect: {
+      auto CastToAllocaAddrSpace = [&](llvm::Value *V) {
+        if (!ArgInfo.getIndirectByVal())
+          return V;
+        auto *T = V->getType()->getPointerElementType()->getPointerTo(
+            CGM.getDataLayout().getAllocaAddrSpace());
+        return getTargetHooks().performAddrSpaceCast(
+            *this, V, LangAS::Default, CGM.getASTAllocaAddressSpace(), T, true);
+      };
       assert(NumIRArgs == 1);
       if (!I->isAggregate()) {
         // Make a temporary alloca to pass the argument.
@@ -3952,6 +3985,14 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
         llvm::Value *V = Addr.getPointer();
         CharUnits Align = ArgInfo.getIndirectAlign();
         const llvm::DataLayout *TD = &CGM.getDataLayout();
+
+        if (FirstIRArg < IRFuncTy->getNumParams() &&
+                IRFuncTy->getParamType(FirstIRArg)->getPointerAddressSpace() !=
+                    TD->getAllocaAddrSpace()) {
+          llvm::errs() << *IRFuncTy << '\n'
+            << *V <<
+            *(cast<llvm::Instruction>(V)->getParent()->getParent()) << '\n';
+        }
 
         assert((FirstIRArg >= IRFuncTy->getNumParams() ||
                 IRFuncTy->getParamType(FirstIRArg)->getPointerAddressSpace() ==
@@ -4049,11 +4090,12 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
             V->getType()->isIntegerTy())
           V = Builder.CreateZExt(V, ArgInfo.getCoerceToType());
 
-        // If the argument doesn't match, perform a bitcast to coerce it.  This
-        // can happen due to trivial type mismatches.
-        if (FirstIRArg < IRFuncTy->getNumParams() &&
+        // If the argument doesn't match, perform a bitcast or an addrspacecast
+        // to coerce it.  This can happen due to trivial type mismatches.
+        if (V->getType()->isPointerTy() &&
+            FirstIRArg < IRFuncTy->getNumParams() &&
             V->getType() != IRFuncTy->getParamType(FirstIRArg))
-          V = Builder.CreateBitCast(V, IRFuncTy->getParamType(FirstIRArg));
+          V = Builder.CreatePointerBitCastOrAddrSpaceCast(V, IRFuncTy->getParamType(FirstIRArg));
 
         IRCallArgs[FirstIRArg] = V;
         break;
@@ -4269,8 +4311,14 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
     if (IRFunctionArgs.hasInallocaArg() &&
         i == IRFunctionArgs.getInallocaArgNo())
       continue;
-    if (i < IRFuncTy->getNumParams())
-      assert(IRCallArgs[i]->getType() == IRFuncTy->getParamType(i));
+    if (i < IRFuncTy->getNumParams()) {
+      if (IRCallArgs[i]->getType() != IRFuncTy->getParamType(i)) {
+        llvm::errs() << *CalleePtr << " arg" << i << ": "
+            << *IRCallArgs[i] << " => " << *IRFuncTy->getParamType(i)
+            << '\n';
+       }
+       assert(IRCallArgs[i]->getType() == IRFuncTy->getParamType(i));
+    }
   }
 #endif
 
@@ -4317,6 +4365,9 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
     // The MSVC++ personality will implicitly terminate the program if an
     // exception is thrown during a cleanup outside of a try/catch.
     // We don't need to model anything in IR to get this behavior.
+    CannotThrow = true;
+  } else if (CGM.getLangOpts().DevicePath) {
+    // If we can in HCC Device Path we do not support exceptions thrown
     CannotThrow = true;
   } else {
     // Otherwise, nounwind call sites will never throw.

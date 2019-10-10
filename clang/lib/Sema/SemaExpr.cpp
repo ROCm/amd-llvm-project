@@ -3303,6 +3303,61 @@ ExprResult Sema::ActOnIntegerConstant(SourceLocation Loc, uint64_t Val) {
                                 Context.IntTy, Loc);
 }
 
+void DiagnoseCXXAMPFloatingLiteral(Sema &S, NumericLiteralParser &Literal,
+                                  QualType Ty, SourceLocation Loc) {
+  if(!S.IsInAMPRestricted() || !Literal.isFloatingLiteral())
+    return;
+
+  const llvm::fltSemantics &Format = S.Context.getFloatTypeSemantics(Ty);
+
+  using llvm::APFloat;
+  APFloat Val(Format);
+
+  APFloat::opStatus result = Literal.GetFloatValue(Val);
+
+  // Diagnose when become the largest finite number with an in-exact result
+  if((result ==APFloat::opInexact) && Val.isNormal()) {
+    bool BecomeLMData = Val.compare(APFloat::getLargest(Format)) == APFloat::cmpEqual ||
+      Val.compare(APFloat::getLargest(Format, true)) == APFloat::cmpEqual;
+
+    // Though Val is 'equal' with positive/negative largest, check if acatully it is less than
+    // either of them since the result is in-exact, e.g.
+    //
+    //  "double d100 = 1.7976931348623158e+308;"  // OK, near but less than the positive largest
+    //  "double d113 = -1.7976931348623158e+308;"// OK, near but less than the negative largest
+    //  "float f100 = 3.402823466e+38f;                     // OK, near but less than the positive largest
+    //  "float f113 = -3.402823466e+38f;             // OK, near but less than the negative largest
+    //  "float f = 3.402823467e+38f;"                   // Error, near but greater than the positive largest
+    if(BecomeLMData) {
+      // TODO: Check the fractional coefficient since already in normalized form
+      #if 0
+      S.Diag(Loc, diag::err_amp_constant_too_big);
+      #endif
+    }
+  }
+  // Diagnose overflow, e.g.
+  //  "double d = 1.7976931348623159e+308;" // Error, near but greater than the positive largest
+  if (result & APFloat::opOverflow) {
+    SmallString<20> buffer;
+    APFloat::getLargest(Format).toString(buffer);
+
+    S.Diag(Loc, diag::err_amp_float_overflow)
+    << Ty
+    << StringRef(buffer.data(), buffer.size());
+  }
+}
+
+void DiagnoseCXXAMPIntergerLiteral(Sema &S, NumericLiteralParser &Literal,
+                                  QualType Ty, SourceLocation Loc, unsigned MaxWidth ) {
+  if(!S.IsInAMPRestricted() || !Literal.isFloatingLiteral())
+    return;
+
+  llvm::APInt ResultVal(MaxWidth, 0);
+  if (Literal.GetIntegerValue(ResultVal))
+    S.Diag(Loc, diag::err_amp_constant_too_big);
+
+}
+
 static Expr *BuildFloatingLiteral(Sema &S, NumericLiteralParser &Literal,
                                   QualType Ty, SourceLocation Loc) {
   const llvm::fltSemantics &Format = S.Context.getFloatTypeSemantics(Ty);
@@ -3311,6 +3366,12 @@ static Expr *BuildFloatingLiteral(Sema &S, NumericLiteralParser &Literal,
   APFloat Val(Format);
 
   APFloat::opStatus result = Literal.GetFloatValue(Val);
+
+  // C++AMP
+  // Note that we suppress normal diagnositic
+  if(S.getLangOpts().CPlusPlusAMP && result != APFloat::opOK) {
+    DiagnoseCXXAMPFloatingLiteral(S, Literal, Ty, Loc);
+  }
 
   // Overflow is always an error, but underflow is only an error if
   // we underflowed to zero (APFloat reports denormals as underflow).
@@ -3326,7 +3387,8 @@ static Expr *BuildFloatingLiteral(Sema &S, NumericLiteralParser &Literal,
       APFloat::getSmallest(Format).toString(buffer);
     }
 
-    S.Diag(Loc, diagnostic)
+    if(!S.getLangOpts().CPlusPlusAMP)
+      S.Diag(Loc, diagnostic)
       << Ty
       << StringRef(buffer.data(), buffer.size());
   }
@@ -3437,9 +3499,16 @@ ExprResult Sema::ActOnNumericConstant(const Token &Tok, Scope *UDLScope) {
         Lit = BuildFloatingLiteral(*this, Literal, CookedTy, Tok.getLocation());
       } else {
         llvm::APInt ResultVal(Context.getTargetInfo().getLongLongWidth(), 0);
-        if (Literal.GetIntegerValue(ResultVal))
-          Diag(Tok.getLocation(), diag::err_integer_literal_too_large)
-              << /* Unsigned */ 1;
+        if (Literal.GetIntegerValue(ResultVal)) {
+          // C++AMP
+          // Note that this suppress normal diagnostic
+          if(getLangOpts().CPlusPlusAMP)
+            DiagnoseCXXAMPIntergerLiteral(*this, Literal, CookedTy, Tok.getLocation(),
+              Context.getTargetInfo().getLongLongWidth());
+          else
+            Diag(Tok.getLocation(), diag::err_integer_literal_too_large)
+                << /* Unsigned */ 1;
+        }
         Lit = IntegerLiteral::Create(Context, ResultVal, CookedTy,
                                      Tok.getLocation());
       }
@@ -3584,8 +3653,12 @@ ExprResult Sema::ActOnNumericConstant(const Token &Tok, Scope *UDLScope) {
 
     if (Literal.GetIntegerValue(ResultVal)) {
       // If this value didn't fit into uintmax_t, error and force to ull.
-      Diag(Tok.getLocation(), diag::err_integer_literal_too_large)
-          << /* Unsigned */ 1;
+      // C++AMP
+      if(getLangOpts().CPlusPlusAMP)
+        DiagnoseCXXAMPIntergerLiteral(*this, Literal, Ty, Tok.getLocation(), MaxWidth);
+      else
+        Diag(Tok.getLocation(), diag::err_integer_literal_too_large)
+            << /* Unsigned */ 1;
       Ty = Context.UnsignedLongLongTy;
       assert(Context.getTypeSize(Ty) == ResultVal.getBitWidth() &&
              "long long is not intmax_t?");
@@ -5744,6 +5817,66 @@ ExprResult Sema::ActOnConvertVectorExpr(Expr *E, ParsedType ParsedDestTy,
   return SemaConvertVectorExpr(E, TInfo, BuiltinLoc, RParenLoc);
 }
 
+void Sema::DiagnoseCXXAMPMethodCallExpr(SourceLocation LParenLoc,
+                                  CXXMethodDecl *Callee) {
+  if(!Callee || Callee->isConstexpr() || Callee->getBuiltinID() != 0u)
+    return;
+
+  FunctionDecl* Caller = this->getCurFunctionDecl();
+  LambdaScopeInfo* LambdaInfo = this->getCurLambda();
+  bool CallerAMP = (LambdaInfo && LambdaInfo->CallOperator)?
+    LambdaInfo->CallOperator->hasAttr<CXXAMPRestrictAMPAttr>():
+    (Caller?Caller->hasAttr<CXXAMPRestrictAMPAttr>():false);
+  bool CallerCPU= (LambdaInfo && LambdaInfo->CallOperator)?
+    LambdaInfo->CallOperator->hasAttr<CXXAMPRestrictCPUAttr>():
+    (Caller?Caller->hasAttr<CXXAMPRestrictCPUAttr>():false);
+  bool CalleeAMP = Callee->hasAttr<CXXAMPRestrictAMPAttr>();
+  bool CalleeCPU = Callee->hasAttr<CXXAMPRestrictCPUAttr>();
+
+  // Logic for auto-compile-for-accelerator:
+  // In device path, if auto-compile-for-accelerator flag is on,
+  // and caller method has GPU attribute (CXXAMPRestrictAMPAttr),
+  // and callee method doesn't have GPU attribute (CXXAMPRestrictAMPAttr),
+  // then annotate it with one, and recalculate related boolean flags
+  if (getLangOpts().DevicePath && getLangOpts().AutoCompileForAccelerator) {
+    if (CallerAMP && !CalleeAMP) {
+      //llvm::errs() << "add [[hc]] to callee: " << Callee->getName() << "\n";
+      Callee->addAttr(::new (Context) CXXAMPRestrictAMPAttr(Context, Callee->getLocation()));
+      CalleeAMP = Callee->hasAttr<CXXAMPRestrictAMPAttr>();
+    }
+  }
+
+  // Case by case
+  if((LambdaInfo && LambdaInfo->CallOperator) && !getLangOpts().AMPCPU) {
+    // caller: __GPU, lambda; callee: non __GPU, lambda
+    // int i = 0;
+    // auto l2 = []() { i = 1; };
+    // auto l = []() __GPU {
+    //    l2();    // Error
+    //  };
+    if(getLangOpts().DevicePath && Callee->getParent() && Callee->getParent()->isLambda() &&
+      (CallerAMP && CallerCPU) && (!CalleeAMP && !CalleeCPU) )
+      // FIXME: Need a mangled lambda name as '<lambda_xxxxID> operator()'
+      Diag(LParenLoc, diag::err_amp_overloaded_member_function)
+        << Callee->getQualifiedNameAsString()
+        << LambdaInfo->CallOperator->getQualifiedNameAsString();
+  } else if(Caller && ! (LambdaInfo && LambdaInfo->CallOperator) && !getLangOpts().AMPCPU) {
+    // caller: __GPU, global; callee: non __GPU, class static
+    //    class C1 {
+    //      public:
+    //        static void foo(int &flag) {flag = 1;}
+    //    };
+    //    bool test() __GPU {
+    //      int flag = 0;
+    //      C1::foo(flag);    // Error
+    //    }
+    if(getLangOpts().DevicePath && Callee->isStatic() && (CallerAMP && CallerCPU) &&
+      (!CalleeAMP && !CalleeCPU) )
+      Diag(LParenLoc, diag::err_amp_overloaded_member_function)
+        << Callee->getQualifiedNameAsString() << Caller->getNameAsString();
+  }
+}
+
 /// BuildResolvedCallExpr - Build a call to a resolved expression,
 /// i.e. an expression not of \p OverloadTy.  The expression should
 /// unary-convert to an expression of function-pointer or
@@ -5966,6 +6099,14 @@ ExprResult Sema::BuildResolvedCallExpr(Expr *Fn, NamedDecl *NDecl,
 
       TheCall->setArg(i, Arg);
     }
+  }
+
+  // C++AMP
+  if(getLangOpts().CPlusPlusAMP) {
+    if (CXXMethodDecl *Method = dyn_cast_or_null<CXXMethodDecl>(FDecl))
+      DiagnoseCXXAMPMethodCallExpr(LParenLoc, Method);
+    else
+      DiagnoseCXXAMPOverloadedCallExpr(LParenLoc, FDecl);
   }
 
   if (CXXMethodDecl *Method = dyn_cast_or_null<CXXMethodDecl>(FDecl))
@@ -10263,6 +10404,72 @@ static bool checkForArray(const Expr *E) {
   return D->getType()->isArrayType() && !D->isWeak();
 }
 
+// The following are not allowed in amp restricted codes
+  //     Recursion.
+  //     Variables declared with the volatile keyword.
+  //     Virtual functions.
+  //     Pointers to functions.
+  //     Pointers to member functions.
+  //     Pointers in structures.
+  //     Pointers to pointers.
+  //     goto statements.
+  //     Labeled statements.
+  //     try , catch, or throw statements.
+  //     Global variables.
+  //     Static variables. Use tile_static Keyword instead.
+  //>>>>>>>>>>>>>>>>
+  //        Refering to [2.4.3.2] Primary Expressions (C++11 5.1)
+  //          An identifier or qualified identifier that refers to an object shall refer only to:
+  //          (1) a parameter to the function, or
+  //          (2) a local variable declared at a block scope within the function, or
+  //          (3) a non-static member of the class of which this function is a member, or
+  //          (4) a static const type that can be reduced to a integer literal and is only used as an rvalue, or
+  //          (5) a global const type that can be reduced to a integer literal and is only used as an rvalue, or
+  //          (6) a captured variable in a lambda expression.
+  //<<<<<<<<<<<<<<<<
+  //     dynamic_cast casts.
+  //     The typeid operator.
+  //     asm declarations.
+  //     Varargs.
+void Sema::DiagnoseCXXAMPExpr(Expr* Stripped, ExprResult &HS, bool DiagnoseWhenStatic) {
+  if(IsInAMPRestricted()) {
+    if (DeclRefExpr* DRL = dyn_cast<DeclRefExpr>(Stripped))
+      if (VarDecl *var = dyn_cast<VarDecl>(DRL->getDecl())) {
+        QualType Type = var->getType();
+        if(!var->hasLocalStorage() || var->isStaticDataMember()) {
+          if (var->hasAttr<HCCTileStaticAttr>()) {
+             // Skip tile_static
+          } else if(Type.isConstQualified() /*&& LHS.get()->isRValue()*/) {
+            // Skip a static const type and global const type that is rvalue
+            if((var->getStorageClass() == SC_Static &&
+              isa<UnaryOperator>(HS.get()->IgnoreParens()) &&
+              cast<UnaryOperator>(HS.get()->IgnoreParens())->getOpcode()== UO_AddrOf) ||
+              DiagnoseWhenStatic) {
+              //Still diagnose pointer to static and/or member, e.g
+              //        static const int flagxxx = 2;
+              //        void foo(bool set) __GPU
+              //       {
+              //          int n = flagxxx + 3;
+              //          const int  *p = &flagxxx;        // error
+              //       }
+              // Or sometimes HS is not a UnaryOperator, we use manually-set flag
+              // 'DiagnoseWhenStatic' to determine
+              //
+              Diag(HS.get()->getBeginLoc(), diag::err_amp_using_static_or_global_variables)
+                << var->getName();
+            }
+          } else
+            if (getLangOpts().HSAExtension || getLangOpts().AMPCPU) {
+              ; // hsa extention
+            } else {
+              Diag(HS.get()->getBeginLoc(), diag::err_amp_using_static_or_global_variables)
+                << var->getName();
+            }
+        }
+      }
+    }
+}
+
 /// Diagnose some forms of syntactically-obvious tautological comparison.
 static void diagnoseTautologicalComparison(Sema &S, SourceLocation Loc,
                                            Expr *LHS, Expr *RHS,
@@ -10569,6 +10776,7 @@ static QualType checkArithmeticOrEnumeralCompare(Sema &S, ExprResult &LHS,
 
   // The result of comparisons is 'bool' in C++, 'int' in C.
   return S.Context.getLogicalOperationType();
+
 }
 
 void Sema::CheckPtrComparisonWithNullChar(ExprResult &E, ExprResult &NullE) {
@@ -10648,6 +10856,17 @@ QualType Sema::CheckCompareOperands(ExprResult &LHS, ExprResult &RHS,
   if ((LHSType->isArithmeticType() || LHSType->isEnumeralType()) &&
       (RHSType->isArithmeticType() || RHSType->isEnumeralType()))
     return checkArithmeticOrEnumeralCompare(*this, LHS, RHS, Loc, Opc);
+
+  // C++AMP
+  if (getLangOpts().CPlusPlusAMP ) {
+    Expr *LHSStripped = LHS.get()->IgnoreParenImpCasts();
+    Expr *RHSStripped = RHS.get()->IgnoreParenImpCasts();
+    DiagnoseCXXAMPExpr(LHSStripped, LHS);
+    DiagnoseCXXAMPExpr(RHSStripped, RHS);
+  }
+
+  // The result of comparisons is 'bool' in C++, 'int' in C.
+  QualType ResultTy = Context.getLogicalOperationType();
 
   const Expr::NullPointerConstantKind LHSNullKind =
       LHS.get()->isNullPointerConstant(Context, Expr::NPC_ValueDependentIsNull);
@@ -11935,6 +12154,15 @@ QualType Sema::CheckAssignmentOperands(Expr *LHSExpr, ExprResult &RHS,
 
   CheckForNullPointerDereference(*this, LHSExpr);
 
+  // C++AMP
+  //    Primary Expression: " const int *p = &flag;
+  //    where flag is a 'static int'
+  if(getLangOpts().CPlusPlusAMP) {
+    ExprResult ER = LHSExpr;
+    DiagnoseCXXAMPExpr(LHSExpr->IgnoreParenImpCasts(), ER);
+    DiagnoseCXXAMPExpr(RHS.get()->IgnoreParenImpCasts(), RHS);
+  }
+
   // C99 6.5.16p3: The type of an assignment expression is the type of the
   // left operand unless the left operand has qualified type, in which case
   // it is the unqualified version of the type of the left operand.
@@ -12123,6 +12351,18 @@ static QualType CheckIncrementDecrementOperand(Sema &S, Expr *Op,
   // Now make sure the operand is a modifiable lvalue.
   if (CheckForModifiableLvalue(Op, OpLoc, S))
     return QualType();
+
+  // C++AMP [2.4.3.7]
+  if (S.getLangOpts().CPlusPlusAMP && S.IsInAMPRestricted() && !S.getLangOpts().HSAExtension) {
+    if(ResType->isPointerType() && ResType->getPointeeType()->isBooleanType()) {
+      // No matter IsPrefix or not. We only care about the opcode string
+      StringRef OpcString = (IsInc)?UnaryOperator::getOpcodeStr(UnaryOperatorKind(UO_PreInc))
+             :UnaryOperator::getOpcodeStr(UnaryOperatorKind(UO_PreDec));
+      S.Diag(Op->getExprLoc(), diag::err_amp_arithmetic_operation_on_pointer_to_bool)
+         << OpcString;
+    }
+  }
+
   // In C++, a prefix increment is the same type as the operand. Otherwise
   // (in C or with postfix), the increment is the unqualified type of the
   // operand.
@@ -12377,6 +12617,11 @@ QualType Sema::CheckAddressOfOperand(ExprResult &OrigOp, SourceLocation OpLoc) {
       if (vd->getStorageClass() == SC_Register &&
           !getLangOpts().CPlusPlus) {
         AddressOfError = AO_Register_Variable;
+      }
+
+      // C++AMP
+      if(getLangOpts().CPlusPlusAMP) {
+        DiagnoseCXXAMPExpr(op, OrigOp, true);
       }
     } else if (isa<MSPropertyDecl>(dcl)) {
       AddressOfError = AO_Property_Expansion;
@@ -12961,6 +13206,19 @@ ExprResult Sema::CreateBuiltinBinOp(SourceLocation OpLoc,
   CheckArrayAccess(LHS.get());
   CheckArrayAccess(RHS.get());
 
+  // C++AMP [2.4.3.7]
+  // FIXME: Should check if there are allowed Pointer arithmetic
+  if (getLangOpts().CPlusPlusAMP && IsInAMPRestricted() && !getLangOpts().HSAExtension) {
+     QualType L = LHS.get()->getType();
+     QualType R = RHS.get()->getType();
+    if(L->isPointerType() && L->getPointeeType()->isBooleanType())
+      Diag(LHS.get()->getExprLoc(), diag::err_amp_arithmetic_operation_on_pointer_to_bool)
+         << BinaryOperator::getOpcodeStr(Opc);
+    if(R->isPointerType() && R->getPointeeType()->isBooleanType())
+      Diag(RHS.get()->getExprLoc(), diag::err_amp_arithmetic_operation_on_pointer_to_bool)
+         << BinaryOperator::getOpcodeStr(Opc);
+  }
+
   if (const ObjCIsaExpr *OISA = dyn_cast<ObjCIsaExpr>(LHS.get()->IgnoreParenCasts())) {
     NamedDecl *ObjectSetClass = LookupSingleName(TUScope,
                                                  &Context.Idents.get("object_setClass"),
@@ -13470,7 +13728,6 @@ ExprResult Sema::CreateBuiltinUnaryOp(SourceLocation OpLoc,
     if (Input.isInvalid())
       return ExprError();
     resultType = Input.get()->getType();
-
     if (resultType->isDependentType())
       break;
     // C99 6.5.3.3p1. We allow complex int and float as a GCC extension.
@@ -13478,6 +13735,9 @@ ExprResult Sema::CreateBuiltinUnaryOp(SourceLocation OpLoc,
       // C99 does not support '~' for complex conjugation.
       Diag(OpLoc, diag::ext_integer_complement_complex)
           << resultType << Input.get()->getSourceRange();
+    else if (Input.get()->IgnoreParenImpCasts()->getType()->isBooleanType())
+      Diag(OpLoc, diag::warn_bitwise_negation_bool)
+          << FixItHint::CreateReplacement(OpLoc, "!");
     else if (resultType->hasIntegerRepresentation())
       break;
     else if (resultType->isExtVectorType() && Context.getLangOpts().OpenCL) {
@@ -15292,6 +15552,40 @@ static bool isImplicitlyDefinableConstexprFunction(FunctionDecl *Func) {
          (Func->isImplicitlyInstantiable() || (MD && !MD->isUserProvided()));
 }
 
+namespace
+{   // TODO: potentially temporary.
+  inline
+  bool isHIPFunctor(const CXXMethodDecl* f)
+  {
+    static constexpr const char prefix[] = "HIP_kernel_functor_name_begin";
+
+    return f->getOverloadedOperator() == OO_Call &&
+      f->getParent()->getName().find(prefix) != StringRef::npos;
+  }
+
+  inline
+  Stmt* findCall(Stmt* x)
+  {
+    if (!x || isa<CallExpr>(x)) return x;
+
+    for (auto&& y : x->children()) {
+      auto r = findCall(y);
+      if (r) return r;
+    }
+
+    return nullptr;
+  }
+
+  inline
+  void addCalleeAttributesToFunctor(
+    const FunctionDecl* callee, FunctionDecl* functorCallOperator)
+  {
+    functorCallOperator->dropAttrs();
+    functorCallOperator->setAttrs(callee->getAttrs());
+    functorCallOperator->dropAttr<AnnotateAttr>();
+  }
+}
+
 /// Mark a function referenced, and check whether it is odr-used
 /// (C++ [basic.def.odr]p2, C99 6.9p3)
 void Sema::MarkFunctionReferenced(SourceLocation Loc, FunctionDecl *Func,
@@ -15404,7 +15698,22 @@ void Sema::MarkFunctionReferenced(SourceLocation Loc, FunctionDecl *Func,
           }
         } else if (Constructor->getInheritedConstructor()) {
           DefineInheritingConstructor(Loc, Constructor);
-        }
+        } else if (LangOpts.CPlusPlusAMP) {
+          if (Constructor->hasAttr<CXXAMPRestrictAMPAttr>() &&
+              Constructor->hasAttr<AnnotateAttr>() &&
+              Constructor->getAttr<AnnotateAttr>()->getAnnotation() ==
+                "auto_deserialize") {
+#if 0
+          DeclarationNameInfo  AmpFunInfo = Func -> getNameInfo();
+          std::string MethodFunName = AmpFunInfo.getAsString();
+          llvm::errs() << "Definiting Function = " << MethodFunName << "\n";
+#endif    
+          
+            // do not generate deserializer in case there are previous errors
+            if (!this->getDiagnostics().hasErrorOccurred())
+              DefineAmpGpuDeSerializeFunction(Loc, Constructor);
+          }
+        } // end of if CPlusPlusAMP
       } else if (CXXDestructorDecl *Destructor =
                      dyn_cast<CXXDestructorDecl>(Func)) {
         Destructor = cast<CXXDestructorDecl>(Destructor->getFirstDecl());
@@ -15416,7 +15725,22 @@ void Sema::MarkFunctionReferenced(SourceLocation Loc, FunctionDecl *Func,
         if (Destructor->isVirtual() && getLangOpts().AppleKext)
           MarkVTableUsed(Loc, Destructor->getParent());
       } else if (CXXMethodDecl *MethodDecl = dyn_cast<CXXMethodDecl>(Func)) {
-        if (MethodDecl->isOverloadedOperator() &&
+        // C++AMP
+        DeclarationNameInfo  AmpFunInfo = Func -> getNameInfo();
+        std::string MethodFunName = AmpFunInfo.getAsString();
+        std::string AmpFunName = "__cxxamp_serialize";
+        if (AmpFunName == MethodFunName) {
+          DefineAmpCpuSerializeFunction(Loc, MethodDecl);
+        } else if (MethodFunName == "__cxxamp_trampoline"||
+             MethodFunName == "__cxxamp_trampoline_name") {
+          DefineAMPTrampoline(Loc, MethodDecl);
+        } else if (MethodDecl->isOverloadedOperator() && 
+                      isHIPFunctor(MethodDecl)) {
+            auto t = findCall(MethodDecl->getBody());
+          if (t) 
+            addCalleeAttributesToFunctor(cast<CallExpr>(t)->getDirectCallee(), MethodDecl);
+
+        } else if (MethodDecl->isOverloadedOperator() &&
             MethodDecl->getOverloadedOperator() == OO_Equal) {
           MethodDecl = cast<CXXMethodDecl>(MethodDecl->getFirstDecl());
           if (MethodDecl->isDefaulted() && !MethodDecl->isDeleted()) {

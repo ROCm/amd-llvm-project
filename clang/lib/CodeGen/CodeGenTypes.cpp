@@ -95,6 +95,11 @@ llvm::Type *CodeGenTypes::ConvertTypeForMem(QualType T) {
                                 (unsigned)Context.getTypeSize(T));
 }
 
+llvm::PointerType *CodeGenTypes::getVariableType(VarDecl D) {
+  auto Ty = D.getType();
+  return ConvertTypeForMem(Ty)->getPointerTo(
+      getContext().getTargetAddressSpace(Ty));
+}
 
 /// isRecordLayoutComplete - Return true if the specified type is already
 /// completely laid out.
@@ -135,8 +140,8 @@ isSafeToConvert(const RecordDecl *RD, CodeGenTypes &CGT,
   // the class.
   if (const CXXRecordDecl *CRD = dyn_cast<CXXRecordDecl>(RD)) {
     for (const auto &I : CRD->bases())
-      if (!isSafeToConvert(I.getType()->getAs<RecordType>()->getDecl(),
-                           CGT, AlreadyChecked))
+      if (!isSafeToConvert(I.getType()->castAs<RecordType>()->getDecl(), CGT,
+                           AlreadyChecked))
         return false;
   }
 
@@ -308,7 +313,7 @@ static llvm::Type *getTypeForFormat(llvm::LLVMContext &VMContext,
   llvm_unreachable("Unknown float format!");
 }
 
-llvm::Type *CodeGenTypes::ConvertFunctionTypeInternal(QualType QFT) {
+llvm::Type *CodeGenTypes::ConvertFunctionTypeInternal(QualType QFT, const FunctionDecl *FD) {
   assert(QFT.isCanonical());
   const Type *Ty = QFT.getTypePtr();
   const FunctionType *FT = cast<FunctionType>(QFT.getTypePtr());
@@ -346,7 +351,7 @@ llvm::Type *CodeGenTypes::ConvertFunctionTypeInternal(QualType QFT) {
   const CGFunctionInfo *FI;
   if (const FunctionProtoType *FPT = dyn_cast<FunctionProtoType>(FT)) {
     FI = &arrangeFreeFunctionType(
-        CanQual<FunctionProtoType>::CreateUnsafe(QualType(FPT, 0)));
+        CanQual<FunctionProtoType>::CreateUnsafe(QualType(FPT, 0)), FD);
   } else {
     const FunctionNoProtoType *FNPT = cast<FunctionNoProtoType>(FT);
     FI = &arrangeFreeFunctionType(
@@ -375,6 +380,14 @@ llvm::Type *CodeGenTypes::ConvertFunctionTypeInternal(QualType QFT) {
     while (!DeferredRecords.empty())
       ConvertRecordDeclType(DeferredRecords.pop_back_val());
   return ResultType;
+}
+
+llvm::PointerType *CodeGenTypes::getPointerTypeTo(QualType T) {
+  return ConvertType(T)->getPointerTo(Context.getTargetAddressSpace(T));
+}
+
+llvm::PointerType *CodeGenTypes::getDefaultPointerTo(llvm::Type *T) {
+  return T->getPointerTo();
 }
 
 /// ConvertType - Convert the specified type to its LLVM form.
@@ -744,8 +757,7 @@ llvm::StructType *CodeGenTypes::ConvertRecordDeclType(const RecordDecl *RD) {
   if (const CXXRecordDecl *CRD = dyn_cast<CXXRecordDecl>(RD)) {
     for (const auto &I : CRD->bases()) {
       if (I.isVirtual()) continue;
-
-      ConvertRecordDeclType(I.getType()->getAs<RecordType>()->getDecl());
+      ConvertRecordDeclType(I.getType()->castAs<RecordType>()->getDecl());
     }
   }
 

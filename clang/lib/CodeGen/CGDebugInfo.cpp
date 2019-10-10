@@ -1699,7 +1699,7 @@ void CGDebugInfo::CollectCXXBasesAux(
   const ASTRecordLayout &RL = CGM.getContext().getASTRecordLayout(RD);
   for (const auto &BI : Bases) {
     const auto *Base =
-        cast<CXXRecordDecl>(BI.getType()->getAs<RecordType>()->getDecl());
+        cast<CXXRecordDecl>(BI.getType()->castAs<RecordType>()->getDecl());
     if (!SeenTypes.insert(Base).second)
       continue;
     auto *BaseTy = getOrCreateType(BI.getType(), Unit);
@@ -1764,10 +1764,13 @@ CGDebugInfo::CollectTemplateParams(const TemplateParameterList *TPList,
       QualType T = TA.getParamTypeForDecl().getDesugaredType(CGM.getContext());
       llvm::DIType *TTy = getOrCreateType(T, Unit);
       llvm::Constant *V = nullptr;
-      // Skip retrieve the value if that template parameter has cuda device
+      // Skip retrieve the value if that template parameter has cuda/hcc device
       // attribute, i.e. that value is not available at the host side.
-      if (!CGM.getLangOpts().CUDA || CGM.getLangOpts().CUDAIsDevice ||
-          !D->hasAttr<CUDADeviceAttr>()) {
+      if ((!CGM.getLangOpts().CUDA || CGM.getLangOpts().CUDAIsDevice ||
+           !D->hasAttr<CUDADeviceAttr>()) &&
+          (!CGM.getLangOpts().CPlusPlusAMP || CGM.getLangOpts().DevicePath ||
+           (!D->hasAttr<CXXAMPRestrictAMPAttr>() &&
+            !D->hasAttr<HC_HCAttr>()))) {
         const CXXMethodDecl *MD;
         // Variable pointer template parameters have a value that is the address
         // of the variable.

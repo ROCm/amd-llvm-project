@@ -637,7 +637,7 @@ void CodeGenVTables::addVTableComponent(
     return addOffsetConstant(component.getOffsetToTop());
 
   case VTableComponent::CK_RTTI:
-    return builder.add(llvm::ConstantExpr::getBitCast(rtti, CGM.Int8PtrTy));
+    return builder.add(llvm::ConstantExpr::getPointerCast(rtti, CGM.Int8PtrTy));
 
   case VTableComponent::CK_FunctionPointer:
   case VTableComponent::CK_CompleteDtorPointer:
@@ -682,7 +682,7 @@ void CodeGenVTables::addVTableComponent(
           CGM.CreateRuntimeFunction(fnTy, name).getCallee());
       if (auto f = dyn_cast<llvm::Function>(fn))
         f->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-      return llvm::ConstantExpr::getBitCast(fn, CGM.Int8PtrTy);
+      return llvm::ConstantExpr::getPointerCast(fn, CGM.Int8PtrTy);
     };
 
     llvm::Constant *fnPtr;
@@ -715,7 +715,7 @@ void CodeGenVTables::addVTableComponent(
       fnPtr = CGM.GetAddrOfFunction(GD, fnTy, /*ForVTable=*/true);
     }
 
-    fnPtr = llvm::ConstantExpr::getBitCast(fnPtr, CGM.Int8PtrTy);
+    fnPtr = llvm::ConstantExpr::getPointerCast(fnPtr, CGM.Int8PtrTy);
     builder.add(fnPtr);
     return;
   }

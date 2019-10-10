@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "AMDGPU.h"
+#include "Targets.h"
 #include "clang/Basic/Builtins.h"
 #include "clang/Basic/CodeGenOptions.h"
 #include "clang/Basic/LangOptions.h"
@@ -46,7 +47,10 @@ const LangASMap AMDGPUTargetInfo::AMDGPUDefIsGenMap = {
     Generic,  // opencl_generic
     Global,   // cuda_device
     Constant, // cuda_constant
-    Local     // cuda_shared
+    Local,     // cuda_shared
+    Local,     // hcc_tilestatic
+    Generic,   // hcc_generic
+    Global     // hcc_global
 };
 
 const LangASMap AMDGPUTargetInfo::AMDGPUDefIsPrivMap = {
@@ -58,7 +62,10 @@ const LangASMap AMDGPUTargetInfo::AMDGPUDefIsPrivMap = {
     Generic,  // opencl_generic
     Global,   // cuda_device
     Constant, // cuda_constant
-    Local     // cuda_shared
+    Local,    // cuda_shared
+    Local,    // hcc_tilestatic
+    Generic,  // hcc_generic
+    Global    // hcc_global
 };
 } // namespace targets
 } // namespace clang
@@ -273,6 +280,7 @@ AMDGPUTargetInfo::AMDGPUTargetInfo(const llvm::Triple &Triple,
   setAddressSpaceMap(Triple.getOS() == llvm::Triple::Mesa3D ||
                      !isAMDGCN(Triple));
   UseAddrSpaceMapMangling = true;
+  HasFloat16=true;
 
   HasLegalHalfType = true;
   HasFloat16 = true;
@@ -287,6 +295,12 @@ AMDGPUTargetInfo::AMDGPUTargetInfo(const llvm::Triple &Triple,
   }
 
   MaxAtomicPromoteWidth = MaxAtomicInlineWidth = 64;
+  // This is a workaround for HIP to get things going until
+  // https://reviews.llvm.org/D57831 is committed.
+#if _WIN32
+  WCharType = UnsignedShort;
+  WIntType = UnsignedShort;
+#endif
 }
 
 void AMDGPUTargetInfo::adjust(LangOptions &Opts) {

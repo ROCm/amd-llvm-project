@@ -194,9 +194,9 @@ Please install Python or specify the PYTHON_EXECUTABLE CMake variable.")
   endif()
 
   set( CLANG_BUILT_STANDALONE 1 )
-  set(BACKEND_PACKAGE_STRING "LLVM ${LLVM_PACKAGE_VERSION}")
+  set(BACKEND_PACKAGE_STRING "HCC ${HCC_VERSION_STRING} LLVM ${LLVM_PACKAGE_VERSION}")
 else()
-  set(BACKEND_PACKAGE_STRING "${PACKAGE_STRING}")
+  set(BACKEND_PACKAGE_STRING "HCC ${HCC_VERSION_STRING} ${LLVM_PACKAGE_VERSION}")
 endif()
 
 # Make sure that our source directory is on the current cmake module path so that
@@ -302,8 +302,7 @@ if (NOT DEFINED MATCHED_ARCH OR "${CMAKE_MATCH_1}" LESS 35)
     "Default architecture for OpenMP offloading to Nvidia GPUs." FORCE)
 endif()
 
-set(CLANG_VENDOR ${PACKAGE_VENDOR} CACHE STRING
-  "Vendor-specific text for showing with version information.")
+set(CLANG_VENDOR "HCC")
 
 if( CLANG_VENDOR )
   add_definitions( -DCLANG_VENDOR="${CLANG_VENDOR} " )
@@ -447,6 +446,12 @@ if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY)
 endif()
 
 add_definitions( -D_GNU_SOURCE )
+add_definitions(-DHCC_AMDGPU_TARGET="${AMDGPU_TARGET}")
+if (HCC_TOOLCHAIN_RHEL)
+ add_definitions(-DHCC_TOOLCHAIN_RHEL=true)
+else()
+ add_definitions(-DHCC_TOOLCHAIN_RHEL=false)
+endif()
 
 option(CLANG_BUILD_TOOLS
   "Build the Clang tools. If OFF, just generate build targets." ON)

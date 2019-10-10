@@ -3519,7 +3519,7 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
   case Builtin::BI__GetExceptionInfo: {
     if (llvm::GlobalVariable *GV =
             CGM.getCXXABI().getThrowInfo(FD->getParamDecl(0)->getType()))
-      return RValue::get(llvm::ConstantExpr::getBitCast(GV, CGM.Int8PtrTy));
+      return RValue::get(llvm::ConstantExpr::getPointerCast(GV, CGM.Int8PtrTy));
     break;
   }
 
@@ -3994,7 +3994,9 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
     return RValue::get(Builder.CreateFPExt(HalfVal, Builder.getFloatTy()));
   }
   case Builtin::BIprintf:
-    if (getTarget().getTriple().isNVPTX())
+    if (getTarget().getTriple().isNVPTX() ||
+        (getTarget().getTriple().getArch() == Triple::amdgcn &&
+         getLangOpts().CUDA))
       return EmitNVPTXDevicePrintfCallExpr(E, ReturnValue);
     break;
   case Builtin::BI__builtin_canonicalize:
@@ -11193,7 +11195,7 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
     // Unaligned nontemporal store of the scalar value.
     StoreInst *SI = Builder.CreateDefaultAlignedStore(Src, BC);
     SI->setMetadata(CGM.getModule().getMDKindID("nontemporal"), Node);
-    SI->setAlignment(1);
+    SI->setAlignment(llvm::Align::None());
     return SI;
   }
   // Rotate is a special case of funnel shift - 1st 2 args are the same.

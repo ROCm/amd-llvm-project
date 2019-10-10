@@ -1242,7 +1242,6 @@ def err_pragma_pipeline_invalid_keyword : Error<
 def warn_pragma_unroll_cuda_value_in_parens : Warning<
   "argument to '#pragma unroll' should not be in parentheses in CUDA C/C++">,
   InGroup<CudaCompat>;
-
 def warn_cuda_attr_lambda_position : Warning<
   "nvcc does not allow '__%0__' to appear after '()' in lambdas">,
   InGroup<CudaCompat>;
@@ -1252,6 +1251,52 @@ def warn_pragma_force_cuda_host_device_bad_arg : Warning<
 def err_pragma_cannot_end_force_cuda_host_device : Error<
   "force_cuda_host_device end pragma without matching "
   "force_cuda_host_device begin">;
+
+// C++AMP supoport.
+def err_expected_restrict : Error<
+  "expected 'restrict' specifier">;
+def err_expected_lparen_after_restriction : Error<
+  "expected '(' for restriction specifier">;
+def err_amp_unrecognized_restriction : Error<
+  "'%0' : unrecognized restriction specifier">;
+def err_amp_empty_restriction : Error<
+  "empty restriction sepcifier is not allowed">;
+def err_amp_expected_auto_restriction_on_definition : Error<
+  "'auto' restriction specifier is only allowed on function definition">;
+def err_amp_auto_restricted_function_has_other_declaration : Error<
+  "'%0':  expected no other declaration since it is auto restricted">;
+def note_auto_restricted_prev_declaration : Note<
+  "previous declaration is here">;
+def err_amp_no_throw : Error<
+  "exception specifier is not allowed in C++AMP context">;
+def err_tile_static_no_init : Error<
+  "tile_static variables can't be initialized">;
+def err_amp_illegal_function_parameter : Error<
+  "incompatible type for function parameter in AMP-restricted functions">;
+def err_amp_illegal_function_parameter_char : Error<
+  "char type can't be used as a function parameter type in AMP-restricted functions">;
+def err_amp_illegal_function_parameter_short : Error<
+  "short type can't be used as a function parameter type in AMP-restricted functions">;
+def err_amp_illegal_function_parameter_volatile : Error<
+  "volatile type qualifier can't be used as a function parameter type qualifier in AMP-restricted functions">;
+def err_amp_illegal_function_return_char : Error<
+  "char type can't be used as function return type in AMP-restricted functions">;
+def err_amp_illegal_function_return_short : Error<
+  "short type can't be used as function return type in AMP-restricted functions">;
+def err_amp_illegal_function_return_volatile : Error<
+  "volatile type qualifier can't be used as function return type qualifier in AMP-restricted functions">;
+def err_amp_illegal_keyword_dynamiccast : Error<
+  "dynamic_cast is prohibited in AMP-restricted functions">;
+def err_amp_illegal_keyword_typeid : Error<
+  "typeid is prohibited in AMP-restricted functions">;
+def err_amp_illegal_keyword_goto : Error<
+  "goto is prohibited in AMP-restricted functions">;
+def err_amp_illegal_keyword_throw : Error<
+  "throw is prohibited in AMP-restricted functions">;
+def err_amp_illegal_keyword_trycatch : Error<
+  "try/catch is prohibited in AMP-restricted functions">;
+def err_amp_illegal_keyword_asm : Error<
+  "asm is prohibited in AMP-restricted functions">;
 } // end of Parse Issue category.
 
 let CategoryName = "Modules Issue" in {

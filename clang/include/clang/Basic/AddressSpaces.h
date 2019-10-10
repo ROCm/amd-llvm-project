@@ -42,6 +42,11 @@ enum class LangAS : unsigned {
   cuda_constant,
   cuda_shared,
 
+  // HCC specific address spaces.
+  hcc_tilestatic,
+  hcc_generic,
+  hcc_global,
+
   // This denotes the count of language-specific address spaces and also
   // the offset added to the target-specific address spaces, which are usually
   // specified by address space attributes __attribute__(address_space(n))).

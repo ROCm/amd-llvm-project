@@ -123,6 +123,7 @@ static bool hasFeature(StringRef Feature, const LangOptions &LangOpts,
                         .Case("opencl", LangOpts.OpenCL)
                         .Case("tls", Target.isTLSSupported())
                         .Case("zvector", LangOpts.ZVector)
+                        .Case("cplusplusamp", LangOpts.CPlusPlusAMP)
                         .Default(Target.hasFeature(Feature) ||
                                  isPlatformEnvironment(Target, Feature));
   if (!HasFeature)

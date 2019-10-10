@@ -17,6 +17,7 @@
 #include "clang/AST/Expr.h"
 #include "clang/Basic/TargetInfo.h"
 #include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/Triple.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/MathExtras.h"
 
@@ -1759,6 +1760,7 @@ void ItaniumRecordLayoutBuilder::LayoutField(const FieldDecl *D,
   // into the field's tail padding.
   CharUnits EffectiveFieldSize;
 
+  const ReferenceType *RT = D->getType()->getAs<ReferenceType>();
   if (D->getType()->isIncompleteArrayType()) {
     // This is a flexible array member; we can't directly
     // query getTypeInfo about these, so we figure it out here.

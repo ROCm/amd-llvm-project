@@ -274,7 +274,8 @@ static bool isInInlineFunction(const DeclContext *DC) {
 
 MangleNumberingContext *
 Sema::getCurrentMangleNumberContext(const DeclContext *DC,
-                                    Decl *&ManglingContextDecl) {
+                                    Decl *&ManglingContextDecl,
+                                    bool SkpNoODRChk, bool *Forced) {
   // Compute the context for allocating mangling numbers in the current
   // expression, if the ABI requires them.
   ManglingContextDecl = ExprEvalContexts.back().ManglingContextDecl;
@@ -322,9 +323,14 @@ Sema::getCurrentMangleNumberContext(const DeclContext *DC,
   case Normal: {
     //  -- the bodies of non-exported nonspecialized template functions
     //  -- the bodies of inline functions
-    if ((IsInNonspecializedTemplate &&
+    bool NeedODR =
+        (IsInNonspecializedTemplate &&
          !(ManglingContextDecl && isa<ParmVarDecl>(ManglingContextDecl))) ||
-        isInInlineFunction(CurContext)) {
+        isInInlineFunction(CurContext);
+    if (NeedODR || SkpNoODRChk) {
+      // Set forced if it don't need to follow ODR originally.
+      if (SkpNoODRChk && Forced)
+        *Forced = !NeedODR;
       ManglingContextDecl = nullptr;
       while (auto *CD = dyn_cast<CapturedDecl>(DC))
         DC = CD->getParent();
@@ -337,10 +343,13 @@ Sema::getCurrentMangleNumberContext(const DeclContext *DC,
 
   case StaticDataMember:
     //  -- the initializers of nonspecialized static members of template classes
-    if (!IsInNonspecializedTemplate) {
+    if (!SkpNoODRChk && !IsInNonspecializedTemplate) {
       ManglingContextDecl = nullptr;
       return nullptr;
     }
+    // Set forced if it don't need to follow ODR originally.
+    if (SkpNoODRChk && Forced)
+      *Forced = !IsInNonspecializedTemplate;
     // Fall through to get the current context.
     LLVM_FALLTHROUGH;
 
@@ -440,11 +449,16 @@ CXXMethodDecl *Sema::startLambdaDefinition(
     Class->setLambdaMangling(Mangling->first, Mangling->second);
   } else {
     Decl *ManglingContextDecl;
-    if (MangleNumberingContext *MCtx =
-            getCurrentMangleNumberContext(Class->getDeclContext(),
-                                          ManglingContextDecl)) {
+    bool Forced = false;
+    if (MangleNumberingContext *MCtx = getCurrentMangleNumberContext(
+            Class->getDeclContext(), ManglingContextDecl,
+            getLangOpts().CUDAForceLambdaODR, &Forced)) {
       unsigned ManglingNumber = MCtx->getManglingNumber(Method);
-      Class->setLambdaMangling(ManglingNumber, ManglingContextDecl);
+      Class->setLambdaMangling(ManglingNumber, ManglingContextDecl, Forced);
+      if (MCtx->hasDeviceMangleNumberingContext()) {
+        Class->setDeviceLambdaManglingNumber(
+            MCtx->getDeviceManglingNumber(Method));
+      }
     }
   }
 
@@ -1742,6 +1756,85 @@ ExprResult Sema::BuildLambdaExpr(SourceLocation StartLoc, SourceLocation EndLoc,
       CaptureInits.push_back(Init.get());
     }
 
+    // C++AMP
+    std::vector<std::pair<Capture, unsigned> > FoundVec;
+    if (getLangOpts().CPlusPlusAMP && CallOperator->hasAttr<CXXAMPRestrictAMPAttr>()) {
+      for (unsigned K = 0, N = LSI->Captures.size(); K != N; ++K) {
+        Capture From = LSI->Captures[K];
+        assert(!From.isBlockCapture() && "Cannot capture __block variables");
+        if (From.isThisCapture()) continue;
+        // Handle [Var]
+        if(From.getCaptureType()->isPointerType()) {
+          if (getLangOpts().HSAExtension) {
+            // relax this rule in HSA to allow capturing raw pointers
+          } else {
+            FoundVec.push_back(std::make_pair(From, (unsigned)diag::err_amp_captured_variable_type));
+          }
+        }
+
+        if(From.getCaptureType()->isClassType() && From.isCopyCapture()) {
+          // hc::array and Concurrency::array can't be captured by copy
+          if (From.getCaptureType()->isGPUArrayType()) {
+            FoundVec.push_back(std::make_pair(From, (unsigned)diag::err_amp_captured_variable_type));
+          }
+        }
+        // Handle [This], [&]
+        if(From.isReferenceCapture() || From.isThisCapture()) {
+          if(const ReferenceType* RT = dyn_cast<ReferenceType>(From.getCaptureType())) {
+            const PrintingPolicy PrintPolicy = Context.getPrintingPolicy();
+            std::string Info = QualType::getAsString(From.getCaptureType()->getPointeeType().split(), PrintPolicy);
+            if (!getLangOpts().HSAExtension) {
+              if(RT->getPointeeType()->isPointerType()) {
+                #if 0
+                // Add the skipped type here
+                if(!Info.empty() && (Info.find("array<")!=std::string::npos ||
+                  Info.find("array_view<")!=std::string::npos))
+                #endif
+                FoundVec.push_back(std::make_pair(From,
+                                                 (unsigned)diag::err_amp_captured_by_reference_for_variables));
+              } else  {
+                // Boolean type is allowed in capture
+                // FIXME: Ugly codes. Need reliable methods to skip amp compatible types
+                if(Info.find("array<")!=std::string::npos || Info.find("array_view<")!=std::string::npos ||
+                  Info.find("texture<")!=std::string::npos ||
+                  RT->getPointeeType()->isBooleanType()){
+                  // amp-compatible types
+                } else
+                  FoundVec.push_back(std::make_pair(From,
+                                             (unsigned)diag::err_amp_captured_by_reference_for_variables));
+              }
+            } // HSA extension check
+          }
+        }
+      }
+    }
+    // Capture a restrict-amp function pointer by value in a restrict(cpu) lambda
+    if (getLangOpts().CPlusPlusAMP &&
+          (((!CallOperator->hasAttr<CXXAMPRestrictAMPAttr>() &&
+            CallOperator->hasAttr<CXXAMPRestrictCPUAttr>()) ||
+            (!CallOperator->hasAttr<CXXAMPRestrictAMPAttr>() &&
+            !CallOperator->hasAttr<CXXAMPRestrictCPUAttr>())))) {
+      for (unsigned K = 0, N = LSI->Captures.size(); K != N; ++K) {
+        Capture From = LSI->Captures[K];
+        assert(!From.isBlockCapture() && "Cannot capture __block variables");
+        if (From.isThisCapture()) continue;
+        QualType CaptureType = From.getCaptureType();
+        if(!CaptureType.isNull() && CaptureType->isFunctionPointerType()) {
+          if( From.getVariable() && From.getVariable()->hasAttr<CXXAMPRestrictAMPAttr>())
+            FoundVec.push_back(std::make_pair(From, (unsigned)diag::err_amp_captured_variable_type));
+        }
+      }
+    }
+    if(FoundVec.size()) {
+      for( std::vector<std::pair<Capture, unsigned> >::iterator iter = FoundVec.begin();
+        iter!=FoundVec.end(); iter++)
+        if(iter->first.getVariable())
+          Diag(iter->first.getLocation(), iter->second) << iter->first.getVariable()->getName();
+        else
+          Diag(iter->first.getLocation(), iter->second);
+      return ExprError();
+    }
+
     // C++11 [expr.prim.lambda]p6:
     //   The closure type for a lambda-expression with no lambda-capture
     //   has a public non-virtual non-explicit const conversion function
@@ -1768,6 +1861,11 @@ ExprResult Sema::BuildLambdaExpr(SourceLocation StartLoc, SourceLocation EndLoc,
   }
 
   Cleanup.mergeFrom(LambdaCleanup);
+
+  // C++AMP
+  if (getLangOpts().CPlusPlusAMP && NeedAMPDeserializer(Class)) {
+    DeclareAMPDeserializer(Class, NULL);
+  }
 
   LambdaExpr *Lambda = LambdaExpr::Create(Context, Class, IntroducerRange,
                                           CaptureDefault, CaptureDefaultLoc,

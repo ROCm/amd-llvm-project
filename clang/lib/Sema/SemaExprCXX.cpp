@@ -453,6 +453,9 @@ ExprResult Sema::BuildCXXTypeId(QualType TypeInfoType,
   if (T->isVariablyModifiedType())
     return ExprError(Diag(TypeidLoc, diag::err_variably_modified_typeid) << T);
 
+  if (CheckQualifiedFunctionForTypeId(T, TypeidLoc))
+    return ExprError();
+
   return new (Context) CXXTypeidExpr(TypeInfoType.withConst(), Operand,
                                      SourceRange(TypeidLoc, RParenLoc));
 }
@@ -2457,8 +2460,8 @@ bool Sema::FindAllocationFunctions(SourceLocation StartLoc, SourceRange Range,
   //   deallocation function's name is looked up in the global scope.
   LookupResult FoundDelete(*this, DeleteName, StartLoc, LookupOrdinaryName);
   if (AllocElemType->isRecordType() && DeleteScope != AFS_Global) {
-    CXXRecordDecl *RD
-      = cast<CXXRecordDecl>(AllocElemType->getAs<RecordType>()->getDecl());
+    auto *RD =
+        cast<CXXRecordDecl>(AllocElemType->castAs<RecordType>()->getDecl());
     LookupQualifiedName(FoundDelete, RD);
   }
   if (FoundDelete.isAmbiguous())
@@ -5747,6 +5750,12 @@ QualType Sema::CXXCheckConditionalOperands(ExprResult &Cond, ExprResult &LHS,
   // Assume r-value.
   VK = VK_RValue;
   OK = OK_Ordinary;
+
+  // C++AMP
+  if(getLangOpts().CPlusPlusAMP) {
+    DiagnoseCXXAMPExpr(LHS.get()->IgnoreParenImpCasts(), LHS);
+    DiagnoseCXXAMPExpr(RHS.get()->IgnoreParenImpCasts(), RHS);
+  }
 
   // Either of the arguments dependent?
   if (LHS.get()->isTypeDependent() || RHS.get()->isTypeDependent())

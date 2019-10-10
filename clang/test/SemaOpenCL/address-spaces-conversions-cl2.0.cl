@@ -327,7 +327,7 @@ void test_conversion(__global int *arg_glob, __local int *arg_loc,
 
   b = var_sub - arg_priv;
 #ifndef GENERIC
-// expected-error-re@-2{{arithmetic operation with operands of type  ('__{{global|constant}} int *' and 'int *') which are pointers to non-overlapping address spaces}}
+// expected-error-re@-2{{arithmetic operation with operands of type  ('__{{global|constant}} int *' and '__private int *') which are pointers to non-overlapping address spaces}}
 #endif
 
   b = var_sub - arg_gen;

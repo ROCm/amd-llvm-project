@@ -472,7 +472,8 @@ public:
     return A == B ||
            // Otherwise in OpenCLC v2.0 s6.5.5: every address space except
            // for __constant can be used as __generic.
-           (A == LangAS::opencl_generic && B != LangAS::opencl_constant);
+           (A == LangAS::opencl_generic && B != LangAS::opencl_constant) ||
+           (A == LangAS::Default && B == LangAS::hcc_tilestatic);
   }
 
   /// Returns true if the address space in these qualifiers is equal to or
@@ -2394,6 +2395,12 @@ public:
   CanQualType getCanonicalTypeUnqualified() const; // in CanonicalType.h
   void dump() const;
   void dump(llvm::raw_ostream &OS) const;
+
+  friend class ASTReader;
+  friend class ASTWriter;
+
+  /// \brief True if object is of hc::array or Concurrency:type
+  bool isGPUArrayType() const;
 };
 
 /// This will check for a TypedefType by removing any existing sugar

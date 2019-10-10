@@ -240,9 +240,10 @@ llvm::Constant *CodeGenModule::getOrCreateStaticVarDecl(
 
   // OpenCL variables in local address space and CUDA shared
   // variables cannot have an initializer.
+  // HCC tile_static variables cannot have an initializer.
   llvm::Constant *Init = nullptr;
   if (Ty.getAddressSpace() == LangAS::opencl_local ||
-      D.hasAttr<CUDASharedAttr>())
+      D.hasAttr<CUDASharedAttr>() || D.hasAttr<HCCTileStaticAttr>())
     Init = llvm::UndefValue::get(LTy);
   else
     Init = EmitNullConstant(Ty);
@@ -250,7 +251,7 @@ llvm::Constant *CodeGenModule::getOrCreateStaticVarDecl(
   llvm::GlobalVariable *GV = new llvm::GlobalVariable(
       getModule(), LTy, Ty.isConstant(getContext()), Linkage, Init, Name,
       nullptr, llvm::GlobalVariable::NotThreadLocal, TargetAS);
-  GV->setAlignment(getContext().getDeclAlign(&D).getQuantity());
+  GV->setAlignment(getContext().getDeclAlign(&D).getAsAlign());
 
   if (supportsCOMDAT() && GV->isWeakForLinker())
     GV->setComdat(TheModule.getOrInsertComdat(GV->getName()));
@@ -262,6 +263,12 @@ llvm::Constant *CodeGenModule::getOrCreateStaticVarDecl(
 
   // Make sure the result is of the correct type.
   LangAS ExpectedAS = Ty.getAddressSpace();
+
+  // HCC tile_static pointer would be in generic address space
+  if (D.hasAttr<HCCTileStaticAttr>()) {
+    ExpectedAS = LangAS::hcc_generic;
+  }
+
   llvm::Constant *Addr = GV;
   if (AS != ExpectedAS) {
     Addr = getTargetCodeGenInfo().performAddrSpaceCast(
@@ -404,11 +411,13 @@ void CodeGenFunction::EmitStaticVarDecl(const VarDecl &D,
   // a no-op and should not be emitted.
   bool isCudaSharedVar = getLangOpts().CUDA && getLangOpts().CUDAIsDevice &&
                          D.hasAttr<CUDASharedAttr>();
+  bool isHCCAcceleratorPath =
+      getLangOpts().CPlusPlusAMP && getLangOpts().DevicePath;
   // If this value has an initializer, emit it.
-  if (D.getInit() && !isCudaSharedVar)
+  if (D.getInit() && !isCudaSharedVar && !isHCCAcceleratorPath)
     var = AddInitializerToStaticVarDecl(D, var);
 
-  var->setAlignment(alignment.getQuantity());
+  var->setAlignment(alignment.getAsAlign());
 
   if (D.hasAttr<AnnotateAttr>())
     CGM.AddGlobalAnnotations(&D, var);
@@ -1112,11 +1121,11 @@ Address CodeGenModule::createUnnamedGlobalFrom(const VarDecl &D,
     llvm::GlobalVariable *GV = new llvm::GlobalVariable(
         getModule(), Ty, isConstant, llvm::GlobalValue::PrivateLinkage,
         Constant, Name, InsertBefore, llvm::GlobalValue::NotThreadLocal, AS);
-    GV->setAlignment(Align.getQuantity());
+    GV->setAlignment(Align.getAsAlign());
     GV->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
     CacheEntry = GV;
   } else if (CacheEntry->getAlignment() < Align.getQuantity()) {
-    CacheEntry->setAlignment(Align.getQuantity());
+    CacheEntry->setAlignment(Align.getAsAlign());
   }
 
   return Address(CacheEntry, Align);
@@ -1548,6 +1557,18 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
     EmitAndRegisterVariableArrayDimensions(DI, D, EmitDebugInfo);
   }
 
+  auto T = D.getType();
+  assert(T.getAddressSpace() == LangAS::Default ||
+         T.getAddressSpace() == LangAS::opencl_private);
+  if (getASTAllocaAddressSpace() != LangAS::Default) {
+    auto *Addr = getTargetHooks().performAddrSpaceCast(
+        *this, address.getPointer(), getASTAllocaAddressSpace(),
+        T.getAddressSpace(),
+        address.getElementType()->getPointerTo(
+            getContext().getTargetAddressSpace(T.getAddressSpace())),
+        /*non-null*/ true);
+    address = Address(Addr, address.getAlignment());
+  }
   setAddrOfLocalVar(&D, address);
   emission.Addr = address;
   emission.AllocaAddr = AllocaAddr;
@@ -2374,6 +2395,7 @@ void CodeGenFunction::EmitParmDecl(const VarDecl &D, ParamValue Arg,
     llvm::Type *IRTy = ConvertTypeForMem(Ty)->getPointerTo(AS);
     if (DeclPtr.getType() != IRTy)
       DeclPtr = Builder.CreateBitCast(DeclPtr, IRTy, D.getName());
+
     // Indirect argument is in alloca address space, which may be different
     // from the default address space.
     auto AllocaAS = CGM.getASTAllocaAddressSpace();
@@ -2395,7 +2417,7 @@ void CodeGenFunction::EmitParmDecl(const VarDecl &D, ParamValue Arg,
     // Don't push a cleanup in a thunk for a method that will also emit a
     // cleanup.
     if (hasAggregateEvaluationKind(Ty) && !CurFuncIsThunk &&
-        Ty->getAs<RecordType>()->getDecl()->isParamDestroyedInCallee()) {
+        Ty->castAs<RecordType>()->getDecl()->isParamDestroyedInCallee()) {
       if (QualType::DestructionKind DtorKind =
               D.needsDestruction(getContext())) {
         assert((DtorKind == QualType::DK_cxx_destructor ||

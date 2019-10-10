@@ -50,6 +50,17 @@ inline bool DeclAttrsMatchCUDAMode(const LangOptions &LangOpts, Decl *D) {
   return isDeviceSideDecl == LangOpts.CUDAIsDevice;
 }
 
+// Helper function to check whether D's attributes match current HCC mode.
+// Decls with mismatched attributes and related diagnostics may have to be
+// ignored during this HCC compilation pass.
+inline bool DeclAttrsMatchHCCMode(const LangOptions &LangOpts, Decl *D) {
+  if (!LangOpts.CPlusPlusAMP || !D)
+    return true;
+  bool isDeviceSideDecl = D->hasAttr<CXXAMPRestrictAMPAttr>() ||
+                          D->hasAttr<HC_HCAttr>();
+  return isDeviceSideDecl == LangOpts.DevicePath;
+}
+
 /// Return a DLL attribute from the declaration.
 inline InheritableAttr *getDLLAttr(Decl *D) {
   assert(!(D->hasAttr<DLLImportAttr>() && D->hasAttr<DLLExportAttr>()) &&

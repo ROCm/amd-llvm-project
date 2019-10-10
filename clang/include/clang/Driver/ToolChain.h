@@ -49,12 +49,12 @@ namespace clang {
 class ObjCRuntime;
 
 namespace driver {
-
-class Driver;
-class InputInfo;
-class SanitizerArgs;
-class Tool;
-class XRayArgs;
+  class HCCInstallationDetector;
+  class Driver;
+  class InputInfo;
+  class SanitizerArgs;
+  class Tool;
+  class XRayArgs;
 
 /// Helper structure used to pass information extracted from clang executable
 /// name such as `i686-linux-android-g++`.
@@ -580,6 +580,9 @@ public:
   /// Add arguments to use system-specific CUDA includes.
   virtual void AddCudaIncludeArgs(const llvm::opt::ArgList &DriverArgs,
                                   llvm::opt::ArgStringList &CC1Args) const;
+
+  virtual void AddHCCIncludeArgs(const llvm::opt::ArgList &DriverArgs,
+                                 llvm::opt::ArgStringList &CC1Args) const;
 
   /// Add arguments to use MCU GCC toolchain includes.
   virtual void AddIAMCUIncludeArgs(const llvm::opt::ArgList &DriverArgs,

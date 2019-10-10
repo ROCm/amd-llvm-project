@@ -89,6 +89,7 @@ public:
     OFK_Cuda = 0x02,
     OFK_OpenMP = 0x04,
     OFK_HIP = 0x08,
+    OFK_HCC = 0x16,
   };
 
   static const char *getClassName(ActionClass AC);
@@ -207,6 +208,13 @@ public:
   bool isOffloading(OffloadKind OKind) const {
     return isHostOffloading(OKind) || isDeviceOffloading(OKind);
   }
+
+  /// Check whether the given input tree starts with or contains an action of
+  /// the kind kind and actions of the type typesID.
+  bool ContainsActions(ActionClass kind,
+                       types::ID typesID,
+                       bool singleInputActionsOnly = true,
+                       bool startsWithActionKind = true) const;
 };
 
 class InputAction : public Action {

@@ -547,7 +547,7 @@ static bool checkRecordDeclForAttr(const RecordDecl *RD) {
               // If it's type-dependent, we assume it could have the attribute.
               if (Ty.isDependentType())
                 return true;
-              return Ty.getAs<RecordType>()->getDecl()->hasAttr<AttrType>();
+              return Ty.castAs<RecordType>()->getDecl()->hasAttr<AttrType>();
             },
             BPaths, true))
       return true;
@@ -4217,6 +4217,11 @@ static void handleSharedAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
   D->addAttr(::new (S.Context) CUDASharedAttr(S.Context, AL));
 }
 
+static void handleHCCTileStaticAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
+  // FIXME more checkings to follow
+  D->addAttr(::new (S.Context) HCCTileStaticAttr(S.Context, AL.getRange()));
+}
+
 static void handleGlobalAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
   if (checkAttrMutualExclusion<CUDADeviceAttr>(S, D, AL) ||
       checkAttrMutualExclusion<CUDAHostAttr>(S, D, AL)) {
@@ -5748,6 +5753,117 @@ static void handleInterruptAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
   }
 }
 
+class AMDGPUISAVersionChecker {
+public:
+  AMDGPUISAVersionChecker(Sema &S):S(S){
+    GPU = S.getASTContext().getTargetInfo().getTargetOpts().CPU;
+  }
+
+  /// Check GPU ISA version parameter of AMDGPU attributes.
+  /// The ISA version parameter is either a three-digit ISA version string
+  /// prefixed by "gfx", e.g. "gfx810", or a case insensitive device name,
+  /// e.g. "Fiji".
+  /// \param Attr is AMDGPU attribute containing ISA version parameter.
+  /// \param Index is the index for the ISA version parameter.
+  /// \param ISA will contain the ISA version string if returning true.
+  /// \return true if the attribute does not contain the ISA version parameter,
+  ///         or the ISA version parameter is empty, or the ISA version
+  ///         parameter and the target GPU have the same ISA version.
+  bool checkAMDGPUISAVersion(const ParsedAttr &Attr, unsigned Index,
+      StringRef &ISA) {
+    if (Attr.getNumArgs() <= Index) {
+      ISA = "";
+      return true;
+    }
+
+    if (!S.checkStringLiteralArgumentAttr(Attr, Index, ISA))
+      return false;
+
+    if (ISA.empty())
+      return true;
+    auto ISAVer = parseAMDGPUISAVersion(ISA);
+    if (ISAVer == AMDGPU_ISA_NONE || !ISA.startswith("gfx")) {
+      S.Diag(Attr.getLoc(), diag::err_attribute_amdgpu_invalid_isa_version)
+        << ISA;
+      return false;
+    }
+    return ISAVer == parseAMDGPUISAVersion(GPU);
+  }
+
+private:
+  Sema &S;
+  StringRef GPU; // target GPU specified by -target-cpu option
+
+  /// \brief The ISA version of AMD GPU.
+  enum AMDGPUISAVersion {
+    AMDGPU_ISA_NONE,
+    AMDGPU_ISA_600,
+    AMDGPU_ISA_700,
+    AMDGPU_ISA_701,
+    AMDGPU_ISA_800,
+    AMDGPU_ISA_801,
+    AMDGPU_ISA_802,
+    AMDGPU_ISA_803,
+  };
+
+  // Parse AMDGPU ISA version string.
+  // \param ISA is either a three-digit ISA version string with prefix "gfx",
+  //        e.g. "gfx810", or a case insensitive device name, e.g. "Fiji".
+  // \return AMDGPU ISA version.
+  // ToDo: The cases need to cover both ISA version parameter of register
+  // control attributes and -target-cpu option. We should phase out using GPU
+  // code names in -target-cpu option and remove them from below.
+  AMDGPUISAVersion parseAMDGPUISAVersion(StringRef ISA) {
+    return llvm::StringSwitch<AMDGPUISAVersion>(ISA.lower())
+      .Case("",          AMDGPU_ISA_600)
+      .Case("gfx600",    AMDGPU_ISA_600)
+      .Case("gfx700",    AMDGPU_ISA_700)
+      .Case("gfx701",    AMDGPU_ISA_701)
+      .Case("gfx800",    AMDGPU_ISA_800)
+      .Case("gfx801",    AMDGPU_ISA_801)
+      .Case("gfx802",    AMDGPU_ISA_802)
+      .Case("gfx803",    AMDGPU_ISA_803)
+      .Case("tahiti",    AMDGPU_ISA_600)
+      .Case("pitcairn",  AMDGPU_ISA_600)
+      .Case("verde",     AMDGPU_ISA_600)
+      .Case("oland",     AMDGPU_ISA_600)
+      .Case("hainan",    AMDGPU_ISA_600)
+      .Case("bonaire",   AMDGPU_ISA_700)
+      .Case("kabini",    AMDGPU_ISA_700)
+      .Case("kaveri",    AMDGPU_ISA_700)
+      .Case("hawaii",    AMDGPU_ISA_701)
+      .Case("mullins",   AMDGPU_ISA_700)
+      .Case("tonga",     AMDGPU_ISA_802)
+      .Case("iceland",   AMDGPU_ISA_800)
+      .Case("carrizo",   AMDGPU_ISA_801)
+      .Case("fiji",      AMDGPU_ISA_803)
+      .Case("stoney",    AMDGPU_ISA_801)
+      .Case("polaris10", AMDGPU_ISA_803)
+      .Case("polaris11", AMDGPU_ISA_803)
+      .Default(AMDGPU_ISA_NONE);
+  }
+};
+
+namespace
+{
+  inline
+  bool checkAllAreIntegral(const ParsedAttr &Attr, Sema &S) {
+    for (auto i = 0u; i != Attr.getNumArgs(); ++i) {
+      auto e = Attr.getArgAsExpr(i);
+      if (e && !e->getType()->isIntegralOrEnumerationType()) {
+        S.Diag(getAttrLoc(Attr), diag::err_attribute_argument_n_type)
+          << Attr << i << AANT_ArgumentIntegerConstant
+          << e->getSourceRange();
+
+        return false;
+      }
+    }
+
+    return true;
+  }
+}
+
+
 static bool
 checkAMDGPUFlatWorkGroupSizeArguments(Sema &S, Expr *MinExpr, Expr *MaxExpr,
                                       const AMDGPUFlatWorkGroupSizeAttr &Attr) {
@@ -5757,11 +5873,11 @@ checkAMDGPUFlatWorkGroupSizeArguments(Sema &S, Expr *MinExpr, Expr *MaxExpr,
     return false;
 
   uint32_t Min = 0;
-  if (!checkUInt32Argument(S, Attr, MinExpr, Min, 0))
+  if (MinExpr->isEvaluatable(S.Context) && !checkUInt32Argument(S, Attr, MinExpr, Min, 0))
     return true;
 
   uint32_t Max = 0;
-  if (!checkUInt32Argument(S, Attr, MaxExpr, Max, 1))
+  if (MaxExpr->isEvaluatable(S.Context) && !checkUInt32Argument(S, Attr, MaxExpr, Max, 1))
     return true;
 
   if (Min == 0 && Max != 0) {
@@ -5793,7 +5909,9 @@ void Sema::addAMDGPUFlatWorkGroupSizeAttr(Decl *D,
 static void handleAMDGPUFlatWorkGroupSizeAttr(Sema &S, Decl *D,
                                               const ParsedAttr &AL) {
   Expr *MinExpr = AL.getArgAsExpr(0);
-  Expr *MaxExpr = AL.getArgAsExpr(1);
+  Expr *MaxExpr = MinExpr;
+  if (AL.getNumArgs() > 1)
+    MaxExpr = AL.getArgAsExpr(1);
 
   S.addAMDGPUFlatWorkGroupSizeAttr(D, AL, MinExpr, MaxExpr);
 }
@@ -5855,21 +5973,64 @@ static void handleAMDGPUWavesPerEUAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
 }
 
 static void handleAMDGPUNumSGPRAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
+
+  if (!checkAllAreIntegral(AL, S))
+    return;
+
   uint32_t NumSGPR = 0;
   Expr *NumSGPRExpr = AL.getArgAsExpr(0);
-  if (!checkUInt32Argument(S, AL, NumSGPRExpr, NumSGPR))
+  if (NumSGPRExpr->isEvaluatable(S.Context) &&
+      !checkUInt32Argument(S, AL, NumSGPRExpr, NumSGPR))
     return;
 
   D->addAttr(::new (S.Context) AMDGPUNumSGPRAttr(S.Context, AL, NumSGPR));
 }
 
 static void handleAMDGPUNumVGPRAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
+
+  if (!checkAllAreIntegral(AL, S))
+    return;
+
   uint32_t NumVGPR = 0;
   Expr *NumVGPRExpr = AL.getArgAsExpr(0);
-  if (!checkUInt32Argument(S, AL, NumVGPRExpr, NumVGPR))
+  if (NumVGPRExpr->isEvaluatable(S.Context) &&
+      !checkUInt32Argument(S, AL, NumVGPRExpr, NumVGPR))
     return;
 
   D->addAttr(::new (S.Context) AMDGPUNumVGPRAttr(S.Context, AL, NumVGPR));
+}
+
+static void handleAMDGPUMaxWorkGroupDimAttr(Sema &S, Decl *D,
+                                            const ParsedAttr &Attr) {
+  if (!checkAllAreIntegral(Attr, S))
+    return;
+  if (!checkAttributeAtLeastNumArgs(S, Attr, 3))
+    return;
+
+  uint32_t X = 0;
+  Expr *XExpr = Attr.getArgAsExpr(0);
+  if (XExpr->isEvaluatable(S.Context) &&
+      !checkUInt32Argument(S, Attr, XExpr, X))
+    return;
+
+  uint32_t Y = 0;
+  Expr *YExpr = Attr.getArgAsExpr(1);
+  if (YExpr->isEvaluatable(S.Context) &&
+      !checkUInt32Argument(S, Attr, YExpr, Y))
+    return;
+
+  uint32_t Z = 0;
+  Expr *ZExpr = Attr.getArgAsExpr(2);
+  if (ZExpr->isEvaluatable(S.Context) &&
+      !checkUInt32Argument(S, Attr, ZExpr, Z))
+    return;
+
+  AMDGPUISAVersionChecker VC(S);
+  StringRef ISA;
+  if (VC.checkAMDGPUISAVersion(Attr, 3, ISA))
+    D->addAttr(::new (S.Context)
+         AMDGPUMaxWorkGroupDimAttr(S.Context, Attr.getLoc(), XExpr, YExpr,
+                                   ZExpr, ISA));
 }
 
 static void handleX86ForceAlignArgPointerAttr(Sema &S, Decl *D,
@@ -6407,6 +6568,65 @@ static void handleMSAllocatorAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
 }
 
 //===----------------------------------------------------------------------===//
+// C++ AMP specific attribute handlers.
+// FIXME: Merge these handlers with handleSimpleAttribute
+//===----------------------------------------------------------------------===//
+
+static void handleAutoAttr(Sema &S, Decl *D, const ParsedAttr &Attr) {
+  if (S.LangOpts.CUDA) {
+    // No support for now
+  } else if (S.LangOpts.CPlusPlusAMP) {
+    D->addAttr(::new (S.Context) AlwaysInlineAttr(S.Context, Attr.getRange()));
+    D->addAttr(::new (S.Context) CXXAMPRestrictAUTOAttr(S.Context, Attr.getRange()));
+  } else {
+    S.Diag(Attr.getLoc(), diag::warn_attribute_ignored) << "auto";
+  }
+}
+
+static void handleDeviceAttr(Sema &S, Decl *D, const ParsedAttr &Attr) {
+  if (S.LangOpts.CUDA) {
+    // check the attribute arguments.
+    if (Attr.getNumArgs() != 0) {
+      S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments) << 0;
+      return;
+    }
+
+    if (!isa<FunctionDecl>(D) && !isa<VarDecl>(D)) {
+      S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
+        << Attr << ExpectedVariableOrFunction;
+      return;
+    }
+
+    D->addAttr(::new (S.Context)
+               CUDADeviceAttr(S.Context, Attr.getRange()));
+  } else if (S.LangOpts.CPlusPlusAMP) {
+    D->addAttr(::new (S.Context) CXXAMPRestrictAMPAttr(S.Context, Attr.getRange()));
+  } else {
+    S.Diag(Attr.getLoc(), diag::warn_attribute_ignored) << "device";
+  }
+}
+
+static void handleHostAttr(Sema &S, Decl *D, const ParsedAttr &Attr) {
+  if (S.LangOpts.CUDA) {
+    // check the attribute arguments.
+    if (!checkAttributeNumArgs(S, Attr, 0))
+      return;
+
+    if (!isa<FunctionDecl>(D)) {
+      S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
+        << Attr << ExpectedFunction;
+      return;
+    }
+
+    D->addAttr(::new (S.Context) CUDAHostAttr(S.Context, Attr.getRange()));
+  } else if (S.LangOpts.CPlusPlusAMP) {
+    D->addAttr(::new (S.Context) CXXAMPRestrictCPUAttr(S.Context, Attr.getRange()));
+  } else {
+    S.Diag(Attr.getLoc(), diag::warn_attribute_ignored) << "host";
+  }
+}
+
+//===----------------------------------------------------------------------===//
 // Top Level Sema Entry Points
 //===----------------------------------------------------------------------===//
 
@@ -6421,7 +6641,12 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
 
   // Ignore C++11 attributes on declarator chunks: they appertain to the type
   // instead.
-  if (AL.isCXX11Attribute() && !IncludeCXX11Attributes)
+  if (AL.isCXX11Attribute() && !IncludeCXX11Attributes &&
+      AL.getKind() != ParsedAttr::AT_HC_HC &&
+      AL.getKind() != ParsedAttr::AT_HC_CPU &&
+      AL.getKind() != ParsedAttr::AT_AMDGPUWavesPerEU &&
+      AL.getKind() != ParsedAttr::AT_AMDGPUFlatWorkGroupSize &&
+      AL.getKind() != ParsedAttr::AT_AMDGPUMaxWorkGroupDim)
     return;
 
   // Unknown attributes are automatically warned on. Target-specific attributes
@@ -6492,6 +6717,9 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
     break;
   case ParsedAttr::AT_AMDGPUNumVGPR:
     handleAMDGPUNumVGPRAttr(S, D, AL);
+    break;
+  case ParsedAttr::AT_AMDGPUMaxWorkGroupDim:
+    handleAMDGPUMaxWorkGroupDimAttr(S, D, AL);
     break;
   case ParsedAttr::AT_AVRSignal:
     handleAVRSignalAttr(S, D, AL);
@@ -6611,9 +6839,19 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
   case ParsedAttr::AT_CUDAGlobal:
     handleGlobalAttr(S, D, AL);
     break;
+  case ParsedAttr::AT_HC_HC:
+  case ParsedAttr::AT_CXXAMPRestrictAMP:
+    handleDeviceAttr(S, D, AL);
+    break;
+  case ParsedAttr::AT_HC_CPU:
+  case ParsedAttr::AT_CXXAMPRestrictCPU:
+    handleHostAttr(S, D, AL);
+    break;
+  case ParsedAttr::AT_CXXAMPRestrictAUTO:
+    handleAutoAttr(S, D, AL);
+    break;
   case ParsedAttr::AT_CUDADevice:
-    handleSimpleAttributeWithExclusions<CUDADeviceAttr, CUDAGlobalAttr>(S, D,
-                                                                        AL);
+    handleSimpleAttributeWithExclusions<CUDADeviceAttr, CUDAGlobalAttr>(S, D, AL);
     break;
   case ParsedAttr::AT_CUDAHost:
     handleSimpleAttributeWithExclusions<CUDAHostAttr, CUDAGlobalAttr>(S, D, AL);
@@ -6697,6 +6935,9 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
     break;
   case ParsedAttr::AT_CUDAShared:
     handleSharedAttr(S, D, AL);
+    break;
+  case ParsedAttr::AT_HCCTileStatic:
+    handleHCCTileStaticAttr(S, D, AL);
     break;
   case ParsedAttr::AT_VecReturn:
     handleVecReturnAttr(S, D, AL);
@@ -7205,7 +7446,7 @@ void Sema::ProcessDeclAttributeList(Scope *S, Decl *D,
     } else if (const auto *A = D->getAttr<OpenCLIntelReqdSubGroupSizeAttr>()) {
       Diag(D->getLocation(), diag::err_opencl_kernel_attr) << A;
       D->setInvalidDecl();
-    } else if (!D->hasAttr<CUDAGlobalAttr>()) {
+    } else if (!D->hasAttr<CUDAGlobalAttr>() && !D->hasAttr<CXXAMPRestrictAMPAttr>()) {
       if (const auto *A = D->getAttr<AMDGPUFlatWorkGroupSizeAttr>()) {
         Diag(D->getLocation(), diag::err_attribute_wrong_decl_type)
             << A << ExpectedKernelFunction;

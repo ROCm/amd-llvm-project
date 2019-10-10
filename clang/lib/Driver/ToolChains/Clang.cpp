@@ -145,6 +145,11 @@ forAllAssociatedToolChains(Compilation &C, const JobAction &JA,
   } else if (JA.isDeviceOffloading(Action::OFK_OpenMP))
     Work(*C.getSingleOffloadToolChain<Action::OFK_Host>());
 
+  if (JA.isHostOffloading(Action::OFK_HCC))
+    Work(*C.getSingleOffloadToolChain<Action::OFK_HCC>());
+  else if (JA.isDeviceOffloading(Action::OFK_HCC))
+    Work(*C.getSingleOffloadToolChain<Action::OFK_Host>());
+
   //
   // TODO: Add support for other offloading programming models here.
   //
@@ -1172,6 +1177,10 @@ void Clang::AddPreprocessingOptions(Compilation &C, const JobAction &JA,
   // /usr/local/include.
   if (JA.isOffloading(Action::OFK_Cuda))
     getToolChain().AddCudaIncludeArgs(Args, CmdArgs);
+
+  if (Args.hasArg(options::OPT_famp) ||
+    Args.getLastArgValue(options::OPT_std_EQ).equals("c++amp"))
+    getToolChain().AddHCCIncludeArgs(Args, CmdArgs);
 
   // If we are offloading to a target via OpenMP we need to include the
   // openmp_wrappers folder which contains alternative system headers.
@@ -3217,7 +3226,7 @@ static DwarfFissionKind getDebugFissionKind(const Driver &D,
 static void RenderDebugOptions(const ToolChain &TC, const Driver &D,
                                const llvm::Triple &T, const ArgList &Args,
                                bool EmitCodeView, bool IsWindowsMSVC,
-                               ArgStringList &CmdArgs,
+                               bool IsHCCKernelPath, ArgStringList &CmdArgs,
                                codegenoptions::DebugInfoKind &DebugInfoKind,
                                DwarfFissionKind &DwarfFission) {
   if (Args.hasFlag(options::OPT_fdebug_info_for_profiling,
@@ -3536,6 +3545,32 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // FIXME: Implement custom jobs for internal actions.
   CmdArgs.push_back("-cc1");
 
+  // add HCC macros, based on compiler modes
+  if (Args.hasArg(options::OPT_hc_mode)) {
+    CmdArgs.push_back("-D__KALMAR_HC__=1");
+    CmdArgs.push_back("-D__HCC_HC__=1");
+  } else if (Args.hasArg(options::OPT_famp) ||
+    Args.getLastArgValue(options::OPT_std_EQ).equals("c++amp")) {
+    CmdArgs.push_back("-D__KALMAR_AMP__=1");
+    CmdArgs.push_back("-D__HCC_AMP__=1");
+  }
+
+  // C++ AMP-specific
+  if (JA.ContainsActions(Action::BackendJobClass, types::TY_PP_CXX_AMP) ||
+      JA.ContainsActions(Action::PreprocessJobClass, types::TY_HC_KERNEL) ||
+      JA.ContainsActions(Action::PreprocessJobClass, types::TY_CXX_AMP)) {
+    // path to compile kernel codes on GPU
+    CmdArgs.push_back("-famp-is-device");
+    CmdArgs.push_back("-fno-builtin");
+    CmdArgs.push_back("-fno-common");
+    if (!Args.hasArg(options::OPT_O_Group)) CmdArgs.push_back("-O2");
+  } else if (JA.ContainsActions(Action::BackendJobClass, types::TY_PP_CXX_AMP_CPU) ||
+             JA.ContainsActions(Action::PreprocessJobClass, types::TY_CXX_AMP_CPU)) {
+    // path to compile kernel codes on CPU
+    CmdArgs.push_back("-famp-is-device");
+    CmdArgs.push_back("-famp-cpu");
+  }
+
   // Add the "effective" target triple.
   CmdArgs.push_back("-triple");
   CmdArgs.push_back(Args.MakeArgString(TripleStr));
@@ -3578,6 +3613,20 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
               CudaVersionToString(CTC->CudaInstallation.version())));
       }
     }
+    CmdArgs.push_back("-aux-triple");
+    CmdArgs.push_back(Args.MakeArgString(NormalizedTriple));
+  }
+
+  // Make sure host triple is specified for HCC kernel compilation path
+  bool IsHCCKernelPath = JA.ContainsActions(Action::BackendJobClass, types::TY_PP_CXX_AMP) ||
+                         JA.ContainsActions(Action::BackendJobClass, types::TY_PP_CXX_AMP_CPU);
+  if (IsHCCKernelPath) {
+    // We have to pass the triple of the host if compiling for a HCC device
+    std::string NormalizedTriple;
+    NormalizedTriple = C.getSingleOffloadToolChain<Action::OFK_Host>()
+                         ->getTriple()
+                         .normalize();
+
     CmdArgs.push_back("-aux-triple");
     CmdArgs.push_back(Args.MakeArgString(NormalizedTriple));
   }
@@ -3891,7 +3940,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // Discard value names in assert builds unless otherwise specified.
   if (Args.hasFlag(options::OPT_fdiscard_value_names,
                    options::OPT_fno_discard_value_names, !IsAssertBuild))
-    CmdArgs.push_back("-discard-value-names");
+      
+    if (!Args.hasArg(options::OPT_hc_mode))
+       CmdArgs.push_back("-discard-value-names");
 
   // Set the main file name, so that debug info works even with
   // -save-temps.
@@ -4225,7 +4276,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     AddClangCLArgs(Args, InputType, CmdArgs, &DebugInfoKind, &EmitCodeView);
 
   DwarfFissionKind DwarfFission;
-  RenderDebugOptions(TC, D, RawTriple, Args, EmitCodeView, IsWindowsMSVC,
+  RenderDebugOptions(TC, D, RawTriple, Args, EmitCodeView, IsWindowsMSVC, IsHCCKernelPath,
                      CmdArgs, DebugInfoKind, DwarfFission);
 
   // Add the split debug info name to the command lines here so we
@@ -5413,6 +5464,25 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("-fcuda-short-ptr");
   }
 
+  if (Args.hasArg(options::OPT_hc_mode) ||
+    Args.hasArg(options::OPT_famp) ||
+    Args.getLastArgValue(options::OPT_std_EQ).equals("c++amp")) {
+
+    // Generate *relocatable* code by default for HCC
+    // In reality, HCC doesn't support relocatible code at the moment.
+    // What it really cares about is -fno-gpu-rdc, which instructs
+    // HCC to generate non-relocatable code.  This is a hint for HCC
+    // to enable early finalization because kernels don't contain calls 
+    // to functions defined in another module.
+    if (Args.hasFlag(options::OPT_fgpu_rdc, options::OPT_fno_gpu_rdc, true))
+      CmdArgs.push_back("-fgpu-rdc");
+  }
+
+  if (IsHIP) {
+    CmdArgs.push_back("-fcuda-allow-variadic-functions");
+    CmdArgs.push_back("-fcuda-force-lambda-odr");
+  }
+
   // OpenMP offloading device jobs take the argument -fopenmp-host-ir-file-path
   // to specify the result of the compile phase on the host, so the meaningful
   // device declarations can be identified. Also, -fopenmp-is-device is passed
@@ -5454,6 +5524,13 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
           << "-fwhole-program-vtables"
           << "-flto";
     CmdArgs.push_back("-fwhole-program-vtables");
+  }
+
+  // C++ AMP-specific
+  if (JA.ContainsActions(Action::BackendJobClass, types::TY_PP_CXX_AMP) ||
+      JA.ContainsActions(Action::BackendJobClass, types::TY_PP_CXX_AMP_CPU) ||
+      JA.ContainsActions(Action::BackendJobClass, types::TY_PP_HC_HOST)) {
+    CmdArgs.push_back("-emit-llvm-bc");
   }
 
   bool DefaultsSplitLTOUnit = WholeProgramVTables || Sanitize.needsLTO();
@@ -5563,6 +5640,17 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // the -cc1 command easier to edit when reproducing compiler crashes.
   if (Output.getType() == types::TY_Dependencies) {
     // Handled with other dependency code.
+  } else if (Output.isFilename() &&
+             (JA.ContainsActions(Action::PreprocessJobClass, types::TY_HC_KERNEL) ||
+              JA.ContainsActions(Action::PreprocessJobClass, types::TY_CXX_AMP) ||
+              JA.ContainsActions(Action::PreprocessJobClass, types::TY_CXX_AMP_CPU))) {
+    CmdArgs.push_back("-o");
+    SmallString<128> KernelPreprocessFile(Output.getFilename());
+    if (JA.ContainsActions(Action::PreprocessJobClass, types::TY_CXX_AMP_CPU)) {
+      llvm::sys::path::replace_extension(KernelPreprocessFile, ".amp_cpu.i");
+    } else {
+      llvm::sys::path::replace_extension(KernelPreprocessFile, ".gpu.i");
+    }
   } else if (Output.isFilename()) {
     CmdArgs.push_back("-o");
     CmdArgs.push_back(Output.getFilename());

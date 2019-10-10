@@ -590,6 +590,13 @@ class CXXRecordDecl : public RecordDecl {
     /// mangling in the Itanium C++ ABI.
     unsigned ManglingNumber = 0;
 
+    /// The device side name mangling number.
+    unsigned DeviceManglingNumber = 0;
+
+    /// The mangling number is enforced to ensure ODR naming.
+    // FIXME: Save bit from `NumCaptures` to minimize `LambdaDefinitionData`.
+    bool ForcedNumbering = false;
+
     /// The declaration that provides context for this lambda, if the
     /// actual DeclContext does not suffice. This is used for lambdas that
     /// occur within default arguments of function parameters within the class
@@ -933,9 +940,21 @@ public:
   /// This value is used for lazy creation of default constructors.
   bool needsImplicitDefaultConstructor() const {
     return !data().UserDeclaredConstructor &&
-           !(data().DeclaredSpecialMembers & SMF_DefaultConstructor) &&
+           !(data().DeclaredSpecialMembers & SMF_DefaultConstructor)
+           // UPGRADE_TBD: workaround to avoid "no matching constructor" issue
+#if 1
+           ;
+#else
+           &&
+           // C++14 [expr.prim.lambda]p20:
+           //   The closure type associated with a lambda-expression has no
+           //   default constructor.
            (!isLambda() || lambdaIsDefaultConstructibleAndAssignable());
+#endif
   }
+
+  /// Returns the deserialization constructor for this class.
+  CXXMethodDecl *getCXXAMPDeserializationConstructor() const;
 
   /// Determine whether this class has any user-declared constructors.
   ///
@@ -1902,6 +1921,11 @@ public:
     return getLambdaData().ManglingNumber;
   }
 
+  bool hasForcedLambdaManglingNumber() const {
+    assert(isLambda() && "Not a lambda closure type!");
+    return getLambdaData().ForcedNumbering;
+  }
+
   /// Retrieve the declaration that provides additional context for a
   /// lambda, when the normal declaration context is not specific enough.
   ///
@@ -1915,9 +1939,21 @@ public:
 
   /// Set the mangling number and context declaration for a lambda
   /// class.
-  void setLambdaMangling(unsigned ManglingNumber, Decl *ContextDecl) {
+  void setLambdaMangling(unsigned ManglingNumber, Decl *ContextDecl,
+                         bool Forced = false) {
     getLambdaData().ManglingNumber = ManglingNumber;
+    getLambdaData().ForcedNumbering = Forced;
     getLambdaData().ContextDecl = ContextDecl;
+  }
+
+  /// Set the device side mangling number.
+  void setDeviceLambdaManglingNumber(unsigned Num) {
+    getLambdaData().DeviceManglingNumber = Num;
+  }
+
+  unsigned getDeviceLambdaManglingNumber() const {
+    assert(isLambda() && "Not a lambda closure type!");
+    return getLambdaData().DeviceManglingNumber;
   }
 
   /// Returns the inheritance model used for this record.

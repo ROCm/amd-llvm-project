@@ -689,14 +689,16 @@ ExprResult Parser::ParseCXXIdExpression(bool isAddressOfOperand) {
 ExprResult Parser::ParseLambdaExpression() {
   // Parse lambda-introducer.
   LambdaIntroducer Intro;
-  if (ParseLambdaIntroducer(Intro)) {
+  ParsedAttributes AttrIntro(AttrFactory);
+
+  if (ParseLambdaIntroducer(Intro, AttrIntro)) {
     SkipUntil(tok::r_square, StopAtSemi);
     SkipUntil(tok::l_brace, StopAtSemi);
     SkipUntil(tok::r_brace, StopAtSemi);
     return ExprError();
   }
 
-  return ParseLambdaExpressionAfterIntroducer(Intro);
+  return ParseLambdaExpressionAfterIntroducer(Intro, AttrIntro);
 }
 
 /// Use lookahead and potentially tentative parsing to determine if we are
@@ -704,9 +706,11 @@ ExprResult Parser::ParseLambdaExpression() {
 ///
 /// If we are not looking at a lambda expression, returns ExprError().
 ExprResult Parser::TryParseLambdaExpression() {
+#if 0
   assert(getLangOpts().CPlusPlus11
          && Tok.is(tok::l_square)
          && "Not at the start of a possible lambda expression.");
+#endif
 
   const Token Next = NextToken();
   if (Next.is(tok::eof)) // Nothing else to lookup here...
@@ -714,7 +718,8 @@ ExprResult Parser::TryParseLambdaExpression() {
 
   const Token After = GetLookAheadToken(2);
   // If lookahead indicates this is a lambda...
-  if (Next.is(tok::r_square) ||     // []
+  if (Next.is(tok::kw___attribute) || // __attribute
+      Next.is(tok::r_square) ||     // []
       Next.is(tok::equal) ||        // [=
       (Next.is(tok::amp) &&         // [&] or [&,
        After.isOneOf(tok::r_square, tok::comma)) ||
@@ -735,10 +740,16 @@ ExprResult Parser::TryParseLambdaExpression() {
   // writing two routines to parse a lambda introducer, just try to parse
   // a lambda introducer first, and fall back if that fails.
   LambdaIntroducer Intro;
+  ParsedAttributes AttrIntro(AttrFactory);
+  if (getLangOpts().CPlusPlusAMP) {
+    if (TryParseLambdaIntroducer(Intro, AttrIntro))
+      return ExprEmpty();
+  }
+
   {
     TentativeParsingAction TPA(*this);
     LambdaIntroducerTentativeParse Tentative;
-    if (ParseLambdaIntroducer(Intro, &Tentative)) {
+    if (ParseLambdaIntroducer(Intro, AttrIntro, &Tentative)) {
       TPA.Commit();
       return ExprError();
     }
@@ -753,7 +764,7 @@ ExprResult Parser::TryParseLambdaExpression() {
       // non-tentative parse.
       TPA.Revert();
       Intro = LambdaIntroducer();
-      if (ParseLambdaIntroducer(Intro))
+      if (ParseLambdaIntroducer(Intro, AttrIntro))
         return ExprError();
       break;
 
@@ -765,7 +776,7 @@ ExprResult Parser::TryParseLambdaExpression() {
     }
   }
 
-  return ParseLambdaExpressionAfterIntroducer(Intro);
+  return ParseLambdaExpressionAfterIntroducer(Intro, AttrIntro);
 }
 
 /// Parse a lambda introducer.
@@ -778,11 +789,22 @@ ExprResult Parser::TryParseLambdaExpression() {
 /// \return \c true if parsing (or disambiguation) failed with a diagnostic and
 ///         the caller should bail out / recover.
 bool Parser::ParseLambdaIntroducer(LambdaIntroducer &Intro,
+		                           ParsedAttributes &AttrIntro,
                                    LambdaIntroducerTentativeParse *Tentative) {
   if (Tentative)
     *Tentative = LambdaIntroducerTentativeParse::Success;
 
+
+  // try parse attributes before parameter list
+  if (getLangOpts().CPlusPlusAMP) {
+	SourceLocation DeclEndLoc = Intro.Range.getEnd();
+    MaybeParseGNUAttributes(AttrIntro, &DeclEndLoc);
+  }
+
+
+#if 0
   assert(Tok.is(tok::l_square) && "Lambda expressions begin with '['.");
+#endif
   BalancedDelimiterTracker T(*this, tok::l_square);
   T.consumeOpen();
 
@@ -1101,11 +1123,37 @@ bool Parser::ParseLambdaIntroducer(LambdaIntroducer &Intro,
   return false;
 }
 
+/// TryParseLambdaIntroducer - Tentatively parse a lambda introducer.
+///
+/// Returns true if it hit something unexpected.
+bool Parser::TryParseLambdaIntroducer(LambdaIntroducer &Intro, ParsedAttributes &AttrIntro) {
+    TentativeParsingAction PA1(*this);
+
+    if (ParseLambdaIntroducer(Intro, AttrIntro)){
+      PA1.Revert();
+      return true;
+    }
+
+  // Try to parse it again, but this time parse the init-captures too.
+  Intro = LambdaIntroducer();
+  AttrIntro.clear();
+  TentativeParsingAction PA2(*this);
+
+  if (!ParseLambdaIntroducer(Intro, AttrIntro)) {
+    PA2.Commit();
+    return false;
+  }
+
+  PA2.Revert();
+  return true;
+}
+
 static void tryConsumeLambdaSpecifierToken(Parser &P,
                                            SourceLocation &MutableLoc,
                                            SourceLocation &ConstexprLoc,
                                            SourceLocation &ConstevalLoc,
                                            SourceLocation &DeclEndLoc) {
+
   assert(MutableLoc.isInvalid());
   assert(ConstexprLoc.isInvalid());
   // Consume constexpr-opt mutable-opt in any sequence, and set the DeclEndLoc
@@ -1179,7 +1227,8 @@ static void addConstevalToLambdaDeclSpecifier(Parser &P,
 /// ParseLambdaExpressionAfterIntroducer - Parse the rest of a lambda
 /// expression.
 ExprResult Parser::ParseLambdaExpressionAfterIntroducer(
-                     LambdaIntroducer &Intro) {
+                     LambdaIntroducer &Intro,
+                     ParsedAttributes &AttrIntro ) {
   SourceLocation LambdaBeginLoc = Intro.Range.getBegin();
   Diag(LambdaBeginLoc, diag::warn_cxx98_compat_lambda);
 
@@ -1216,6 +1265,13 @@ ExprResult Parser::ParseLambdaExpressionAfterIntroducer(
           Diag(A.getLoc(), diag::warn_cuda_attr_lambda_position)
               << A.getAttrName()->getName();
   };
+
+  // try parse attributes before parameter list
+  SourceLocation DeclEndLoc = Intro.Range.getBegin();
+  ParsedAttributes AttrPre(AttrFactory);
+  if (getLangOpts().CPlusPlusAMP) {
+    MaybeParseGNUAttributes(AttrPre, &DeclEndLoc);
+  }
 
   // FIXME: Consider allowing this as an extension for GCC compatibiblity.
   const bool HasExplicitTemplateParams = Tok.is(tok::less);
@@ -1295,7 +1351,33 @@ ExprResult Parser::ParseLambdaExpressionAfterIntroducer(
                                    ConstevalLoc, DeclEndLoc);
 
     addConstexprToLambdaDeclSpecifier(*this, ConstexprLoc, DS);
+
+    // Parse C++AMP restriction specifier
+    unsigned cppampSpec = CPPAMP_None;
+    if (getLangOpts().CPlusPlusAMP) {
+      cppampSpec = ParseRestrictionSpecification(D, Attr, DeclEndLoc);
+
+      if (getLangOpts().HSAExtension && getLangOpts().AutoAuto) {
+        // auto-auto: automatically append restrict(auto) in case no restriction specifier is found
+        if (cppampSpec == CPPAMP_None) {
+          cppampSpec = CPPAMP_AUTO;
+          IdentifierInfo *II = &PP.getIdentifierTable().get("auto");
+          assert(II);
+          Attr.addNew(II, DeclEndLoc, 0, DeclEndLoc, /*0, DeclEndLoc,*/ 0, 0, ParsedAttr::AS_GNU);
+        }
+      }
+    }
+
+    // C++AMP
+    if (getLangOpts().CPlusPlusAMP) {
+      // take all attributed parsed before introducer
+      Attr.takeAllFrom(AttrIntro);
+      // take all attributes parsed before parameter list
+      Attr.takeAllFrom(AttrPre);
+    }
+
     addConstevalToLambdaDeclSpecifier(*this, ConstevalLoc, DS);
+
     // Parse exception-specification[opt].
     ExceptionSpecificationType ESpecType = EST_None;
     SourceRange ESpecRange;
@@ -1310,8 +1392,14 @@ ExprResult Parser::ParseLambdaExpressionAfterIntroducer(
                                                NoexceptExpr,
                                                ExceptionSpecTokens);
 
-    if (ESpecType != EST_None)
+    if (ESpecType != EST_None) {
       DeclEndLoc = ESpecRange.getEnd();
+
+      // C++AMP specific, reject exception specifiers for amp-restricted functions
+      if (getLangOpts().CPlusPlusAMP && (cppampSpec & CPPAMP_AMP)) {
+        Diag(ESpecRange.getBegin(), diag::err_amp_no_throw);
+      }
+    }
 
     // Parse attribute-specifier[opt].
     MaybeParseCXX11Attributes(Attr, &DeclEndLoc);
@@ -1412,6 +1500,23 @@ ExprResult Parser::ParseLambdaExpressionAfterIntroducer(
                       /*DeclsInPrototype=*/None, DeclLoc, DeclEndLoc, D,
                       TrailingReturnType),
                   std::move(Attr), DeclEndLoc);
+  }  else if (Tok.is(tok::l_brace)) {
+    // Next is compound-statement.
+    // Parse C++AMP restrict specifier though the lambda expression has no params, so that
+    // context inside lambda compound-statement is distinguished from cpu codes or amp codes.
+    // And the lambda's calloperator will be attached with the same restrictions as its parent
+    // function's if any. Such lambda expression is as follows,
+    //   [] {
+    //     // The compound-statement
+    //   };
+    if (getLangOpts().CPlusPlusAMP) {
+      // Place restriction after r_square
+      SourceLocation LambdaEndLoc = Intro.Range.getEnd();
+      ParsedAttributes Attr(AttrFactory);
+      ParseRestrictionSpecification(D, Attr, LambdaEndLoc);
+      D.getAttributes().addAll(Attr.begin(), Attr.end());
+      D.getAttributePool().takeAllFrom(Attr.getPool());
+    }
   }
 
   // FIXME: Rename BlockScope -> ClosureScope if we decide to continue using

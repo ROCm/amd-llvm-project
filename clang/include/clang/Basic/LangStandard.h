@@ -29,6 +29,7 @@ enum class Language : uint8_t {
   ///@{ Languages that the frontend can parse and compile.
   C,
   CXX,
+  CXXAMP,
   ObjC,
   ObjCXX,
   OpenCL,
@@ -53,7 +54,8 @@ enum LangFeatures {
   GNUMode = (1 << 11),
   HexFloat = (1 << 12),
   ImplicitInt = (1 << 13),
-  OpenCL = (1 << 14)
+  OpenCL = (1 << 14),
+  CPlusPlusAMP = (1 << 15)
 };
 
 /// LangStandard - Information about the properties of a particular language
@@ -125,6 +127,9 @@ public:
 
   /// isOpenCL - Language is a OpenCL variant.
   bool isOpenCL() const { return Flags & OpenCL; }
+
+  /// isCPlusPlusAMP - Language is a C++AMP standard.
+  bool isCPlusPlusAMP() const { return Flags & CPlusPlusAMP; }
 
   static Kind getLangKind(StringRef Name);
   static const LangStandard &getLangStandardForKind(Kind K);

@@ -8,6 +8,8 @@
 // RUN:     | FileCheck -check-prefix=CHECK-BOTH -check-prefix=CHECK-HOST %s
 // RUN: %clang_cc1 -triple nvptx64-nvidia-cuda -fcuda-is-device -emit-llvm -o - %s \
 // RUN:     | FileCheck -check-prefix=CHECK-BOTH -check-prefix=CHECK-DEVICE %s
+// RUN: %clang_cc1 -triple amdgcn -fcuda-is-device -emit-llvm -o - %s \
+// RUN:     | FileCheck -check-prefix=CHECK-BOTH -check-prefix=CHECK-DEVICE %s
 
 #include "Inputs/cuda.h"
 

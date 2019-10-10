@@ -25,6 +25,7 @@
 #include "clang/Basic/SourceLocation.h"
 #include "clang/Sema/SemaFixItUtils.h"
 #include "clang/Sema/TemplateDeduction.h"
+#include "clang/Sema/Scope.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/None.h"
 #include "llvm/ADT/STLExtras.h"
@@ -972,7 +973,9 @@ class Sema;
 
     /// Find the best viable function on this overload set, if it exists.
     OverloadingResult BestViableFunction(Sema &S, SourceLocation Loc,
-                                         OverloadCandidateSet::iterator& Best);
+                                         OverloadCandidateSet::iterator& Best,
+                                         bool UserDefinedConversion = false,
+                                         Scope* SC = 0);
 
     SmallVector<OverloadCandidate *, 32> CompleteCandidates(
         Sema &S, OverloadCandidateDisplayKind OCD, ArrayRef<Expr *> Args,
@@ -1008,7 +1011,9 @@ class Sema;
                                  const OverloadCandidate &Cand1,
                                  const OverloadCandidate &Cand2,
                                  SourceLocation Loc,
-                                 OverloadCandidateSet::CandidateSetKind Kind);
+                                 OverloadCandidateSet::CandidateSetKind Kind,
+                                 bool UserDefinedConversion = false,
+                                 Scope* SC = 0);
 
   struct ConstructorInfo {
     DeclAccessPair FoundDecl;

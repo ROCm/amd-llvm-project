@@ -866,6 +866,8 @@ def fcuda_allow_variadic_functions : Flag<["-"], "fcuda-allow-variadic-functions
   HelpText<"Allow variadic functions in CUDA device code.">;
 def fno_cuda_host_device_constexpr : Flag<["-"], "fno-cuda-host-device-constexpr">,
   HelpText<"Don't treat unattributed constexpr functions as __host__ __device__.">;
+def fcuda_force_lambda_odr : Flag<["-"], "fcuda-force-lambda-odr">,
+  HelpText<"Force lambda naming following one definition rule (ODR).">;
 
 //===----------------------------------------------------------------------===//
 // OpenMP Options
@@ -875,6 +877,28 @@ def fopenmp_is_device : Flag<["-"], "fopenmp-is-device">,
   HelpText<"Generate code only for an OpenMP target device.">;
 def fopenmp_host_ir_file_path : Separate<["-"], "fopenmp-host-ir-file-path">,
   HelpText<"Path to the IR file produced by the frontend for the host.">;
+  
+//===----------------------------------------------------------------------===//
+// C++AMP Options
+//===----------------------------------------------------------------------===//
+
+def famp_is_device : Flag<["-"], "famp-is-device">,
+  HelpText<"Generate code for AMP kernels">;
+
+def famp_cpu : Flag<["-"], "famp-cpu">,
+  HelpText<"Generate code for AMP CPU kernels">;
+
+def fhsa_extension : Flag<["-"], "fhsa-ext">,
+  HelpText<"Enable HSA-specific rules for C++AMP kernels">;
+
+def fno_auto_auto : Flag<["-"], "fno-auto-auto">,
+  HelpText<"Disable auto-auto feature (Obsolete, use -fauto-auto to explicit enable it instead)">;
+
+def fauto_auto : Flag<["-"], "fauto-auto">,
+  HelpText<"Enable auto-auto feature">;
+
+def fauto_compile_for_accelerator : Flag<["-"], "fauto-compile-for-accelerator">,
+  HelpText<"Enable auto-compile-for-accelerator feature">;
 
 //===----------------------------------------------------------------------===//
 // SYCL Options

@@ -70,8 +70,9 @@ bool Parser::MayBeDesignationStart() {
   RevertingTentativeParsingAction Tentative(*this);
 
   LambdaIntroducer Intro;
+  ParsedAttributes AttrIntro(AttrFactory);
   LambdaIntroducerTentativeParse ParseResult;
-  if (ParseLambdaIntroducer(Intro, &ParseResult)) {
+  if (ParseLambdaIntroducer(Intro, AttrIntro, &ParseResult)) {
     // Hit and diagnosed an error in a lambda.
     // FIXME: Tell the caller this happened so they can recover.
     return true;

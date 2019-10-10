@@ -846,6 +846,8 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
   Opts.PreserveAsmComments = !Args.hasArg(OPT_fno_preserve_as_comments);
   Opts.AssumeSaneOperatorNew = !Args.hasArg(OPT_fno_assume_sane_operator_new);
   Opts.ObjCAutoRefCountExceptions = Args.hasArg(OPT_fobjc_arc_exceptions);
+  Opts.AMPIsDevice = Args.hasArg(OPT_famp_is_device);
+  Opts.AMPCPU = Args.hasArg(OPT_famp_cpu);
   Opts.CXAAtExit = !Args.hasArg(OPT_fno_use_cxa_atexit);
   Opts.RegisterGlobalDtorsWithAtExit =
       Args.hasArg(OPT_fregister_global_dtors_with_atexit);
@@ -906,6 +908,7 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
   Opts.CorrectlyRoundedDivSqrt =
       Args.hasArg(OPT_cl_fp32_correctly_rounded_divide_sqrt);
   Opts.UniformWGSize =
+      !Args.hasArg(OPT_famp_is_device) &&
       Args.hasArg(OPT_cl_uniform_work_group_size);
   Opts.Reciprocals = Args.getAllArgValues(OPT_mrecip_EQ);
   Opts.ReciprocalMath = Args.hasArg(OPT_freciprocal_math);
@@ -1958,6 +1961,10 @@ static InputKind ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
                 .Case("cuda", Language::CUDA)
                 .Case("hip", Language::HIP)
                 .Case("c++", Language::CXX)
+                .Case("c++amp-kernel", Language::CXXAMP) // C++ AMP support
+                .Case("hc-kernel", Language::CXXAMP) // HC support
+                .Case("hc-host", Language::CXXAMP) // HC support
+                .Case("c++amp-kernel-cpu", Language::CXXAMP) // C++ AMP support
                 .Case("objective-c", Language::ObjC)
                 .Case("objective-c++", Language::ObjCXX)
                 .Case("renderscript", Language::RenderScript)
@@ -2214,6 +2221,7 @@ void CompilerInvocation::setLangDefaults(LangOptions &Opts, InputKind IK,
       LangStd = LangStandard::lang_gnu11;
 #endif
       break;
+    case Language::CXXAMP:
     case Language::CXX:
     case Language::ObjCXX:
 #if defined(CLANG_DEFAULT_STD_CXX)
@@ -2247,6 +2255,7 @@ void CompilerInvocation::setLangDefaults(LangOptions &Opts, InputKind IK,
   Opts.GNUInline = !Opts.C99 && !Opts.CPlusPlus;
   Opts.HexFloats = Std.hasHexFloats();
   Opts.ImplicitInt = Std.hasImplicitInt();
+  Opts.CPlusPlusAMP |= Std.isCPlusPlusAMP();
 
   // Set OpenCL Version.
   Opts.OpenCL = Std.isOpenCL();
@@ -2270,15 +2279,9 @@ void CompilerInvocation::setLangDefaults(LangOptions &Opts, InputKind IK,
     Opts.NativeHalfType = 1;
     Opts.NativeHalfArgsAndReturns = 1;
     Opts.OpenCLCPlusPlus = Opts.CPlusPlus;
-
     // Include default header file for OpenCL.
-    if (Opts.IncludeDefaultHeader) {
-      if (Opts.DeclareOpenCLBuiltins) {
-        // Only include base header file for builtin types and constants.
-        PPOpts.Includes.push_back("opencl-c-base.h");
-      } else {
-        PPOpts.Includes.push_back("opencl-c.h");
-      }
+    if (Opts.IncludeDefaultHeader && !Opts.DeclareOpenCLBuiltins) {
+      PPOpts.Includes.push_back("opencl-c.h");
     }
   }
 
@@ -2348,13 +2351,16 @@ static bool IsInputCompatibleWithStandard(InputKind IK,
   case Language::OpenCL:
     return S.getLanguage() == Language::OpenCL;
 
+  case Language::CXXAMP:
   case Language::CXX:
   case Language::ObjCXX:
-    return S.getLanguage() == Language::CXX;
+    return S.getLanguage() == Language::CXX ||
+           S.getLanguage() == Language::CXXAMP;
 
   case Language::CUDA:
     // FIXME: What -std= values should be permitted for CUDA compilations?
     return S.getLanguage() == Language::CUDA ||
+           S.getLanguage() == Language::CXXAMP ||
            S.getLanguage() == Language::CXX;
 
   case Language::HIP:
@@ -2383,6 +2389,8 @@ static const StringRef GetInputKindName(InputKind IK) {
     return "Objective-C++";
   case Language::OpenCL:
     return "OpenCL";
+  case Language::CXXAMP:
+    return "C++AMP";
   case Language::CUDA:
     return "CUDA";
   case Language::RenderScript:
@@ -2481,6 +2489,15 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
   llvm::Triple T(TargetOpts.Triple);
   CompilerInvocation::setLangDefaults(Opts, IK, T, PPOpts, LangStd);
 
+  // Add AMP features if we got -famp.
+  Opts.CPlusPlusAMP |= Args.hasArg(options::OPT_famp);
+
+  // Add AMP features if using AMP.
+  if (Opts.CPlusPlusAMP) {
+    Opts.NativeHalfType = 1;
+    Opts.NativeHalfArgsAndReturns = 1;
+  }
+
   // -cl-strict-aliasing needs to emit diagnostic in the case where CL > 1.0.
   // This option should be deprecated for CL > 1.0 because
   // this option was added for compatibility with OpenCL 1.0.
@@ -2512,6 +2529,9 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
 
   if (Args.hasArg(OPT_fno_cuda_host_device_constexpr))
     Opts.CUDAHostDeviceConstexpr = 0;
+
+  if (Args.hasArg(OPT_fcuda_force_lambda_odr))
+    Opts.CUDAForceLambdaODR = 1;
 
   if (Opts.CUDAIsDevice && Args.hasArg(OPT_fcuda_approx_transcendentals))
     Opts.CUDADeviceApproxTranscendentals = 1;
@@ -3037,6 +3057,19 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
           << Opts.OMPHostIRFile;
   }
 
+  // C++ AMP: Decide host path or device path
+  Opts.DevicePath = Args.hasArg(OPT_famp_is_device);
+  Opts.AMPCPU = Args.hasArg(OPT_famp_cpu);
+  Opts.HSAExtension = Args.hasArg(OPT_fhsa_extension);
+
+  // rules for auto-auto:
+  // disabled by default, or explicitly disabled by -fno-auto-auto
+  // enabled by -fauto-auto
+  Opts.AutoAuto = Args.hasArg(OPT_fauto_auto) && !Args.hasArg(OPT_fno_auto_auto);
+
+  // rules for auto-compile-for-accelerator:
+  Opts.AutoCompileForAccelerator = Args.hasArg(OPT_fauto_compile_for_accelerator);
+
   Opts.SYCLIsDevice = Args.hasArg(options::OPT_fsycl_is_device);
 
   // Set CUDA mode for OpenMP target NVPTX if specified in options
@@ -3482,9 +3515,13 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,
       Res.getTargetOpts().HostTriple = Res.getFrontendOpts().AuxTriple;
   }
 
-  // Set the triple of the host for OpenMP device compile.
-  if (LangOpts.OpenMPIsDevice)
-    Res.getTargetOpts().HostTriple = Res.getFrontendOpts().AuxTriple;
+  if (LangOpts.CPlusPlusAMP) {
+    // During HCC device-side compilation, the aux triple is the
+    // triple used for host compilation
+    if (LangOpts.DevicePath) {
+      Res.getTargetOpts().HostTriple = Res.getFrontendOpts().AuxTriple;
+    }
+  }
 
   // FIXME: Override value name discarding when asan or msan is used because the
   // backend passes depend on the name of the alloca in order to print out

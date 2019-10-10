@@ -9,9 +9,11 @@
 #ifndef LLVM_CLANG_LIB_DRIVER_TOOLCHAINS_GNU_H
 #define LLVM_CLANG_LIB_DRIVER_TOOLCHAINS_GNU_H
 
+#include "Hcc.h"
 #include "Cuda.h"
 #include "clang/Driver/Tool.h"
 #include "clang/Driver/ToolChain.h"
+#include <memory>
 #include <set>
 
 namespace clang {
@@ -60,8 +62,11 @@ public:
 };
 
 class LLVM_LIBRARY_VISIBILITY Linker : public GnuTool {
+  mutable std::unique_ptr<HCC::CXXAMPLink> HCLinker;
+
 public:
   Linker(const ToolChain &TC) : GnuTool("GNU::Linker", "linker", TC) {}
+  Linker(const ToolChain &TC, const char* Name) : GnuTool(Name, "linker", TC) {}
 
   bool hasIntegratedCPP() const override { return false; }
   bool isLinkJob() const override { return true; }
@@ -70,6 +75,13 @@ public:
                     const InputInfo &Output, const InputInfoList &Inputs,
                     const llvm::opt::ArgList &TCArgs,
                     const char *LinkingOutput) const override;
+protected:
+  virtual void ConstructLinkerJob(Compilation &C, const JobAction &JA,
+                                  const InputInfo &Output,
+                                  const InputInfoList &Inputs,
+                                  const llvm::opt::ArgList &Args,
+                                  const char *LinkingOutput,
+                                  llvm::opt::ArgStringList &CmdArgs) const; 
 };
 } // end namespace gnutools
 
@@ -278,6 +290,9 @@ public:
 protected:
   GCCInstallationDetector GCCInstallation;
   CudaInstallationDetector CudaInstallation;
+  HCCInstallationDetector HCCInstallation;
+
+  friend class tools::HCC::CXXAMPLink;
 
 public:
   Generic_GCC(const Driver &D, const llvm::Triple &Triple,

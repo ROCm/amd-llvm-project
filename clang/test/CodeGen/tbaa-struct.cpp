@@ -55,6 +55,7 @@ void copy3(U *u1, U *u2) {
   *u1 = *u2;
 }
 
+
 // Make sure that zero-length bitfield works.
 struct C {
   char a;

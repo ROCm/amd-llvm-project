@@ -1955,12 +1955,24 @@ static bool checkQualifiedFunction(Sema &S, QualType T, SourceLocation Loc,
                                    QualifiedFunctionKind QFK) {
   // Does T refer to a function type with a cv-qualifier or a ref-qualifier?
   const FunctionProtoType *FPT = T->getAs<FunctionProtoType>();
-  if (!FPT || (FPT->getMethodQuals().empty() && FPT->getRefQualifier() == RQ_None))
+  if (!FPT ||
+      (FPT->getMethodQuals().empty() && FPT->getRefQualifier() == RQ_None))
     return false;
 
   S.Diag(Loc, diag::err_compound_qualified_function_type)
     << QFK << isa<FunctionType>(T.IgnoreParens()) << T
     << getFunctionQualifiersAsString(FPT);
+  return true;
+}
+
+bool Sema::CheckQualifiedFunctionForTypeId(QualType T, SourceLocation Loc) {
+  const FunctionProtoType *FPT = T->getAs<FunctionProtoType>();
+  if (!FPT ||
+      (FPT->getMethodQuals().empty() && FPT->getRefQualifier() == RQ_None))
+    return false;
+
+  Diag(Loc, diag::err_qualified_function_typeid)
+      << T << getFunctionQualifiersAsString(FPT);
   return true;
 }
 
@@ -7536,6 +7548,11 @@ static void processTypeAttrs(TypeProcessingState &state, QualType &type,
             << attr;
       break;
 
+    case ParsedAttr::AT_HC_CPU:
+    case ParsedAttr::AT_HC_HC:
+    case ParsedAttr::AT_AMDGPUWavesPerEU:
+    case ParsedAttr::AT_AMDGPUFlatWorkGroupSize:
+    case ParsedAttr::AT_AMDGPUMaxWorkGroupDim:
     case ParsedAttr::IgnoredAttribute:
       break;
 
