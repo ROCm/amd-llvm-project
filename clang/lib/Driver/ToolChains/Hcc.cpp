@@ -42,6 +42,7 @@ HCCInstallationDetector::HCCInstallationDetector(const Driver &D, const llvm::op
   HCCPathCandidates.push_back(InstallPath + "/..");
   HCCPathCandidates.push_back(BinPath + "/..");
   HCCPathCandidates.push_back(BinPath + "/../..");
+  HCCPathCandidates.push_back(BinPath + "/../../..");
 
   for (const auto &HCCPath: HCCPathCandidates) {
     if (HCCPath.empty() ||
