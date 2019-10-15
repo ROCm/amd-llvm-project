@@ -37,18 +37,31 @@ using namespace llvm::sys;
 using namespace llvm::sys::fs;
 using namespace llvm::support::endian;
 
-using namespace lld;
-using namespace lld::elf;
+namespace lld {
+// Returns "<internal>", "foo.a(bar.o)" or "baz.o".
+std::string toString(const elf::InputFile *f) {
+  if (!f)
+    return "<internal>";
 
+  if (f->toStringCache.empty()) {
+    if (f->archiveName.empty())
+      f->toStringCache = f->getName();
+    else
+      f->toStringCache = (f->archiveName + "(" + f->getName() + ")").str();
+  }
+  return f->toStringCache;
+}
+
+namespace elf {
 bool InputFile::isInGroup;
 uint32_t InputFile::nextGroupId;
-std::vector<BinaryFile *> elf::binaryFiles;
-std::vector<BitcodeFile *> elf::bitcodeFiles;
-std::vector<LazyObjFile *> elf::lazyObjFiles;
-std::vector<InputFile *> elf::objectFiles;
-std::vector<SharedFile *> elf::sharedFiles;
+std::vector<BinaryFile *> binaryFiles;
+std::vector<BitcodeFile *> bitcodeFiles;
+std::vector<LazyObjFile *> lazyObjFiles;
+std::vector<InputFile *> objectFiles;
+std::vector<SharedFile *> sharedFiles;
 
-std::unique_ptr<TarWriter> elf::tar;
+std::unique_ptr<TarWriter> tar;
 
 static ELFKind getELFKind(MemoryBufferRef mb, StringRef archiveName) {
   unsigned char size;
@@ -88,7 +101,7 @@ InputFile::InputFile(Kind k, MemoryBufferRef m)
     ++nextGroupId;
 }
 
-Optional<MemoryBufferRef> elf::readFile(StringRef path) {
+Optional<MemoryBufferRef> readFile(StringRef path) {
   // The --chroot option changes our virtual root directory.
   // This is useful when you are dealing with files created by --reproduce.
   if (!config->chroot.empty() && path.startswith("/"))
@@ -188,7 +201,7 @@ template <class ELFT> static void doParseFile(InputFile *file) {
 }
 
 // Add symbols in File to the symbol table.
-void elf::parseFile(InputFile *file) {
+void parseFile(InputFile *file) {
   switch (config->ekind) {
   case ELF32LEKind:
     doParseFile<ELF32LE>(file);
@@ -356,20 +369,6 @@ Optional<DILineInfo> ObjFile<ELFT>::getDILineInfo(InputSectionBase *s,
   return None;
 }
 
-// Returns "<internal>", "foo.a(bar.o)" or "baz.o".
-std::string lld::toString(const InputFile *f) {
-  if (!f)
-    return "<internal>";
-
-  if (f->toStringCache.empty()) {
-    if (f->archiveName.empty())
-      f->toStringCache = f->getName();
-    else
-      f->toStringCache = (f->archiveName + "(" + f->getName() + ")").str();
-  }
-  return f->toStringCache;
-}
-
 ELFFileBase::ELFFileBase(Kind k, MemoryBufferRef mb) : InputFile(k, mb) {
   ekind = getELFKind(mb, "");
 
@@ -484,7 +483,8 @@ StringRef ObjFile<ELFT>::getShtGroupSignature(ArrayRef<Elf_Shdr> sections,
   return signature;
 }
 
-template <class ELFT> bool ObjFile<ELFT>::shouldMerge(const Elf_Shdr &sec) {
+template <class ELFT>
+bool ObjFile<ELFT>::shouldMerge(const Elf_Shdr &sec, StringRef name) {
   // On a regular link we don't merge sections if -O0 (default is -O1). This
   // sometimes makes the linker significantly faster, although the output will
   // be bigger.
@@ -516,14 +516,16 @@ template <class ELFT> bool ObjFile<ELFT>::shouldMerge(const Elf_Shdr &sec) {
   if (entSize == 0)
     return false;
   if (sec.sh_size % entSize)
-    fatal(toString(this) +
-          ": SHF_MERGE section size must be a multiple of sh_entsize");
+    fatal(toString(this) + ":(" + name + "): SHF_MERGE section size (" +
+          Twine(sec.sh_size) + ") must be a multiple of sh_entsize (" +
+          Twine(entSize) + ")");
 
   uint64_t flags = sec.sh_flags;
   if (!(flags & SHF_MERGE))
     return false;
   if (flags & SHF_WRITE)
-    fatal(toString(this) + ": writable SHF_MERGE section is not supported");
+    fatal(toString(this) + ":(" + name +
+          "): writable SHF_MERGE section is not supported");
 
   return true;
 }
@@ -1034,7 +1036,7 @@ InputSectionBase *ObjFile<ELFT>::createInputSection(const Elf_Shdr &sec) {
   if (name == ".eh_frame" && !config->relocatable)
     return make<EhInputSection>(*this, sec, name);
 
-  if (shouldMerge(sec))
+  if (shouldMerge(sec, name))
     return make<MergeInputSection>(*this, sec, name);
   return make<InputSection>(*this, sec, name);
 }
@@ -1530,8 +1532,8 @@ void BinaryFile::parse() {
                             STV_DEFAULT, STT_OBJECT, data.size(), 0, nullptr});
 }
 
-InputFile *elf::createObjectFile(MemoryBufferRef mb, StringRef archiveName,
-                                 uint64_t offsetInArchive) {
+InputFile *createObjectFile(MemoryBufferRef mb, StringRef archiveName,
+                            uint64_t offsetInArchive) {
   if (isBitcode(mb))
     return make<BitcodeFile>(mb, archiveName, offsetInArchive);
 
@@ -1622,7 +1624,7 @@ template <class ELFT> void LazyObjFile::parse() {
   }
 }
 
-std::string elf::replaceThinLTOSuffix(StringRef path) {
+std::string replaceThinLTOSuffix(StringRef path) {
   StringRef suffix = config->thinLTOObjectSuffixReplace.first;
   StringRef repl = config->thinLTOObjectSuffixReplace.second;
 
@@ -1641,12 +1643,15 @@ template void LazyObjFile::parse<ELF32BE>();
 template void LazyObjFile::parse<ELF64LE>();
 template void LazyObjFile::parse<ELF64BE>();
 
-template class elf::ObjFile<ELF32LE>;
-template class elf::ObjFile<ELF32BE>;
-template class elf::ObjFile<ELF64LE>;
-template class elf::ObjFile<ELF64BE>;
+template class ObjFile<ELF32LE>;
+template class ObjFile<ELF32BE>;
+template class ObjFile<ELF64LE>;
+template class ObjFile<ELF64BE>;
 
 template void SharedFile::parse<ELF32LE>();
 template void SharedFile::parse<ELF32BE>();
 template void SharedFile::parse<ELF64LE>();
 template void SharedFile::parse<ELF64BE>();
+
+} // namespace elf
+} // namespace lld

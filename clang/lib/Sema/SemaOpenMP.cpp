@@ -1565,34 +1565,11 @@ enum class FunctionEmissionStatus {
 };
 } // anonymous namespace
 
-/// Do we know that we will eventually codegen the given function?
-static FunctionEmissionStatus isKnownDeviceEmitted(Sema &S, FunctionDecl *FD) {
-  assert(S.LangOpts.OpenMP && S.LangOpts.OpenMPIsDevice &&
-         "Expected OpenMP device compilation.");
-  // Templates are emitted when they're instantiated.
-  if (FD->isDependentContext())
-    return FunctionEmissionStatus::Discarded;
-
-  Optional<OMPDeclareTargetDeclAttr::DevTypeTy> DevTy =
-      OMPDeclareTargetDeclAttr::getDeviceType(FD->getCanonicalDecl());
-  if (DevTy.hasValue())
-    return (*DevTy == OMPDeclareTargetDeclAttr::DT_Host)
-               ? FunctionEmissionStatus::Discarded
-               : FunctionEmissionStatus::Emitted;
-
-  // Otherwise, the function is known-emitted if it's in our set of
-  // known-emitted functions.
-  return (S.DeviceKnownEmittedFns.count(FD) > 0)
-             ? FunctionEmissionStatus::Emitted
-             : FunctionEmissionStatus::Unknown;
-}
-
 Sema::DeviceDiagBuilder Sema::diagIfOpenMPDeviceCode(SourceLocation Loc,
                                                      unsigned DiagID) {
   assert(LangOpts.OpenMP && LangOpts.OpenMPIsDevice &&
          "Expected OpenMP device compilation.");
-  FunctionEmissionStatus FES =
-      isKnownDeviceEmitted(*this, getCurFunctionDecl());
+  FunctionEmissionStatus FES = getEmissionStatus(getCurFunctionDecl());
   DeviceDiagBuilder::Kind Kind = DeviceDiagBuilder::K_Nop;
   switch (FES) {
   case FunctionEmissionStatus::Emitted:
@@ -1602,42 +1579,23 @@ Sema::DeviceDiagBuilder Sema::diagIfOpenMPDeviceCode(SourceLocation Loc,
     Kind = isOpenMPDeviceDelayedContext(*this) ? DeviceDiagBuilder::K_Deferred
                                                : DeviceDiagBuilder::K_Immediate;
     break;
-  case FunctionEmissionStatus::Discarded:
+  case FunctionEmissionStatus::TemplateDiscarded:
+  case FunctionEmissionStatus::OMPDiscarded:
     Kind = DeviceDiagBuilder::K_Nop;
+    break;
+  case FunctionEmissionStatus::CUDADiscarded:
+    llvm_unreachable("CUDADiscarded unexpected in OpenMP device compilation");
     break;
   }
 
   return DeviceDiagBuilder(Kind, Loc, DiagID, getCurFunctionDecl(), *this);
 }
 
-/// Do we know that we will eventually codegen the given function?
-static FunctionEmissionStatus isKnownHostEmitted(Sema &S, FunctionDecl *FD) {
-  assert(S.LangOpts.OpenMP && !S.LangOpts.OpenMPIsDevice &&
-         "Expected OpenMP host compilation.");
-  // In OpenMP 4.5 all the functions are host functions.
-  if (S.LangOpts.OpenMP <= 45)
-    return FunctionEmissionStatus::Emitted;
-
-  Optional<OMPDeclareTargetDeclAttr::DevTypeTy> DevTy =
-      OMPDeclareTargetDeclAttr::getDeviceType(FD->getCanonicalDecl());
-  if (DevTy.hasValue())
-    return (*DevTy == OMPDeclareTargetDeclAttr::DT_NoHost)
-               ? FunctionEmissionStatus::Discarded
-               : FunctionEmissionStatus::Emitted;
-
-  // Otherwise, the function is known-emitted if it's in our set of
-  // known-emitted functions.
-  return (S.DeviceKnownEmittedFns.count(FD) > 0)
-             ? FunctionEmissionStatus::Emitted
-             : FunctionEmissionStatus::Unknown;
-}
-
 Sema::DeviceDiagBuilder Sema::diagIfOpenMPHostCode(SourceLocation Loc,
                                                    unsigned DiagID) {
   assert(LangOpts.OpenMP && !LangOpts.OpenMPIsDevice &&
          "Expected OpenMP host compilation.");
-  FunctionEmissionStatus FES =
-      isKnownHostEmitted(*this, getCurFunctionDecl());
+  FunctionEmissionStatus FES = getEmissionStatus(getCurFunctionDecl());
   DeviceDiagBuilder::Kind Kind = DeviceDiagBuilder::K_Nop;
   switch (FES) {
   case FunctionEmissionStatus::Emitted:
@@ -1646,7 +1604,9 @@ Sema::DeviceDiagBuilder Sema::diagIfOpenMPHostCode(SourceLocation Loc,
   case FunctionEmissionStatus::Unknown:
     Kind = DeviceDiagBuilder::K_Deferred;
     break;
-  case FunctionEmissionStatus::Discarded:
+  case FunctionEmissionStatus::TemplateDiscarded:
+  case FunctionEmissionStatus::OMPDiscarded:
+  case FunctionEmissionStatus::CUDADiscarded:
     Kind = DeviceDiagBuilder::K_Nop;
     break;
   }
@@ -1663,31 +1623,34 @@ void Sema::checkOpenMPDeviceFunction(SourceLocation Loc, FunctionDecl *Callee,
   FunctionDecl *Caller = getCurFunctionDecl();
 
   // host only function are not available on the device.
-  if (Caller &&
-      (isKnownDeviceEmitted(*this, Caller) == FunctionEmissionStatus::Emitted ||
-       (!isOpenMPDeviceDelayedContext(*this) &&
-        isKnownDeviceEmitted(*this, Caller) ==
-            FunctionEmissionStatus::Unknown)) &&
-      isKnownDeviceEmitted(*this, Callee) ==
-          FunctionEmissionStatus::Discarded) {
-    StringRef HostDevTy =
-        getOpenMPSimpleClauseTypeName(OMPC_device_type, OMPC_DEVICE_TYPE_host);
-    Diag(Loc, diag::err_omp_wrong_device_function_call) << HostDevTy << 0;
-    Diag(Callee->getAttr<OMPDeclareTargetDeclAttr>()->getLocation(),
-         diag::note_omp_marked_device_type_here)
-        << HostDevTy;
-    return;
+  if (Caller) {
+    FunctionEmissionStatus CallerS = getEmissionStatus(Caller);
+    FunctionEmissionStatus CalleeS = getEmissionStatus(Callee);
+    assert(CallerS != FunctionEmissionStatus::CUDADiscarded &&
+           CalleeS != FunctionEmissionStatus::CUDADiscarded &&
+           "CUDADiscarded unexpected in OpenMP device function check");
+    if ((CallerS == FunctionEmissionStatus::Emitted ||
+         (!isOpenMPDeviceDelayedContext(*this) &&
+          CallerS == FunctionEmissionStatus::Unknown)) &&
+        CalleeS == FunctionEmissionStatus::OMPDiscarded) {
+      StringRef HostDevTy = getOpenMPSimpleClauseTypeName(
+          OMPC_device_type, OMPC_DEVICE_TYPE_host);
+      Diag(Loc, diag::err_omp_wrong_device_function_call) << HostDevTy << 0;
+      Diag(Callee->getAttr<OMPDeclareTargetDeclAttr>()->getLocation(),
+           diag::note_omp_marked_device_type_here)
+          << HostDevTy;
+      return;
+    }
   }
   // If the caller is known-emitted, mark the callee as known-emitted.
   // Otherwise, mark the call in our call graph so we can traverse it later.
   if ((CheckForDelayedContext && !isOpenMPDeviceDelayedContext(*this)) ||
       (!Caller && !CheckForDelayedContext) ||
-      (Caller &&
-       isKnownDeviceEmitted(*this, Caller) == FunctionEmissionStatus::Emitted))
+      (Caller && getEmissionStatus(Caller) == FunctionEmissionStatus::Emitted))
     markKnownEmitted(*this, Caller, Callee, Loc,
                      [CheckForDelayedContext](Sema &S, FunctionDecl *FD) {
                        return CheckForDelayedContext &&
-                              isKnownDeviceEmitted(S, FD) ==
+                              S.getEmissionStatus(FD) ==
                                   FunctionEmissionStatus::Emitted;
                      });
   else if (Caller)
@@ -1703,29 +1666,38 @@ void Sema::checkOpenMPHostFunction(SourceLocation Loc, FunctionDecl *Callee,
   FunctionDecl *Caller = getCurFunctionDecl();
 
   // device only function are not available on the host.
-  if (Caller &&
-      isKnownHostEmitted(*this, Caller) == FunctionEmissionStatus::Emitted &&
-      isKnownHostEmitted(*this, Callee) == FunctionEmissionStatus::Discarded) {
-    StringRef NoHostDevTy = getOpenMPSimpleClauseTypeName(
-        OMPC_device_type, OMPC_DEVICE_TYPE_nohost);
-    Diag(Loc, diag::err_omp_wrong_device_function_call) << NoHostDevTy << 1;
-    Diag(Callee->getAttr<OMPDeclareTargetDeclAttr>()->getLocation(),
-         diag::note_omp_marked_device_type_here)
-        << NoHostDevTy;
-    return;
+  if (Caller) {
+    FunctionEmissionStatus CallerS = getEmissionStatus(Caller);
+    FunctionEmissionStatus CalleeS = getEmissionStatus(Callee);
+    assert(
+        (LangOpts.CUDA || (CallerS != FunctionEmissionStatus::CUDADiscarded &&
+                           CalleeS != FunctionEmissionStatus::CUDADiscarded)) &&
+        "CUDADiscarded unexpected in OpenMP host function check");
+    if (CallerS == FunctionEmissionStatus::Emitted &&
+        CalleeS == FunctionEmissionStatus::OMPDiscarded) {
+      StringRef NoHostDevTy = getOpenMPSimpleClauseTypeName(
+          OMPC_device_type, OMPC_DEVICE_TYPE_nohost);
+      Diag(Loc, diag::err_omp_wrong_device_function_call) << NoHostDevTy << 1;
+      Diag(Callee->getAttr<OMPDeclareTargetDeclAttr>()->getLocation(),
+           diag::note_omp_marked_device_type_here)
+          << NoHostDevTy;
+      return;
+    }
   }
   // If the caller is known-emitted, mark the callee as known-emitted.
   // Otherwise, mark the call in our call graph so we can traverse it later.
-  if ((!CheckCaller && !Caller) ||
-      (Caller &&
-       isKnownHostEmitted(*this, Caller) == FunctionEmissionStatus::Emitted))
-    markKnownEmitted(
-        *this, Caller, Callee, Loc, [CheckCaller](Sema &S, FunctionDecl *FD) {
-          return CheckCaller &&
-                 isKnownHostEmitted(S, FD) == FunctionEmissionStatus::Emitted;
-        });
-  else if (Caller)
-    DeviceCallGraph[Caller].insert({Callee, Loc});
+  if (!shouldIgnoreInHostDeviceCheck(Callee)) {
+    if ((!CheckCaller && !Caller) ||
+        (Caller &&
+         getEmissionStatus(Caller) == FunctionEmissionStatus::Emitted))
+      markKnownEmitted(
+          *this, Caller, Callee, Loc, [CheckCaller](Sema &S, FunctionDecl *FD) {
+            return CheckCaller &&
+                   S.getEmissionStatus(FD) == FunctionEmissionStatus::Emitted;
+          });
+    else if (Caller)
+      DeviceCallGraph[Caller].insert({Callee, Loc});
+  }
 }
 
 void Sema::checkOpenMPDeviceExpr(const Expr *E) {
@@ -2006,6 +1978,14 @@ void Sema::startOpenMPLoop() {
   assert(LangOpts.OpenMP && "OpenMP must be enabled.");
   if (isOpenMPLoopDirective(DSAStack->getCurrentDirective()))
     DSAStack->loopInit();
+}
+
+void Sema::startOpenMPCXXRangeFor() {
+  assert(LangOpts.OpenMP && "OpenMP must be enabled.");
+  if (isOpenMPLoopDirective(DSAStack->getCurrentDirective())) {
+    DSAStack->resetPossibleLoopCounter();
+    DSAStack->loopStart();
+  }
 }
 
 bool Sema::isOpenMPPrivateDecl(const ValueDecl *D, unsigned Level) const {
@@ -3257,7 +3237,8 @@ void Sema::ActOnOpenMPRegionStart(OpenMPDirectiveKind DKind, Scope *CurScope) {
     break;
   }
   case OMPD_taskloop:
-  case OMPD_taskloop_simd: {
+  case OMPD_taskloop_simd:
+  case OMPD_master_taskloop: {
     QualType KmpInt32Ty =
         Context.getIntTypeForBitwidth(/*DestWidth=*/32, /*Signed=*/1)
             .withConst();
@@ -4430,6 +4411,11 @@ StmtResult Sema::ActOnOpenMPExecutableDirective(
                                            EndLoc, VarsWithInheritedDSA);
     AllowedNameModifiers.push_back(OMPD_taskloop);
     break;
+  case OMPD_master_taskloop:
+    Res = ActOnOpenMPMasterTaskLoopDirective(
+        ClausesWithImplicit, AStmt, StartLoc, EndLoc, VarsWithInheritedDSA);
+    AllowedNameModifiers.push_back(OMPD_taskloop);
+    break;
   case OMPD_distribute:
     Res = ActOnOpenMPDistributeDirective(ClausesWithImplicit, AStmt, StartLoc,
                                          EndLoc, VarsWithInheritedDSA);
@@ -5101,7 +5087,8 @@ Sema::checkOpenMPDeclareVariantFunction(Sema::DeclGroupPtrTy DG,
           PartialDiagnosticAt(VariantRef->getExprLoc(),
                               PDiag(diag::err_omp_declare_variant_diff)
                                   << FD->getLocation()),
-          /*TemplatesSupported=*/true, /*ConstexprSupported=*/false))
+          /*TemplatesSupported=*/true, /*ConstexprSupported=*/false,
+          /*CLinkageMayDiffer=*/true))
     return None;
   return std::make_pair(FD, cast<Expr>(DRE));
 }
@@ -5127,8 +5114,8 @@ void Sema::ActOnOpenMPDeclareVariantDirective(
     }
   }
   auto *NewAttr = OMPDeclareVariantAttr::CreateImplicit(
-      Context, VariantRef, Score, Data.CtxSet, ST, Data.Ctx, Data.ImplVendor,
-      SR);
+      Context, VariantRef, Score, Data.CtxSet, ST, Data.Ctx,
+      Data.ImplVendors.begin(), Data.ImplVendors.size(), SR);
   FD->addAttr(NewAttr);
 }
 
@@ -6453,6 +6440,7 @@ void Sema::ActOnOpenMPLoopInitialization(SourceLocation ForLoc, Stmt *Init) {
               (LangOpts.OpenMP <= 45 || (DVar.CKind != OMPC_lastprivate &&
                                          DVar.CKind != OMPC_private))) ||
              ((isOpenMPWorksharingDirective(DKind) || DKind == OMPD_taskloop ||
+               DKind == OMPD_master_taskloop ||
                isOpenMPDistributeDirective(DKind)) &&
               !isOpenMPSimdDirective(DKind) && DVar.CKind != OMPC_unknown &&
               DVar.CKind != OMPC_private && DVar.CKind != OMPC_lastprivate)) &&
@@ -6490,10 +6478,13 @@ static bool checkOpenMPIterationSpace(
     Sema::VarsWithInheritedDSAType &VarsWithImplicitDSA,
     llvm::MutableArrayRef<LoopIterationSpace> ResultIterSpaces,
     llvm::MapVector<const Expr *, DeclRefExpr *> &Captures) {
-  // OpenMP [2.6, Canonical Loop Form]
+  // OpenMP [2.9.1, Canonical Loop Form]
   //   for (init-expr; test-expr; incr-expr) structured-block
+  //   for (range-decl: range-expr) structured-block
   auto *For = dyn_cast_or_null<ForStmt>(S);
-  if (!For) {
+  auto *CXXFor = dyn_cast_or_null<CXXForRangeStmt>(S);
+  // Ranged for is supported only in OpenMP 5.0.
+  if (!For && (SemaRef.LangOpts.OpenMP <= 45 || !CXXFor)) {
     SemaRef.Diag(S->getBeginLoc(), diag::err_omp_not_for)
         << (CollapseLoopCountExpr != nullptr || OrderedLoopCountExpr != nullptr)
         << getOpenMPDirectiveName(DKind) << TotalNestedLoopCount
@@ -6515,12 +6506,14 @@ static bool checkOpenMPIterationSpace(
     }
     return true;
   }
-  assert(For->getBody());
+  assert(((For && For->getBody()) || (CXXFor && CXXFor->getBody())) &&
+         "No loop body.");
 
-  OpenMPIterationSpaceChecker ISC(SemaRef, DSA, For->getForLoc());
+  OpenMPIterationSpaceChecker ISC(SemaRef, DSA,
+                                  For ? For->getForLoc() : CXXFor->getForLoc());
 
   // Check init.
-  Stmt *Init = For->getInit();
+  Stmt *Init = For ? For->getInit() : CXXFor->getBeginStmt();
   if (ISC.checkAndSetInit(Init))
     return true;
 
@@ -6556,18 +6549,18 @@ static bool checkOpenMPIterationSpace(
     assert(isOpenMPLoopDirective(DKind) && "DSA for non-loop vars");
 
     // Check test-expr.
-    HasErrors |= ISC.checkAndSetCond(For->getCond());
+    HasErrors |= ISC.checkAndSetCond(For ? For->getCond() : CXXFor->getCond());
 
     // Check incr-expr.
-    HasErrors |= ISC.checkAndSetInc(For->getInc());
+    HasErrors |= ISC.checkAndSetInc(For ? For->getInc() : CXXFor->getInc());
   }
 
   if (ISC.dependent() || SemaRef.CurContext->isDependentContext() || HasErrors)
     return HasErrors;
 
   // Build the loop's iteration space representation.
-  ResultIterSpaces[CurrentNestedLoopCount].PreCond =
-      ISC.buildPreCond(DSA.getCurScope(), For->getCond(), Captures);
+  ResultIterSpaces[CurrentNestedLoopCount].PreCond = ISC.buildPreCond(
+      DSA.getCurScope(), For ? For->getCond() : CXXFor->getCond(), Captures);
   ResultIterSpaces[CurrentNestedLoopCount].NumIterations =
       ISC.buildNumIterations(DSA.getCurScope(), ResultIterSpaces,
                              (isOpenMPWorksharingDirective(DKind) ||
@@ -6881,7 +6874,14 @@ checkOpenMPLoop(OpenMPDirectiveKind DKind, Expr *CollapseLoopCountExpr,
     // All loops associated with the construct must be perfectly nested; that
     // is, there must be no intervening code nor any OpenMP directive between
     // any two loops.
-    CurStmt = cast<ForStmt>(CurStmt)->getBody()->IgnoreContainers();
+    if (auto *For = dyn_cast<ForStmt>(CurStmt)) {
+      CurStmt = For->getBody();
+    } else {
+      assert(isa<CXXForRangeStmt>(CurStmt) &&
+             "Expected canonical for or range-based for loops.");
+      CurStmt = cast<CXXForRangeStmt>(CurStmt)->getBody();
+    }
+    CurStmt = CurStmt->IgnoreContainers();
   }
   for (unsigned Cnt = NestedLoopCount; Cnt < OrderedLoopCount; ++Cnt) {
     if (checkOpenMPIterationSpace(
@@ -6901,7 +6901,14 @@ checkOpenMPLoop(OpenMPDirectiveKind DKind, Expr *CollapseLoopCountExpr,
     // All loops associated with the construct must be perfectly nested; that
     // is, there must be no intervening code nor any OpenMP directive between
     // any two loops.
-    CurStmt = cast<ForStmt>(CurStmt)->getBody()->IgnoreContainers();
+    if (auto *For = dyn_cast<ForStmt>(CurStmt)) {
+      CurStmt = For->getBody();
+    } else {
+      assert(isa<CXXForRangeStmt>(CurStmt) &&
+             "Expected canonical for or range-based for loops.");
+      CurStmt = cast<CXXForRangeStmt>(CurStmt)->getBody();
+    }
+    CurStmt = CurStmt->IgnoreContainers();
   }
 
   Built.clear(/* size */ NestedLoopCount);
@@ -9248,6 +9255,42 @@ StmtResult Sema::ActOnOpenMPTaskLoopSimdDirective(
                                           NestedLoopCount, Clauses, AStmt, B);
 }
 
+StmtResult Sema::ActOnOpenMPMasterTaskLoopDirective(
+    ArrayRef<OMPClause *> Clauses, Stmt *AStmt, SourceLocation StartLoc,
+    SourceLocation EndLoc, VarsWithInheritedDSAType &VarsWithImplicitDSA) {
+  if (!AStmt)
+    return StmtError();
+
+  assert(isa<CapturedStmt>(AStmt) && "Captured statement expected");
+  OMPLoopDirective::HelperExprs B;
+  // In presence of clause 'collapse' or 'ordered' with number of loops, it will
+  // define the nested loops number.
+  unsigned NestedLoopCount =
+      checkOpenMPLoop(OMPD_master_taskloop, getCollapseNumberExpr(Clauses),
+                      /*OrderedLoopCountExpr=*/nullptr, AStmt, *this, *DSAStack,
+                      VarsWithImplicitDSA, B);
+  if (NestedLoopCount == 0)
+    return StmtError();
+
+  assert((CurContext->isDependentContext() || B.builtAll()) &&
+         "omp for loop exprs were not built");
+
+  // OpenMP, [2.9.2 taskloop Construct, Restrictions]
+  // The grainsize clause and num_tasks clause are mutually exclusive and may
+  // not appear on the same taskloop directive.
+  if (checkGrainsizeNumTasksClauses(*this, Clauses))
+    return StmtError();
+  // OpenMP, [2.9.2 taskloop Construct, Restrictions]
+  // If a reduction clause is present on the taskloop directive, the nogroup
+  // clause must not be specified.
+  if (checkReductionClauseWithNogroup(*this, Clauses))
+    return StmtError();
+
+  setFunctionHasBranchProtectedScope();
+  return OMPMasterTaskLoopDirective::Create(Context, StartLoc, EndLoc,
+                                            NestedLoopCount, Clauses, AStmt, B);
+}
+
 StmtResult Sema::ActOnOpenMPDistributeDirective(
     ArrayRef<OMPClause *> Clauses, Stmt *AStmt, SourceLocation StartLoc,
     SourceLocation EndLoc, VarsWithInheritedDSAType &VarsWithImplicitDSA) {
@@ -10154,6 +10197,7 @@ static OpenMPDirectiveKind getOpenMPCaptureRegionForClause(
     case OMPD_task:
     case OMPD_taskloop:
     case OMPD_taskloop_simd:
+    case OMPD_master_taskloop:
     case OMPD_target_data:
       // Do not capture if-clause expressions.
       break;
@@ -10226,6 +10270,7 @@ static OpenMPDirectiveKind getOpenMPCaptureRegionForClause(
     case OMPD_task:
     case OMPD_taskloop:
     case OMPD_taskloop_simd:
+    case OMPD_master_taskloop:
     case OMPD_threadprivate:
     case OMPD_allocate:
     case OMPD_taskyield:
@@ -10282,6 +10327,7 @@ static OpenMPDirectiveKind getOpenMPCaptureRegionForClause(
     case OMPD_task:
     case OMPD_taskloop:
     case OMPD_taskloop_simd:
+    case OMPD_master_taskloop:
     case OMPD_target_data:
     case OMPD_target_enter_data:
     case OMPD_target_exit_data:
@@ -10349,6 +10395,7 @@ static OpenMPDirectiveKind getOpenMPCaptureRegionForClause(
     case OMPD_task:
     case OMPD_taskloop:
     case OMPD_taskloop_simd:
+    case OMPD_master_taskloop:
     case OMPD_target_data:
     case OMPD_target_enter_data:
     case OMPD_target_exit_data:
@@ -10416,6 +10463,7 @@ static OpenMPDirectiveKind getOpenMPCaptureRegionForClause(
     case OMPD_task:
     case OMPD_taskloop:
     case OMPD_taskloop_simd:
+    case OMPD_master_taskloop:
     case OMPD_target_data:
     case OMPD_target_enter_data:
     case OMPD_target_exit_data:
@@ -10487,6 +10535,7 @@ static OpenMPDirectiveKind getOpenMPCaptureRegionForClause(
     case OMPD_task:
     case OMPD_taskloop:
     case OMPD_taskloop_simd:
+    case OMPD_master_taskloop:
     case OMPD_target_data:
     case OMPD_target_enter_data:
     case OMPD_target_exit_data:
@@ -10559,6 +10608,7 @@ static OpenMPDirectiveKind getOpenMPCaptureRegionForClause(
     case OMPD_task:
     case OMPD_taskloop:
     case OMPD_taskloop_simd:
+    case OMPD_master_taskloop:
     case OMPD_cancel:
     case OMPD_parallel:
     case OMPD_parallel_sections:
@@ -13015,8 +13065,9 @@ static bool actOnOMPReductionKindClause(
       // If we don't have a single element, we must emit a constant array type.
       if (ConstantLengthOASE && !SingleElement) {
         for (llvm::APSInt &Size : ArraySizes)
-          PrivateTy = Context.getConstantArrayType(
-              PrivateTy, Size, ArrayType::Normal, /*IndexTypeQuals=*/0);
+          PrivateTy = Context.getConstantArrayType(PrivateTy, Size, nullptr,
+                                                   ArrayType::Normal,
+                                                   /*IndexTypeQuals=*/0);
       }
     }
 

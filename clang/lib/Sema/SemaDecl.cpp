@@ -2173,7 +2173,7 @@ void Sema::MergeTypedefNameDecl(Scope *S, TypedefNameDecl *New,
         if (!T->isPointerType())
           break;
         if (!T->isVoidPointerType()) {
-          QualType PT = T->getAs<PointerType>()->getPointeeType();
+          QualType PT = T->castAs<PointerType>()->getPointeeType();
           if (!PT->isStructureType())
             break;
         }
@@ -4285,9 +4285,11 @@ void Sema::handleTagNumbering(const TagDecl *Tag, Scope *TagScope) {
   }
 
   // If this tag isn't a direct child of a class, number it if it is local.
+  MangleNumberingContext *MCtx;
   Decl *ManglingContextDecl;
-  if (MangleNumberingContext *MCtx = getCurrentMangleNumberContext(
-          Tag->getDeclContext(), ManglingContextDecl)) {
+  std::tie(MCtx, ManglingContextDecl) =
+      getCurrentMangleNumberContext(Tag->getDeclContext());
+  if (MCtx) {
     Context.setManglingNumber(
         Tag, MCtx->getManglingNumber(
                  Tag, getMSManglingNumber(getLangOpts(), TagScope)));
@@ -5037,9 +5039,11 @@ Decl *Sema::BuildAnonymousStructOrUnion(Scope *S, DeclSpec &DS,
 
   if (VarDecl *NewVD = dyn_cast<VarDecl>(Anon)) {
     if (getLangOpts().CPlusPlus && NewVD->isStaticLocal()) {
+      MangleNumberingContext *MCtx;
       Decl *ManglingContextDecl;
-      if (MangleNumberingContext *MCtx = getCurrentMangleNumberContext(
-              NewVD->getDeclContext(), ManglingContextDecl)) {
+      std::tie(MCtx, ManglingContextDecl) =
+          getCurrentMangleNumberContext(NewVD->getDeclContext());
+      if (MCtx) {
         Context.setManglingNumber(
             NewVD, MCtx->getManglingNumber(
                        NewVD, getMSManglingNumber(getLangOpts(), S)));
@@ -6394,8 +6398,8 @@ static QualType TryToFixInvalidVariablyModifiedType(QualType T,
     return QualType();
   }
 
-  return Context.getConstantArrayType(VLATy->getElementType(),
-                                      Res, ArrayType::Normal, 0);
+  return Context.getConstantArrayType(
+      VLATy->getElementType(), Res, VLATy->getSizeExpr(), ArrayType::Normal, 0);
 }
 
 static void
@@ -7733,9 +7737,11 @@ NamedDecl *Sema::ActOnVariableDeclarator(
     RegisterLocallyScopedExternCDecl(NewVD, S);
 
   if (getLangOpts().CPlusPlus && NewVD->isStaticLocal()) {
+    MangleNumberingContext *MCtx;
     Decl *ManglingContextDecl;
-    if (MangleNumberingContext *MCtx = getCurrentMangleNumberContext(
-            NewVD->getDeclContext(), ManglingContextDecl)) {
+    std::tie(MCtx, ManglingContextDecl) =
+        getCurrentMangleNumberContext(NewVD->getDeclContext());
+    if (MCtx) {
       Context.setManglingNumber(
           NewVD, MCtx->getManglingNumber(
                      NewVD, getMSManglingNumber(getLangOpts(), S)));
@@ -8802,7 +8808,7 @@ static FunctionDecl *CreateNewFunctionDecl(Sema &SemaRef, Declarator &D,
   // the class has been completely parsed.
   if (!DC->isRecord() &&
       SemaRef.RequireNonAbstractType(
-          D.getIdentifierLoc(), R->getAs<FunctionType>()->getReturnType(),
+          D.getIdentifierLoc(), R->castAs<FunctionType>()->getReturnType(),
           diag::err_abstract_type_in_decl, SemaRef.AbstractReturnType))
     D.setInvalidType();
 
@@ -8866,6 +8872,9 @@ static FunctionDecl *CreateNewFunctionDecl(Sema &SemaRef, Declarator &D,
     }
 
     SemaRef.CheckConversionDeclarator(D, R, SC);
+    if (D.isInvalidType())
+      return nullptr;
+
     IsVirtualOkay = true;
     return CXXConversionDecl::Create(
         SemaRef.Context, cast<CXXRecordDecl>(DC), D.getBeginLoc(), NameInfo, R,
@@ -10404,7 +10413,7 @@ bool Sema::areMultiversionVariantFunctionsCompatible(
     const PartialDiagnosticAt &NoteCausedDiagIDAt,
     const PartialDiagnosticAt &NoSupportDiagIDAt,
     const PartialDiagnosticAt &DiffDiagIDAt, bool TemplatesSupported,
-    bool ConstexprSupported) {
+    bool ConstexprSupported, bool CLinkageMayDiffer) {
   enum DoesntSupport {
     FuncTemplates = 0,
     VirtFuncs = 1,
@@ -10497,7 +10506,7 @@ bool Sema::areMultiversionVariantFunctionsCompatible(
     if (OldFD->getStorageClass() != NewFD->getStorageClass())
       return Diag(DiffDiagIDAt.first, DiffDiagIDAt.second) << StorageClass;
 
-    if (OldFD->isExternC() != NewFD->isExternC())
+    if (!CLinkageMayDiffer && OldFD->isExternC() != NewFD->isExternC())
       return Diag(DiffDiagIDAt.first, DiffDiagIDAt.second) << Linkage;
 
     if (CheckEquivalentExceptionSpec(
@@ -10550,7 +10559,8 @@ static bool CheckMultiVersionAdditionalRules(Sema &S, const FunctionDecl *OldFD,
       PartialDiagnosticAt(NewFD->getLocation(),
                           S.PDiag(diag::err_multiversion_diff)),
       /*TemplatesSupported=*/false,
-      /*ConstexprSupported=*/!IsCPUSpecificCPUDispatchMVType);
+      /*ConstexprSupported=*/!IsCPUSpecificCPUDispatchMVType,
+      /*CLinkageMayDiffer=*/false);
 }
 
 /// Check the validity of a multiversion function declaration that is the
@@ -18577,4 +18587,88 @@ void Sema::ActOnPragmaWeakAlias(IdentifierInfo* Name,
 
 Decl *Sema::getObjCDeclContext() const {
   return (dyn_cast_or_null<ObjCContainerDecl>(CurContext));
+}
+
+Sema::FunctionEmissionStatus Sema::getEmissionStatus(FunctionDecl *FD) {
+  // Templates are emitted when they're instantiated.
+  if (FD->isDependentContext())
+    return FunctionEmissionStatus::TemplateDiscarded;
+
+  FunctionEmissionStatus OMPES = FunctionEmissionStatus::Unknown;
+  if (LangOpts.OpenMPIsDevice) {
+    Optional<OMPDeclareTargetDeclAttr::DevTypeTy> DevTy =
+        OMPDeclareTargetDeclAttr::getDeviceType(FD->getCanonicalDecl());
+    if (DevTy.hasValue()) {
+      if (*DevTy == OMPDeclareTargetDeclAttr::DT_Host)
+        OMPES = FunctionEmissionStatus::OMPDiscarded;
+      else if (DeviceKnownEmittedFns.count(FD) > 0)
+        OMPES = FunctionEmissionStatus::Emitted;
+    }
+  } else if (LangOpts.OpenMP) {
+    // In OpenMP 4.5 all the functions are host functions.
+    if (LangOpts.OpenMP <= 45) {
+      OMPES = FunctionEmissionStatus::Emitted;
+    } else {
+      Optional<OMPDeclareTargetDeclAttr::DevTypeTy> DevTy =
+          OMPDeclareTargetDeclAttr::getDeviceType(FD->getCanonicalDecl());
+      // In OpenMP 5.0 or above, DevTy may be changed later by
+      // #pragma omp declare target to(*) device_type(*). Therefore DevTy
+      // having no value does not imply host. The emission status will be
+      // checked again at the end of compilation unit.
+      if (DevTy.hasValue()) {
+        if (*DevTy == OMPDeclareTargetDeclAttr::DT_NoHost) {
+          OMPES = FunctionEmissionStatus::OMPDiscarded;
+        } else if (DeviceKnownEmittedFns.count(FD) > 0) {
+          OMPES = FunctionEmissionStatus::Emitted;
+        }
+      }
+    }
+  }
+  if (OMPES == FunctionEmissionStatus::OMPDiscarded ||
+      (OMPES == FunctionEmissionStatus::Emitted && !LangOpts.CUDA))
+    return OMPES;
+
+  if (LangOpts.CUDA) {
+    // When compiling for device, host functions are never emitted.  Similarly,
+    // when compiling for host, device and global functions are never emitted.
+    // (Technically, we do emit a host-side stub for global functions, but this
+    // doesn't count for our purposes here.)
+    Sema::CUDAFunctionTarget T = IdentifyCUDATarget(FD);
+    if (LangOpts.CUDAIsDevice && T == Sema::CFT_Host)
+      return FunctionEmissionStatus::CUDADiscarded;
+    if (!LangOpts.CUDAIsDevice &&
+        (T == Sema::CFT_Device || T == Sema::CFT_Global))
+      return FunctionEmissionStatus::CUDADiscarded;
+
+    // Check whether this function is externally visible -- if so, it's
+    // known-emitted.
+    //
+    // We have to check the GVA linkage of the function's *definition* -- if we
+    // only have a declaration, we don't know whether or not the function will
+    // be emitted, because (say) the definition could include "inline".
+    FunctionDecl *Def = FD->getDefinition();
+
+    if (Def &&
+        !isDiscardableGVALinkage(getASTContext().GetGVALinkageForFunction(Def))
+        && (!LangOpts.OpenMP || OMPES == FunctionEmissionStatus::Emitted))
+      return FunctionEmissionStatus::Emitted;
+  }
+
+  // Otherwise, the function is known-emitted if it's in our set of
+  // known-emitted functions.
+  return (DeviceKnownEmittedFns.count(FD) > 0)
+             ? FunctionEmissionStatus::Emitted
+             : FunctionEmissionStatus::Unknown;
+}
+
+bool Sema::shouldIgnoreInHostDeviceCheck(FunctionDecl *Callee) {
+  // Host-side references to a __global__ function refer to the stub, so the
+  // function itself is never emitted and therefore should not be marked.
+  // If we have host fn calls kernel fn calls host+device, the HD function
+  // does not get instantiated on the host. We model this by omitting at the
+  // call to the kernel from the callgraph. This ensures that, when compiling
+  // for host, only HD functions actually called from the host get marked as
+  // known-emitted.
+  return LangOpts.CUDA && !LangOpts.CUDAIsDevice &&
+         IdentifyCUDATarget(Callee) == CFT_Global;
 }

@@ -99,7 +99,13 @@ void checkHighlightings(llvm::StringRef Code,
                                               /*FileContent*/ llvm::StringRef>>
                             AdditionalFiles = {}) {
   Annotations Test(Code);
-  auto TU = TestTU::withCode(Test.code());
+  TestTU TU;
+  TU.Code = Test.code();
+
+  // FIXME: Auto-completion in a template requires disabling delayed template
+  // parsing.
+  TU.ExtraArgs.push_back("-fno-delayed-template-parsing");
+
   for (auto File : AdditionalFiles)
     TU.AdditionalFiles.insert({File.first, File.second});
   auto AST = TU.build();
@@ -475,6 +481,20 @@ TEST(SemanticHighlighting, GetsCorrectTokens) {
         $Macro[[assert]]($Variable[[x]] != $Variable[[y]]);
         $Macro[[assert]]($Variable[[x]] != $Function[[f]]());
       }
+    )cpp",
+      // highlighting all macro references
+      R"cpp(
+      #ifndef $Macro[[name]]
+      #define $Macro[[name]]
+      #endif
+
+      #define $Macro[[test]]
+      #undef $Macro[[test]]
+      #ifdef $Macro[[test]]
+      #endif
+
+      #if defined($Macro[[test]])
+      #endif
     )cpp",
       R"cpp(
       struct $Class[[S]] {

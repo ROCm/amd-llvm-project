@@ -4672,10 +4672,11 @@ void SelectionDAGBuilder::visitAtomicLoad(const LoadInst &I) {
       L = DAG.getPtrExtOrTrunc(L, dl, VT);
 
     setValue(&I, L);
-    if (!I.isUnordered()) {
-      SDValue OutChain = L.getValue(1);
+    SDValue OutChain = L.getValue(1);
+    if (!I.isUnordered())
       DAG.setRoot(OutChain);
-    }
+    else
+      PendingLoads.push_back(OutChain);
     return;
   }
   
@@ -4973,12 +4974,11 @@ static SDValue expandExp(const SDLoc &dl, SDValue Op, SelectionDAG &DAG,
     // Put the exponent in the right bit position for later addition to the
     // final result:
     //
-    //   #define LOG2OFe 1.4426950f
-    //   t0 = Op * LOG2OFe
+    // t0 = Op * log2(e)
 
     // TODO: What fast-math-flags should be set here?
     SDValue t0 = DAG.getNode(ISD::FMUL, dl, MVT::f32, Op,
-                             getF32Constant(DAG, 0x3fb8aa3b, dl));
+                             DAG.getConstantFP(numbers::log2ef, dl, MVT::f32));
     return getLimitedPrecisionExp2(t0, dl, DAG);
   }
 
@@ -4996,10 +4996,11 @@ static SDValue expandLog(const SDLoc &dl, SDValue Op, SelectionDAG &DAG,
       LimitFloatPrecision > 0 && LimitFloatPrecision <= 18) {
     SDValue Op1 = DAG.getNode(ISD::BITCAST, dl, MVT::i32, Op);
 
-    // Scale the exponent by log(2) [0.69314718f].
+    // Scale the exponent by log(2).
     SDValue Exp = GetExponent(DAG, Op1, TLI, dl);
-    SDValue LogOfExponent = DAG.getNode(ISD::FMUL, dl, MVT::f32, Exp,
-                                        getF32Constant(DAG, 0x3f317218, dl));
+    SDValue LogOfExponent =
+        DAG.getNode(ISD::FMUL, dl, MVT::f32, Exp,
+                    DAG.getConstantFP(numbers::ln2f, dl, MVT::f32));
 
     // Get the significand and build it into a floating-point number with
     // exponent of 1.
@@ -6103,12 +6104,16 @@ void SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I,
   case Intrinsic::experimental_constrained_log:
   case Intrinsic::experimental_constrained_log10:
   case Intrinsic::experimental_constrained_log2:
+  case Intrinsic::experimental_constrained_lrint:
+  case Intrinsic::experimental_constrained_llrint:
   case Intrinsic::experimental_constrained_rint:
   case Intrinsic::experimental_constrained_nearbyint:
   case Intrinsic::experimental_constrained_maxnum:
   case Intrinsic::experimental_constrained_minnum:
   case Intrinsic::experimental_constrained_ceil:
   case Intrinsic::experimental_constrained_floor:
+  case Intrinsic::experimental_constrained_lround:
+  case Intrinsic::experimental_constrained_llround:
   case Intrinsic::experimental_constrained_round:
   case Intrinsic::experimental_constrained_trunc:
     visitConstrainedFPIntrinsic(cast<ConstrainedFPIntrinsic>(I));
@@ -6934,6 +6939,12 @@ void SelectionDAGBuilder::visitConstrainedFPIntrinsic(
   case Intrinsic::experimental_constrained_log2:
     Opcode = ISD::STRICT_FLOG2;
     break;
+  case Intrinsic::experimental_constrained_lrint:
+    Opcode = ISD::STRICT_LRINT;
+    break;
+  case Intrinsic::experimental_constrained_llrint:
+    Opcode = ISD::STRICT_LLRINT;
+    break;
   case Intrinsic::experimental_constrained_rint:
     Opcode = ISD::STRICT_FRINT;
     break;
@@ -6951,6 +6962,12 @@ void SelectionDAGBuilder::visitConstrainedFPIntrinsic(
     break;
   case Intrinsic::experimental_constrained_floor:
     Opcode = ISD::STRICT_FFLOOR;
+    break;
+  case Intrinsic::experimental_constrained_lround:
+    Opcode = ISD::STRICT_LROUND;
+    break;
+  case Intrinsic::experimental_constrained_llround:
+    Opcode = ISD::STRICT_LLROUND;
     break;
   case Intrinsic::experimental_constrained_round:
     Opcode = ISD::STRICT_FROUND;

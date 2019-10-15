@@ -1432,9 +1432,7 @@ define void @truncstore_v8i64_v8i8(<8 x i64> %x, <8 x i8>* %p, <8 x i32> %mask) 
 ; AVX512F:       # %bb.0:
 ; AVX512F-NEXT:    # kill: def $ymm1 killed $ymm1 def $zmm1
 ; AVX512F-NEXT:    vptestmd %zmm1, %zmm1, %k0
-; AVX512F-NEXT:    vpminsq {{.*}}(%rip){1to8}, %zmm0, %zmm0
-; AVX512F-NEXT:    vpmaxsq {{.*}}(%rip){1to8}, %zmm0, %zmm0
-; AVX512F-NEXT:    vpmovqb %zmm0, %xmm0
+; AVX512F-NEXT:    vpmovsqb %zmm0, %xmm0
 ; AVX512F-NEXT:    kmovw %k0, %eax
 ; AVX512F-NEXT:    testb $1, %al
 ; AVX512F-NEXT:    jne .LBB2_1
@@ -4596,11 +4594,8 @@ define void @truncstore_v8i32_v8i16(<8 x i32> %x, <8 x i16>* %p, <8 x i32> %mask
 ; AVX512F:       # %bb.0:
 ; AVX512F-NEXT:    # kill: def $ymm1 killed $ymm1 def $zmm1
 ; AVX512F-NEXT:    vptestmd %zmm1, %zmm1, %k0
-; AVX512F-NEXT:    vpbroadcastd {{.*#+}} ymm1 = [32767,32767,32767,32767,32767,32767,32767,32767]
-; AVX512F-NEXT:    vpminsd %ymm1, %ymm0, %ymm0
-; AVX512F-NEXT:    vpbroadcastd {{.*#+}} ymm1 = [4294934528,4294934528,4294934528,4294934528,4294934528,4294934528,4294934528,4294934528]
-; AVX512F-NEXT:    vpmaxsd %ymm1, %ymm0, %ymm0
-; AVX512F-NEXT:    vpmovdw %zmm0, %ymm0
+; AVX512F-NEXT:    vextracti128 $1, %ymm0, %xmm1
+; AVX512F-NEXT:    vpackssdw %xmm1, %xmm0, %xmm0
 ; AVX512F-NEXT:    kmovw %k0, %eax
 ; AVX512F-NEXT:    testb $1, %al
 ; AVX512F-NEXT:    jne .LBB11_1
@@ -4667,11 +4662,8 @@ define void @truncstore_v8i32_v8i16(<8 x i32> %x, <8 x i16>* %p, <8 x i32> %mask
 ; AVX512BW-NEXT:    vptestmd %zmm1, %zmm1, %k0
 ; AVX512BW-NEXT:    kshiftld $24, %k0, %k0
 ; AVX512BW-NEXT:    kshiftrd $24, %k0, %k1
-; AVX512BW-NEXT:    vpbroadcastd {{.*#+}} ymm1 = [32767,32767,32767,32767,32767,32767,32767,32767]
-; AVX512BW-NEXT:    vpminsd %ymm1, %ymm0, %ymm0
-; AVX512BW-NEXT:    vpbroadcastd {{.*#+}} ymm1 = [4294934528,4294934528,4294934528,4294934528,4294934528,4294934528,4294934528,4294934528]
-; AVX512BW-NEXT:    vpmaxsd %ymm1, %ymm0, %ymm0
-; AVX512BW-NEXT:    vpmovdw %zmm0, %ymm0
+; AVX512BW-NEXT:    vextracti128 $1, %ymm0, %xmm1
+; AVX512BW-NEXT:    vpackssdw %xmm1, %xmm0, %xmm0
 ; AVX512BW-NEXT:    vmovdqu16 %zmm0, (%rdi) {%k1}
 ; AVX512BW-NEXT:    vzeroupper
 ; AVX512BW-NEXT:    retq
@@ -4979,11 +4971,9 @@ define void @truncstore_v8i32_v8i8(<8 x i32> %x, <8 x i8>* %p, <8 x i32> %mask) 
 ; AVX512F:       # %bb.0:
 ; AVX512F-NEXT:    # kill: def $ymm1 killed $ymm1 def $zmm1
 ; AVX512F-NEXT:    vptestmd %zmm1, %zmm1, %k0
-; AVX512F-NEXT:    vpbroadcastd {{.*#+}} ymm1 = [127,127,127,127,127,127,127,127]
-; AVX512F-NEXT:    vpminsd %ymm1, %ymm0, %ymm0
-; AVX512F-NEXT:    vpbroadcastd {{.*#+}} ymm1 = [4294967168,4294967168,4294967168,4294967168,4294967168,4294967168,4294967168,4294967168]
-; AVX512F-NEXT:    vpmaxsd %ymm1, %ymm0, %ymm0
-; AVX512F-NEXT:    vpmovdb %zmm0, %xmm0
+; AVX512F-NEXT:    vextracti128 $1, %ymm0, %xmm1
+; AVX512F-NEXT:    vpackssdw %xmm1, %xmm0, %xmm0
+; AVX512F-NEXT:    vpacksswb %xmm0, %xmm0, %xmm0
 ; AVX512F-NEXT:    kmovw %k0, %eax
 ; AVX512F-NEXT:    testb $1, %al
 ; AVX512F-NEXT:    jne .LBB12_1
@@ -5050,11 +5040,9 @@ define void @truncstore_v8i32_v8i8(<8 x i32> %x, <8 x i8>* %p, <8 x i32> %mask) 
 ; AVX512BW-NEXT:    vptestmd %zmm1, %zmm1, %k0
 ; AVX512BW-NEXT:    kshiftlq $56, %k0, %k0
 ; AVX512BW-NEXT:    kshiftrq $56, %k0, %k1
-; AVX512BW-NEXT:    vpbroadcastd {{.*#+}} ymm1 = [127,127,127,127,127,127,127,127]
-; AVX512BW-NEXT:    vpminsd %ymm1, %ymm0, %ymm0
-; AVX512BW-NEXT:    vpbroadcastd {{.*#+}} ymm1 = [4294967168,4294967168,4294967168,4294967168,4294967168,4294967168,4294967168,4294967168]
-; AVX512BW-NEXT:    vpmaxsd %ymm1, %ymm0, %ymm0
-; AVX512BW-NEXT:    vpmovdb %zmm0, %xmm0
+; AVX512BW-NEXT:    vextracti128 $1, %ymm0, %xmm1
+; AVX512BW-NEXT:    vpackssdw %xmm1, %xmm0, %xmm0
+; AVX512BW-NEXT:    vpacksswb %xmm0, %xmm0, %xmm0
 ; AVX512BW-NEXT:    vmovdqu8 %zmm0, (%rdi) {%k1}
 ; AVX512BW-NEXT:    vzeroupper
 ; AVX512BW-NEXT:    retq
@@ -5194,10 +5182,6 @@ define void @truncstore_v4i32_v4i16(<4 x i32> %x, <4 x i16>* %p, <4 x i32> %mask
 ; AVX512F:       # %bb.0:
 ; AVX512F-NEXT:    # kill: def $xmm1 killed $xmm1 def $zmm1
 ; AVX512F-NEXT:    vptestmd %zmm1, %zmm1, %k0
-; AVX512F-NEXT:    vpbroadcastd {{.*#+}} xmm1 = [32767,32767,32767,32767]
-; AVX512F-NEXT:    vpminsd %xmm1, %xmm0, %xmm0
-; AVX512F-NEXT:    vpbroadcastd {{.*#+}} xmm1 = [4294934528,4294934528,4294934528,4294934528]
-; AVX512F-NEXT:    vpmaxsd %xmm1, %xmm0, %xmm0
 ; AVX512F-NEXT:    vpackssdw %xmm0, %xmm0, %xmm0
 ; AVX512F-NEXT:    kmovw %k0, %eax
 ; AVX512F-NEXT:    testb $1, %al
@@ -5237,10 +5221,6 @@ define void @truncstore_v4i32_v4i16(<4 x i32> %x, <4 x i16>* %p, <4 x i32> %mask
 ; AVX512BW-NEXT:    vptestmd %zmm1, %zmm1, %k0
 ; AVX512BW-NEXT:    kshiftld $28, %k0, %k0
 ; AVX512BW-NEXT:    kshiftrd $28, %k0, %k1
-; AVX512BW-NEXT:    vpbroadcastd {{.*#+}} xmm1 = [32767,32767,32767,32767]
-; AVX512BW-NEXT:    vpminsd %xmm1, %xmm0, %xmm0
-; AVX512BW-NEXT:    vpbroadcastd {{.*#+}} xmm1 = [4294934528,4294934528,4294934528,4294934528]
-; AVX512BW-NEXT:    vpmaxsd %xmm1, %xmm0, %xmm0
 ; AVX512BW-NEXT:    vpackssdw %xmm0, %xmm0, %xmm0
 ; AVX512BW-NEXT:    vmovdqu16 %zmm0, (%rdi) {%k1}
 ; AVX512BW-NEXT:    vzeroupper
@@ -7304,9 +7284,8 @@ define void @truncstore_v16i16_v16i8(<16 x i16> %x, <16 x i8>* %p, <16 x i8> %ma
 ; AVX512BW-NEXT:    # kill: def $xmm1 killed $xmm1 def $zmm1
 ; AVX512BW-NEXT:    vptestmb %zmm1, %zmm1, %k0
 ; AVX512BW-NEXT:    kmovw %k0, %k1
-; AVX512BW-NEXT:    vpminsw {{.*}}(%rip), %ymm0, %ymm0
-; AVX512BW-NEXT:    vpmaxsw {{.*}}(%rip), %ymm0, %ymm0
-; AVX512BW-NEXT:    vpmovwb %zmm0, %ymm0
+; AVX512BW-NEXT:    vextracti128 $1, %ymm0, %xmm1
+; AVX512BW-NEXT:    vpacksswb %xmm1, %xmm0, %xmm0
 ; AVX512BW-NEXT:    vmovdqu8 %zmm0, (%rdi) {%k1}
 ; AVX512BW-NEXT:    vzeroupper
 ; AVX512BW-NEXT:    retq
@@ -7603,8 +7582,6 @@ define void @truncstore_v8i16_v8i8(<8 x i16> %x, <8 x i8>* %p, <8 x i16> %mask) 
 ; AVX512BW-NEXT:    vptestmw %zmm1, %zmm1, %k0
 ; AVX512BW-NEXT:    kshiftlq $56, %k0, %k0
 ; AVX512BW-NEXT:    kshiftrq $56, %k0, %k1
-; AVX512BW-NEXT:    vpminsw {{.*}}(%rip), %xmm0, %xmm0
-; AVX512BW-NEXT:    vpmaxsw {{.*}}(%rip), %xmm0, %xmm0
 ; AVX512BW-NEXT:    vpacksswb %xmm0, %xmm0, %xmm0
 ; AVX512BW-NEXT:    vmovdqu8 %zmm0, (%rdi) {%k1}
 ; AVX512BW-NEXT:    vzeroupper

@@ -4956,6 +4956,10 @@ TEST_F(FormatTest, DontBreakBeforeQualifiedOperator) {
 
 TEST_F(FormatTest, TrailingReturnType) {
   verifyFormat("auto foo() -> int;\n");
+  // correct trailing return type spacing
+  verifyFormat("auto operator->() -> int;\n");
+  verifyFormat("auto operator++(int) -> int;\n");
+
   verifyFormat("struct S {\n"
                "  auto bar() const -> int;\n"
                "};");
@@ -7033,31 +7037,31 @@ TEST_F(FormatTest, UnderstandsFunctionRefQualification) {
 
   verifyFormat("struct f {\n"
                "  template <class T>\n"
-               "  int &foo(const std::string &str) & noexcept {}\n"
+               "  int &foo(const std::string &str) &noexcept {}\n"
                "};",
                BreakTemplate);
 
   verifyFormat("struct f {\n"
                "  template <class T>\n"
-               "  int &foo(const std::string &str) && noexcept {}\n"
+               "  int &foo(const std::string &str) &&noexcept {}\n"
                "};",
                BreakTemplate);
 
   verifyFormat("struct f {\n"
                "  template <class T>\n"
-               "  int &foo(const std::string &str) const & noexcept {}\n"
+               "  int &foo(const std::string &str) const &noexcept {}\n"
                "};",
                BreakTemplate);
 
   verifyFormat("struct f {\n"
                "  template <class T>\n"
-               "  int &foo(const std::string &str) const & noexcept {}\n"
+               "  int &foo(const std::string &str) const &noexcept {}\n"
                "};",
                BreakTemplate);
 
   verifyFormat("struct f {\n"
                "  template <class T>\n"
-               "  auto foo(const std::string &str) && noexcept -> int & {}\n"
+               "  auto foo(const std::string &str) &&noexcept -> int & {}\n"
                "};",
                BreakTemplate);
 
@@ -7080,13 +7084,13 @@ TEST_F(FormatTest, UnderstandsFunctionRefQualification) {
 
   verifyFormat("struct f {\n"
                "  template <class T>\n"
-               "  int& foo(const std::string& str) const & noexcept {}\n"
+               "  int& foo(const std::string& str) const& noexcept {}\n"
                "};",
                AlignLeftBreakTemplate);
 
   verifyFormat("struct f {\n"
                "  template <class T>\n"
-               "  int& foo(const std::string& str) const & noexcept {}\n"
+               "  int& foo(const std::string& str) const&& noexcept {}\n"
                "};",
                AlignLeftBreakTemplate);
 
@@ -7095,6 +7099,24 @@ TEST_F(FormatTest, UnderstandsFunctionRefQualification) {
                "  auto foo(const std::string& str) && noexcept -> int& {}\n"
                "};",
                AlignLeftBreakTemplate);
+
+  // The `&` in `Type&` should not be confused with a trailing `&` of
+  // DEPRECATED(reason) member function.
+  verifyFormat("struct f {\n"
+               "  template <class T>\n"
+               "  DEPRECATED(reason)\n"
+               "  Type &foo(arguments) {}\n"
+               "};",
+               BreakTemplate);
+
+  verifyFormat("struct f {\n"
+               "  template <class T>\n"
+               "  DEPRECATED(reason)\n"
+               "  Type& foo(arguments) {}\n"
+               "};",
+               AlignLeftBreakTemplate);
+
+  verifyFormat("void (*foopt)(int) = &func;");
 }
 
 TEST_F(FormatTest, UnderstandsNewAndDelete) {
@@ -8210,6 +8232,34 @@ TEST_F(FormatTest, LayoutCxx11BraceInitializers) {
   SpaceBeforeBrace.SpaceBeforeCpp11BracedList = true;
   verifyFormat("vector<int> x {1, 2, 3, 4};", SpaceBeforeBrace);
   verifyFormat("f({}, {{}, {}}, MyMap[{k, v}]);", SpaceBeforeBrace);
+
+  FormatStyle SpaceBetweenBraces = getLLVMStyle();
+  SpaceBetweenBraces.SpacesInAngles = true;
+  SpaceBetweenBraces.SpacesInParentheses = true;
+  SpaceBetweenBraces.SpacesInSquareBrackets = true;
+  verifyFormat("vector< int > x{ 1, 2, 3, 4 };", SpaceBetweenBraces);
+  verifyFormat("f( {}, { {}, {} }, MyMap[ { k, v } ] );", SpaceBetweenBraces);
+  verifyFormat("vector< int > x{ // comment 1\n"
+               "                 1, 2, 3, 4 };",
+               SpaceBetweenBraces);
+  SpaceBetweenBraces.ColumnLimit = 20;
+  EXPECT_EQ("vector< int > x{\n"
+            "    1, 2, 3, 4 };",
+            format("vector<int>x{1,2,3,4};", SpaceBetweenBraces));
+  SpaceBetweenBraces.ColumnLimit = 24;
+  EXPECT_EQ("vector< int > x{ 1, 2,\n"
+            "                 3, 4 };",
+            format("vector<int>x{1,2,3,4};", SpaceBetweenBraces));
+  EXPECT_EQ("vector< int > x{\n"
+            "    1,\n"
+            "    2,\n"
+            "    3,\n"
+            "    4,\n"
+            "};",
+            format("vector<int>x{1,2,3,4,};", SpaceBetweenBraces));
+  verifyFormat("vector< int > x{};", SpaceBetweenBraces);
+  SpaceBetweenBraces.SpaceInEmptyParentheses = true;
+  verifyFormat("vector< int > x{ };", SpaceBetweenBraces);
 }
 
 TEST_F(FormatTest, FormatsBracedListsInColumnLayout) {
@@ -10483,10 +10533,6 @@ TEST_F(FormatTest, ConfigurableSpacesInSquareBrackets) {
 
   FormatStyle Spaces = getLLVMStyle();
   Spaces.SpacesInSquareBrackets = true;
-  // Lambdas unchanged.
-  verifyFormat("int c = []() -> int { return 2; }();\n", Spaces);
-  verifyFormat("return [i, args...] {};", Spaces);
-
   // Not lambdas.
   verifyFormat("int a[ 5 ];", Spaces);
   verifyFormat("a[ 3 ] += 42;", Spaces);
@@ -10497,6 +10543,9 @@ TEST_F(FormatTest, ConfigurableSpacesInSquareBrackets) {
   verifyFormat("std::unique_ptr<int[]> foo() {}", Spaces);
   verifyFormat("int i = a[ a ][ a ]->f();", Spaces);
   verifyFormat("int i = (*b)[ a ]->f();", Spaces);
+  // Lambdas.
+  verifyFormat("int c = []() -> int { return 2; }();\n", Spaces);
+  verifyFormat("return [ i, args... ] {};", Spaces);
 }
 
 TEST_F(FormatTest, ConfigurableSpaceBeforeAssignmentOperators) {
@@ -14605,6 +14654,81 @@ TEST_F(FormatTest, AmbersandInLamda) {
   verifyFormat("auto lambda = [&a = a]() { a = 2; };", AlignStyle);
 }
 
-} // end namespace
-} // end namespace format
-} // end namespace clang
+TEST_F(FormatTest, AlternativeOperators) {
+  // Test case for ensuring alternate operators are not
+  // combined with their right most neighbour.
+  verifyFormat("int a and b;");
+  verifyFormat("int a and_eq b;");
+  verifyFormat("int a bitand b;");
+  verifyFormat("int a bitor b;");
+  verifyFormat("int a compl b;");
+  verifyFormat("int a not b;");
+  verifyFormat("int a not_eq b;");
+  verifyFormat("int a or b;");
+  verifyFormat("int a xor b;");
+  verifyFormat("int a xor_eq b;");
+  verifyFormat("return this not_eq bitand other;");
+  verifyFormat("bool operator not_eq(const X bitand other)");
+
+  verifyFormat("int a and 5;");
+  verifyFormat("int a and_eq 5;");
+  verifyFormat("int a bitand 5;");
+  verifyFormat("int a bitor 5;");
+  verifyFormat("int a compl 5;");
+  verifyFormat("int a not 5;");
+  verifyFormat("int a not_eq 5;");
+  verifyFormat("int a or 5;");
+  verifyFormat("int a xor 5;");
+  verifyFormat("int a xor_eq 5;");
+
+  verifyFormat("int a compl(5);");
+  verifyFormat("int a not(5);");
+
+  /* FIXME handle alternate tokens
+   * https://en.cppreference.com/w/cpp/language/operator_alternative
+  // alternative tokens
+  verifyFormat("compl foo();");     //  ~foo();
+  verifyFormat("foo() <%%>;");      // foo();
+  verifyFormat("void foo() <%%>;"); // void foo(){}
+  verifyFormat("int a <:1:>;");     // int a[1];[
+  verifyFormat("%:define ABC abc"); // #define ABC abc
+  verifyFormat("%:%:");             // ##
+  */
+}
+
+TEST_F(FormatTest, NotCastRPaen) {
+
+  verifyFormat("void operator++(int) noexcept;");
+  verifyFormat("void operator++(int &) noexcept;");
+  verifyFormat("void operator delete(void *, std::size_t, const std::nothrow_t "
+               "&) noexcept;");
+  verifyFormat(
+      "void operator delete(std::size_t, const std::nothrow_t &) noexcept;");
+  verifyFormat("void operator delete(const std::nothrow_t &) noexcept;");
+  verifyFormat("void operator delete(std::nothrow_t &) noexcept;");
+  verifyFormat("void operator delete(nothrow_t &) noexcept;");
+  verifyFormat("void operator delete(foo &) noexcept;");
+  verifyFormat("void operator delete(foo) noexcept;");
+  verifyFormat("void operator delete(int) noexcept;");
+  verifyFormat("void operator delete(int &) noexcept;");
+  verifyFormat("void operator delete(int &) volatile noexcept;");
+  verifyFormat("void operator delete(int &) const");
+  verifyFormat("void operator delete(int &) = default");
+  verifyFormat("void operator delete(int &) = delete");
+  verifyFormat("void operator delete(int &) [[noreturn]]");
+  verifyFormat("void operator delete(int &) throw();");
+  verifyFormat("void operator delete(int &) throw(int);");
+  verifyFormat("auto operator delete(int &) -> int;");
+  verifyFormat("auto operator delete(int &) override");
+  verifyFormat("auto operator delete(int &) final");
+}
+
+TEST_F(FormatTest, STLWhileNotDefineChed) {
+  verifyFormat("#if defined(while)\n"
+               "#define while EMIT WARNING C4005\n"
+               "#endif // while");
+}
+
+} // namespace
+} // namespace format
+} // namespace clang

@@ -1523,9 +1523,9 @@ bool ASTReader::ReadSLocEntry(int ID) {
     if (Record[3])
       FileInfo.setHasLineDirectives();
 
-    const DeclID *FirstDecl = F->FileSortedDecls + Record[6];
     unsigned NumFileDecls = Record[7];
     if (NumFileDecls && ContextObj) {
+      const DeclID *FirstDecl = F->FileSortedDecls + Record[6];
       assert(F->FileSortedDecls && "FILE_SORTED_DECLS not encountered yet ?");
       FileDeclIDs[FID] = FileDeclsInfo(F, llvm::makeArrayRef(FirstDecl,
                                                              NumFileDecls));
@@ -6379,7 +6379,8 @@ QualType ASTReader::readTypeRecord(unsigned Index) {
     unsigned IndexTypeQuals = Record[2];
     unsigned Idx = 3;
     llvm::APInt Size = ReadAPInt(Record, Idx);
-    return Context.getConstantArrayType(ElementType, Size,
+    Expr *SizeExpr = ReadExpr(*Loc.F);
+    return Context.getConstantArrayType(ElementType, Size, SizeExpr,
                                          ASM, IndexTypeQuals);
   }
 

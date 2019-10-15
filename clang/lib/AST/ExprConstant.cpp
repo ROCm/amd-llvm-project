@@ -137,7 +137,7 @@ namespace {
 
   /// Given an expression, determine the type used to store the result of
   /// evaluating that expression.
-  static QualType getStorageType(ASTContext &Ctx, Expr *E) {
+  static QualType getStorageType(const ASTContext &Ctx, const Expr *E) {
     if (E->isRValue())
       return E->getType();
     return Ctx.getLValueReferenceType(E->getType());
@@ -3178,7 +3178,7 @@ findSubobject(EvalInfo &Info, const Expr *E, const CompleteObject &Obj,
   // Walk the designator's path to find the subobject.
   for (unsigned I = 0, N = Sub.Entries.size(); /**/; ++I) {
     // Reading an indeterminate value is undefined, but assigning over one is OK.
-    if ((O->isAbsent() && handler.AccessKind != AK_Construct) ||
+    if ((O->isAbsent() && !(handler.AccessKind == AK_Construct && I == N)) ||
         (O->isIndeterminate() && handler.AccessKind != AK_Construct &&
          handler.AccessKind != AK_Assign &&
          handler.AccessKind != AK_ReadObjectRepresentation)) {
@@ -5441,18 +5441,18 @@ static bool EvaluateArgs(ArrayRef<const Expr *> Args, ArgVector &ArgValues,
         }
     }
   }
-  for (ArrayRef<const Expr*>::iterator I = Args.begin(), E = Args.end();
-       I != E; ++I) {
-    if (!Evaluate(ArgValues[I - Args.begin()], Info, *I)) {
+  for (unsigned Idx = 0; Idx < Args.size(); Idx++) {
+    if (!Evaluate(ArgValues[Idx], Info, Args[Idx])) {
       // If we're checking for a potential constant expression, evaluate all
       // initializers even if some of them fail.
       if (!Info.noteFailure())
         return false;
       Success = false;
     } else if (!ForbiddenNullArgs.empty() &&
-               ForbiddenNullArgs[I - Args.begin()] &&
-               ArgValues[I - Args.begin()].isNullPointer()) {
-      Info.CCEDiag(*I, diag::note_non_null_attribute_failed);
+               ForbiddenNullArgs[Idx] &&
+               ArgValues[Idx].isLValue() &&
+               ArgValues[Idx].isNullPointer()) {
+      Info.CCEDiag(Args[Idx], diag::note_non_null_attribute_failed);
       if (!Info.noteFailure())
         return false;
       Success = false;
@@ -6004,8 +6004,8 @@ static bool HandleOperatorNewCall(EvalInfo &Info, const CallExpr *E,
     return false;
   }
 
-  QualType AllocType =
-      Info.Ctx.getConstantArrayType(ElemType, Size, ArrayType::Normal, 0);
+  QualType AllocType = Info.Ctx.getConstantArrayType(ElemType, Size, nullptr,
+                                                     ArrayType::Normal, 0);
   APValue *Val = Info.createHeapAlloc(E, AllocType, Result);
   *Val = APValue(APValue::UninitArray(), 0, Size.getZExtValue());
   Result.addArray(Info, E, cast<ConstantArrayType>(AllocType));
@@ -6017,6 +6017,13 @@ static bool hasVirtualDestructor(QualType T) {
     if (CXXDestructorDecl *DD = RD->getDestructor())
       return DD->isVirtual();
   return false;
+}
+
+static const FunctionDecl *getVirtualOperatorDelete(QualType T) {
+  if (CXXRecordDecl *RD = T->getAsCXXRecordDecl())
+    if (CXXDestructorDecl *DD = RD->getDestructor())
+      return DD->isVirtual() ? DD->getOperatorDelete() : nullptr;
+  return nullptr;
 }
 
 /// Check that the given object is a suitable pointer to a heap allocation that
@@ -8561,7 +8568,7 @@ bool PointerExprEvaluator::VisitCXXNewExpr(const CXXNewExpr *E) {
         ResizedArrayILE = cast<InitListExpr>(Init);
     }
 
-    AllocType = Info.Ctx.getConstantArrayType(AllocType, ArrayBound,
+    AllocType = Info.Ctx.getConstantArrayType(AllocType, ArrayBound, nullptr,
                                               ArrayType::Normal, 0);
   } else {
     assert(!AllocType->isArrayType() &&
@@ -13208,6 +13215,18 @@ bool VoidExprEvaluator::VisitCXXDeleteExpr(const CXXDeleteExpr *E) {
     return false;
   }
 
+  // For a class type with a virtual destructor, the selected operator delete
+  // is the one looked up when building the destructor.
+  if (!E->isArrayForm() && !E->isGlobalDelete()) {
+    const FunctionDecl *VirtualDelete = getVirtualOperatorDelete(AllocType);
+    if (VirtualDelete &&
+        !VirtualDelete->isReplaceableGlobalAllocationFunction()) {
+      Info.FFDiag(E, diag::note_constexpr_new_non_replaceable)
+          << isa<CXXMethodDecl>(VirtualDelete) << VirtualDelete;
+      return false;
+    }
+  }
+
   if (!HandleDestruction(Info, E->getExprLoc(), Pointer.getLValueBase(),
                          (*Alloc)->Value, AllocType))
     return false;
@@ -13550,8 +13569,8 @@ bool Expr::EvaluateAsConstantExpr(EvalResult &Result, ConstExprUsage Usage,
   if (!Info.discardCleanups())
     llvm_unreachable("Unhandled cleanup; missing full expression marker?");
 
-  return CheckConstantExpression(Info, getExprLoc(), getType(), Result.Val,
-                                 Usage) &&
+  return CheckConstantExpression(Info, getExprLoc(), getStorageType(Ctx, this),
+                                 Result.Val, Usage) &&
          CheckMemoryLeaks(Info);
 }
 

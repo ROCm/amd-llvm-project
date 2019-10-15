@@ -959,14 +959,16 @@ private:
       std::tie(UsedI, I) = Uses.pop_back_val();
 
       if (LoadInst *LI = dyn_cast<LoadInst>(I)) {
-        Size = std::max(Size, DL.getTypeStoreSize(LI->getType()));
+        Size = std::max(Size,
+                        DL.getTypeStoreSize(LI->getType()).getFixedSize());
         continue;
       }
       if (StoreInst *SI = dyn_cast<StoreInst>(I)) {
         Value *Op = SI->getOperand(0);
         if (Op == UsedI)
           return SI;
-        Size = std::max(Size, DL.getTypeStoreSize(Op->getType()));
+        Size = std::max(Size,
+                        DL.getTypeStoreSize(Op->getType()).getFixedSize());
         continue;
       }
 
@@ -3070,6 +3072,13 @@ private:
     LLVM_DEBUG(dbgs() << "    original: " << II << "\n");
     assert(II.getArgOperand(1) == OldPtr);
 
+    bool EntireRange = (NewBeginOffset == NewAllocaBeginOffset &&
+                        NewEndOffset == NewAllocaEndOffset);
+
+    // If the new lifetime marker would not differ from the old, just keep it.
+    if (&OldAI == &NewAI && EntireRange)
+      return true;
+
     // Record this instruction for deletion.
     Pass.DeadInsts.insert(&II);
 
@@ -3080,8 +3089,7 @@ private:
     // promoted, but PromoteMemToReg doesn't handle that case.)
     // FIXME: Check whether the alloca is promotable before dropping the
     // lifetime intrinsics?
-    if (NewBeginOffset != NewAllocaBeginOffset ||
-        NewEndOffset != NewAllocaEndOffset)
+    if (!EntireRange)
       return true;
 
     ConstantInt *Size =

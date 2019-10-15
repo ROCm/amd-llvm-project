@@ -2893,11 +2893,6 @@ void CastOperation::CheckBuiltinBitCast() {
     return;
   }
 
-  if (Self.Context.hasSameUnqualifiedType(DestType, SrcType)) {
-    Kind = CK_NoOp;
-    return;
-  }
-
   Kind = CK_LValueToRValueBitCast;
 }
 
