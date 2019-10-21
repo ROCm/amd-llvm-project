@@ -3538,16 +3538,31 @@ void SelectionDAGBuilder::visitExtractElement(const User &I) {
 void SelectionDAGBuilder::visitShuffleVector(const User &I) {
   SDValue Src1 = getValue(I.getOperand(0));
   SDValue Src2 = getValue(I.getOperand(1));
+  Constant *MaskV = cast<Constant>(I.getOperand(2));
   SDLoc DL = getCurSDLoc();
-
-  SmallVector<int, 8> Mask;
-  ShuffleVectorInst::getShuffleMask(cast<Constant>(I.getOperand(2)), Mask);
-  unsigned MaskNumElts = Mask.size();
-
   const TargetLowering &TLI = DAG.getTargetLoweringInfo();
   EVT VT = TLI.getValueType(DAG.getDataLayout(), I.getType());
   EVT SrcVT = Src1.getValueType();
   unsigned SrcNumElts = SrcVT.getVectorNumElements();
+
+  if (MaskV->isNullValue() && VT.isScalableVector()) {
+    // Canonical splat form of first element of first input vector.
+    SDValue FirstElt = DAG.getNode(ISD::EXTRACT_VECTOR_ELT, DL,
+                                   SrcVT.getScalarType(), Src1,
+                                   DAG.getConstant(0, DL, 
+                                   TLI.getVectorIdxTy(DAG.getDataLayout())));
+    setValue(&I, DAG.getNode(ISD::SPLAT_VECTOR, DL, VT, FirstElt));
+    return;
+  }
+
+  // For now, we only handle splats for scalable vectors.
+  // The DAGCombiner will perform a BUILD_VECTOR -> SPLAT_VECTOR transformation
+  // for targets that support a SPLAT_VECTOR for non-scalable vector types.
+  assert(!VT.isScalableVector() && "Unsupported scalable vector shuffle");
+
+  SmallVector<int, 8> Mask;
+  ShuffleVectorInst::getShuffleMask(MaskV, Mask);
+  unsigned MaskNumElts = Mask.size();
 
   if (SrcNumElts == MaskNumElts) {
     setValue(&I, DAG.getVectorShuffle(VT, DL, Src1, Src2, Mask));
@@ -5519,8 +5534,9 @@ bool SelectionDAGBuilder::EmitFuncArgumentDbgValue(
           Expr, Offset, RegAndSize.second);
         if (!FragmentExpr)
           continue;
+        assert(!IsDbgDeclare && "DbgDeclare operand is not in memory?");
         FuncInfo.ArgDbgValues.push_back(
-          BuildMI(MF, DL, TII->get(TargetOpcode::DBG_VALUE), IsDbgDeclare,
+          BuildMI(MF, DL, TII->get(TargetOpcode::DBG_VALUE), false,
                   RegAndSize.first, Variable, *FragmentExpr));
         Offset += RegAndSize.second;
       }
@@ -5554,8 +5570,10 @@ bool SelectionDAGBuilder::EmitFuncArgumentDbgValue(
   assert(Variable->isValidLocationForIntrinsic(DL) &&
          "Expected inlined-at fields to agree");
   IsIndirect = (Op->isReg()) ? IsIndirect : true;
+  if (IsIndirect)
+    Expr = DIExpression::append(Expr, {dwarf::DW_OP_deref});
   FuncInfo.ArgDbgValues.push_back(
-      BuildMI(MF, DL, TII->get(TargetOpcode::DBG_VALUE), IsIndirect,
+      BuildMI(MF, DL, TII->get(TargetOpcode::DBG_VALUE), false,
               *Op, Variable, Expr));
 
   return true;
@@ -6388,29 +6406,11 @@ void SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I,
     DAG.setRoot(Res);
     return;
   }
-  case Intrinsic::objectsize: {
-    // If we don't know by now, we're never going to know.
-    ConstantInt *CI = dyn_cast<ConstantInt>(I.getArgOperand(1));
-
-    assert(CI && "Non-constant type in __builtin_object_size?");
-
-    SDValue Arg = getValue(I.getCalledValue());
-    EVT Ty = Arg.getValueType();
-
-    if (CI->isZero())
-      Res = DAG.getConstant(-1ULL, sdl, Ty);
-    else
-      Res = DAG.getConstant(0, sdl, Ty);
-
-    setValue(&I, Res);
-    return;
-  }
+  case Intrinsic::objectsize:
+    llvm_unreachable("llvm.objectsize.* should have been lowered already");
 
   case Intrinsic::is_constant:
-    // If this wasn't constant-folded away by now, then it's not a
-    // constant.
-    setValue(&I, DAG.getConstant(0, sdl, MVT::i1));
-    return;
+    llvm_unreachable("llvm.is.constant.* should have been lowered already");
 
   case Intrinsic::annotation:
   case Intrinsic::ptr_annotation:

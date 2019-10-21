@@ -405,7 +405,7 @@ PreservedAnalyses GlobalDCEPass::run(Module &M, ModuleAnalysisManager &MAM) {
       // virtual function pointers with null, allowing us to remove the
       // function itself.
       ++NumVFuncs;
-      F->replaceAllUsesWith(ConstantPointerNull::get(F->getType()));
+      F->replaceNonMetadataUsesWith(ConstantPointerNull::get(F->getType()));
     }
     EraseUnusedGlobalValue(F);
   }

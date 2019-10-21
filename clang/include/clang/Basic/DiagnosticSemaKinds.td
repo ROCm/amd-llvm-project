@@ -2526,8 +2526,6 @@ def note_private_extern : Note<
   "use __attribute__((visibility(\"hidden\"))) attribute instead">;
 
 // C++ Concepts
-def err_concept_initialized_with_non_bool_type : Error<
-  "constraint expression must be of type 'bool' but is of type %0">;
 def err_concept_decls_may_only_appear_in_global_namespace_scope : Error<
   "concept declarations may only appear in global or namespace scope">;
 def err_concept_no_parameters : Error<
@@ -2539,9 +2537,14 @@ def err_concept_no_associated_constraints : Error<
   "concept cannot have associated constraints">;
 def err_concept_not_implemented : Error<
   "sorry, unimplemented concepts feature %0 used">;
+def err_non_constant_constraint_expression : Error<
+  "substitution into constraint expression resulted in a non-constant "
+  "expression">;
+def err_non_bool_atomic_constraint : Error<
+  "atomic constraint must be of type 'bool' (found %0)">;
 
-def err_template_different_associated_constraints : Error<
-  "associated constraints differ in template redeclaration">;
+def err_template_different_requires_clause : Error<
+  "requires clause differs in template redeclaration">;
 
 // C++11 char16_t/char32_t
 def warn_cxx98_compat_unicode_type : Warning<
@@ -4498,6 +4501,10 @@ def note_prior_template_arg_substitution : Note<
   " template parameter%1 %2">;
 def note_template_default_arg_checking : Note<
   "while checking a default template argument used here">;
+def note_concept_specialization_here : Note<
+  "while checking the satisfaction of concept '%0' requested here">;
+def note_constraint_substitution_here : Note<
+  "while substituting template arguments into constraint expression here">;
 def note_instantiation_contexts_suppressed : Note<
   "(skipping %0 context%s0 in backtrace; use -ftemplate-backtrace-limit=0 to "
   "see all)">;
@@ -7446,9 +7453,8 @@ def err_cuda_device_exceptions : Error<
 def err_dynamic_var_init : Error<
     "dynamic initialization is not supported for "
     "__device__, __constant__, and __shared__ variables.">;
-def warn_shared_var_init : Warning<
-    "initialization is not supported for __shared__ variables.">,
-    InGroup<DiagGroup<"cuda-shared-init">>, DefaultError;
+def err_shared_var_init : Error<
+    "initialization is not supported for __shared__ variables.">;
 def err_device_static_local_var : Error<
     "within a %select{__device__|__global__|__host__|__host__ __device__}0 "
     "function, only __shared__ variables or const variables without device "

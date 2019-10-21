@@ -6,11 +6,9 @@ lit - LLVM Integrated Tester.
 See lit.pod for more information.
 """
 
-from __future__ import absolute_import
 import os
 import platform
 import sys
-import time
 
 import lit.cl_arguments
 import lit.discovery
@@ -21,37 +19,6 @@ import lit.Test
 import lit.util
 
 def main(builtinParameters = {}):
-    # Create a temp directory inside the normal temp directory so that we can
-    # try to avoid temporary test file leaks. The user can avoid this behavior
-    # by setting LIT_PRESERVES_TMP in the environment, so they can easily use
-    # their own temp directory to monitor temporary file leaks or handle them at
-    # the buildbot level.
-    lit_tmp = None
-    if 'LIT_PRESERVES_TMP' not in os.environ:
-        import tempfile
-        lit_tmp = tempfile.mkdtemp(prefix="lit_tmp_")
-        os.environ.update({
-                'TMPDIR': lit_tmp,
-                'TMP': lit_tmp,
-                'TEMP': lit_tmp,
-                'TEMPDIR': lit_tmp,
-                })
-    # FIXME: If Python does not exit cleanly, this directory will not be cleaned
-    # up. We should consider writing the lit pid into the temp directory,
-    # scanning for stale temp directories, and deleting temp directories whose
-    # lit process has died.
-    try:
-        main_with_tmp(builtinParameters)
-    finally:
-        if lit_tmp:
-            try:
-                import shutil
-                shutil.rmtree(lit_tmp)
-            except:
-                # FIXME: Re-try after timeout on Windows.
-                pass
-
-def main_with_tmp(builtinParameters):
     opts = lit.cl_arguments.parse_args()
 
     if opts.show_version:
@@ -59,14 +26,6 @@ def main_with_tmp(builtinParameters):
         return
 
     userParams = create_user_parameters(builtinParameters, opts)
-
-    # Decide what the requested maximum indvidual test time should be
-    if opts.maxIndividualTestTime is not None:
-        maxIndividualTestTime = opts.maxIndividualTestTime
-    else:
-        # Default is zero
-        maxIndividualTestTime = 0
-
     isWindows = platform.system() == 'Windows'
 
     # Create the global config object.
@@ -82,19 +41,14 @@ def main_with_tmp(builtinParameters):
         isWindows = isWindows,
         params = userParams,
         config_prefix = opts.configPrefix,
-        maxIndividualTestTime = maxIndividualTestTime,
         maxFailures = opts.maxFailures,
-        parallelism_groups = {},
         echo_all_commands = opts.echoAllCommands)
 
     # Perform test discovery.
-    run = lit.run.Run(litConfig,
-                      lit.discovery.find_tests_for_inputs(litConfig, opts.test_paths))
+    tests = lit.discovery.find_tests_for_inputs(litConfig, opts.test_paths)
 
-    # After test discovery the configuration might have changed
-    # the maxIndividualTestTime. If we explicitly set this on the
-    # command line then override what was set in the test configuration
-    if opts.maxIndividualTestTime is not None:
+    # Command line overrides configuration for maxIndividualTestTime.
+    if opts.maxIndividualTestTime is not None:  # `not None` is important (default: 0)
         if opts.maxIndividualTestTime != litConfig.maxIndividualTestTime:
             litConfig.note(('The test suite configuration requested an individual'
                 ' test timeout of {0} seconds but a timeout of {1} seconds was'
@@ -105,23 +59,23 @@ def main_with_tmp(builtinParameters):
             litConfig.maxIndividualTestTime = opts.maxIndividualTestTime
 
     if opts.showSuites or opts.showTests:
-        print_suites_or_tests(run, opts)
+        print_suites_or_tests(tests, opts)
         return
 
     # Select and order the tests.
-    numTotalTests = len(run.tests)
+    numTotalTests = len(tests)
 
     if opts.filter:
-        run.tests = [t for t in run.tests if opts.filter.search(t.getFullName())]
+        tests = [t for t in tests if opts.filter.search(t.getFullName())]
 
-    order_tests(run, opts)
+    order_tests(tests, opts)
 
     # Then optionally restrict our attention to a shard of the tests.
     if (opts.numShards is not None) or (opts.runShard is not None):
-        num_tests = len(run.tests)
+        num_tests = len(tests)
         # Note: user views tests and shard numbers counting from 1.
         test_ixs = range(opts.runShard - 1, num_tests, opts.numShards)
-        run.tests = [run.tests[i] for i in test_ixs]
+        tests = [tests[i] for i in test_ixs]
         # Generate a preview of the first few test indices in the shard
         # to accompany the arithmetic expression, for clarity.
         preview_len = 3
@@ -130,77 +84,28 @@ def main_with_tmp(builtinParameters):
             ix_preview += ", ..."
         litConfig.note('Selecting shard %d/%d = size %d/%d = tests #(%d*k)+%d = [%s]' %
                        (opts.runShard, opts.numShards,
-                        len(run.tests), num_tests,
+                        len(tests), num_tests,
                         opts.numShards, opts.runShard, ix_preview))
 
     # Finally limit the number of tests, if desired.
     if opts.maxTests is not None:
-        run.tests = run.tests[:opts.maxTests]
+        tests = tests[:opts.maxTests]
 
     # Don't create more workers than tests.
-    opts.numWorkers = min(len(run.tests), opts.numWorkers)
+    opts.numWorkers = min(len(tests), opts.numWorkers)
 
-    testing_time = run_tests(run, litConfig, opts, numTotalTests)
+    testing_time = run_tests(tests, litConfig, opts, numTotalTests)
 
     if not opts.quiet:
         print('Testing Time: %.2fs' % (testing_time,))
 
+    print_summary(tests, opts)
+
     # Write out the test data, if requested.
-    if opts.output_path is not None:
-        write_test_results(run, litConfig, testing_time, opts.output_path)
-
-    # List test results organized by kind.
-    hasFailures = False
-    byCode = {}
-    for test in run.tests:
-        if test.result.code not in byCode:
-            byCode[test.result.code] = []
-        byCode[test.result.code].append(test)
-        if test.result.code.isFailure:
-            hasFailures = True
-
-    # Print each test in any of the failing groups.
-    for title,code in (('Unexpected Passing Tests', lit.Test.XPASS),
-                       ('Failing Tests', lit.Test.FAIL),
-                       ('Unresolved Tests', lit.Test.UNRESOLVED),
-                       ('Unsupported Tests', lit.Test.UNSUPPORTED),
-                       ('Expected Failing Tests', lit.Test.XFAIL),
-                       ('Timed Out Tests', lit.Test.TIMEOUT)):
-        if (lit.Test.XFAIL == code and not opts.show_xfail) or \
-           (lit.Test.UNSUPPORTED == code and not opts.show_unsupported) or \
-           (lit.Test.UNRESOLVED == code and (opts.maxFailures is not None)):
-            continue
-        elts = byCode.get(code)
-        if not elts:
-            continue
-        print('*'*20)
-        print('%s (%d):' % (title, len(elts)))
-        for test in elts:
-            print('    %s' % test.getFullName())
-        sys.stdout.write('\n')
-
-    if opts.timeTests and run.tests:
-        # Order by time.
-        test_times = [(test.getFullName(), test.result.elapsed)
-                      for test in run.tests]
-        lit.util.printHistogram(test_times, title='Tests')
-
-    for name,code in (('Expected Passes    ', lit.Test.PASS),
-                      ('Passes With Retry  ', lit.Test.FLAKYPASS),
-                      ('Expected Failures  ', lit.Test.XFAIL),
-                      ('Unsupported Tests  ', lit.Test.UNSUPPORTED),
-                      ('Unresolved Tests   ', lit.Test.UNRESOLVED),
-                      ('Unexpected Passes  ', lit.Test.XPASS),
-                      ('Unexpected Failures', lit.Test.FAIL),
-                      ('Individual Timeouts', lit.Test.TIMEOUT)):
-        if opts.quiet and not code.isFailure:
-            continue
-        N = len(byCode.get(code,[]))
-        if N:
-            print('  %s: %d' % (name,N))
-
+    if opts.output_path:
+        write_test_results(tests, litConfig, testing_time, opts.output_path)
     if opts.xunit_output_file:
-        write_test_results_xunit(run, opts)
+        write_test_results_xunit(tests, opts)
 
     # If we encountered any additional errors, exit abnormally.
     if litConfig.numErrors:
@@ -211,7 +116,8 @@ def main_with_tmp(builtinParameters):
     if litConfig.numWarnings:
         sys.stderr.write('\n%d warning(s) in tests.\n' % litConfig.numWarnings)
 
-    if hasFailures:
+    has_failure = any(t.result.code.isFailure for t in tests)
+    if has_failure:
         sys.exit(1)
 
 
@@ -225,10 +131,10 @@ def create_user_parameters(builtinParameters, opts):
         userParams[name] = val
     return userParams
 
-def print_suites_or_tests(run, opts):
+def print_suites_or_tests(tests, opts):
     # Aggregate the tests by suite.
     suitesAndTests = {}
-    for result_test in run.tests:
+    for result_test in tests:
         if result_test.suite not in suitesAndTests:
             suitesAndTests[result_test.suite] = []
         suitesAndTests[result_test.suite].append(result_test)
@@ -254,14 +160,14 @@ def print_suites_or_tests(run, opts):
             for test in ts_tests:
                 print('  %s' % (test.getFullName(),))
 
-def order_tests(run, opts):
+def order_tests(tests, opts):
     if opts.shuffle:
         import random
-        random.shuffle(run.tests)
+        random.shuffle(tests)
     elif opts.incremental:
-        run.tests.sort(key = by_mtime, reverse = True)
+        tests.sort(key=by_mtime, reverse=True)
     else:
-        run.tests.sort(key = lambda t: (not t.isEarlyTest(), t.getFullName()))
+        tests.sort(key=lambda t: (not t.isEarlyTest(), t.getFullName()))
 
 def by_mtime(test):
     fname = test.getFilePath()
@@ -299,32 +205,112 @@ def increase_process_limit(litConfig, opts):
     except:
         pass
 
-def run_tests(run, litConfig, opts, numTotalTests):
+def run_tests(tests, litConfig, opts, numTotalTests):
     increase_process_limit(litConfig, opts)
 
-    display = lit.display.create_display(opts, len(run.tests),
-                                         numTotalTests, opts.numWorkers)
+    display = lit.display.create_display(opts, len(tests), numTotalTests,
+                                         opts.numWorkers)
     def progress_callback(test):
         display.update(test)
         if opts.incremental:
             update_incremental_cache(test)
 
-    startTime = time.time()
+    run = lit.run.create_run(tests, litConfig, opts.numWorkers,
+                             progress_callback, opts.maxTime)
+
     try:
-        run.execute_tests(progress_callback, opts.numWorkers, opts.maxTime)
+        elapsed = run_tests_in_tmp_dir(run.execute, litConfig)
     except KeyboardInterrupt:
+        #TODO(yln): should we attempt to cleanup the progress bar here?
         sys.exit(2)
-    testing_time = time.time() - startTime
+    # TODO(yln): display.finish_interrupted(), which shows the most recently started test
+    # TODO(yln): change display to update when test starts, not when test completes
+    # Ensure everything still works with SimpleProgressBar as well
+    # finally:
+    #     display.finish()
 
     display.finish()
-    return testing_time
+    return elapsed
 
-def write_test_results(run, lit_config, testing_time, output_path):
+def run_tests_in_tmp_dir(run_callback, litConfig):
+    # Create a temp directory inside the normal temp directory so that we can
+    # try to avoid temporary test file leaks. The user can avoid this behavior
+    # by setting LIT_PRESERVES_TMP in the environment, so they can easily use
+    # their own temp directory to monitor temporary file leaks or handle them at
+    # the buildbot level.
+    tmp_dir = None
+    if 'LIT_PRESERVES_TMP' not in os.environ:
+        import tempfile
+        tmp_dir = tempfile.mkdtemp(prefix="lit_tmp_")
+        os.environ.update({
+                'TMPDIR': tmp_dir,
+                'TMP': tmp_dir,
+                'TEMP': tmp_dir,
+                'TEMPDIR': tmp_dir,
+                })
+    # FIXME: If Python does not exit cleanly, this directory will not be cleaned
+    # up. We should consider writing the lit pid into the temp directory,
+    # scanning for stale temp directories, and deleting temp directories whose
+    # lit process has died.
     try:
-        import json
-    except ImportError:
-        lit_config.fatal('test output unsupported with Python 2.5')
+        return run_callback()
+    finally:
+        if tmp_dir:
+            try:
+                import shutil
+                shutil.rmtree(tmp_dir)
+            except:
+                # FIXME: Re-try after timeout on Windows.
+                litConfig.warning("Failed to delete temp directory '%s'" % tmp_dir)
 
+def print_summary(tests, opts):
+    byCode = {}
+    for test in tests:
+        if test.result.code not in byCode:
+            byCode[test.result.code] = []
+        byCode[test.result.code].append(test)
+
+    # Print each test in any of the failing groups.
+    for title,code in (('Unexpected Passing Tests', lit.Test.XPASS),
+                       ('Failing Tests', lit.Test.FAIL),
+                       ('Unresolved Tests', lit.Test.UNRESOLVED),
+                       ('Unsupported Tests', lit.Test.UNSUPPORTED),
+                       ('Expected Failing Tests', lit.Test.XFAIL),
+                       ('Timed Out Tests', lit.Test.TIMEOUT)):
+        if (lit.Test.XFAIL == code and not opts.show_xfail) or \
+           (lit.Test.UNSUPPORTED == code and not opts.show_unsupported) or \
+           (lit.Test.UNRESOLVED == code and (opts.maxFailures is not None)):
+            continue
+        elts = byCode.get(code)
+        if not elts:
+            continue
+        print('*'*20)
+        print('%s (%d):' % (title, len(elts)))
+        for test in elts:
+            print('    %s' % test.getFullName())
+        sys.stdout.write('\n')
+
+    if opts.timeTests and tests:
+        # Order by time.
+        test_times = [(test.getFullName(), test.result.elapsed)
+                      for test in tests]
+        lit.util.printHistogram(test_times, title='Tests')
+
+    for name,code in (('Expected Passes    ', lit.Test.PASS),
+                      ('Passes With Retry  ', lit.Test.FLAKYPASS),
+                      ('Expected Failures  ', lit.Test.XFAIL),
+                      ('Unsupported Tests  ', lit.Test.UNSUPPORTED),
+                      ('Unresolved Tests   ', lit.Test.UNRESOLVED),
+                      ('Unexpected Passes  ', lit.Test.XPASS),
+                      ('Unexpected Failures', lit.Test.FAIL),
+                      ('Individual Timeouts', lit.Test.TIMEOUT)):
+        if opts.quiet and not code.isFailure:
+            continue
+        N = len(byCode.get(code,[]))
+        if N:
+            print('  %s: %d' % (name,N))
+
+def write_test_results(tests, lit_config, testing_time, output_path):
     # Construct the data we will write.
     data = {}
     # Encode the current lit version as a schema version.
@@ -335,7 +321,7 @@ def write_test_results(run, lit_config, testing_time, output_path):
 
     # Encode the tests.
     data['tests'] = tests_data = []
-    for test in run.tests:
+    for test in tests:
         test_data = {
             'name' : test.getFullName(),
             'code' : test.result.code.name,
@@ -372,16 +358,17 @@ def write_test_results(run, lit_config, testing_time, output_path):
     # Write the output.
     f = open(output_path, 'w')
     try:
+        import json
         json.dump(data, f, indent=2, sort_keys=True)
         f.write('\n')
     finally:
         f.close()
 
-def write_test_results_xunit(run, opts):
+def write_test_results_xunit(tests, opts):
     from xml.sax.saxutils import quoteattr
     # Collect the tests, indexed by test suite
     by_suite = {}
-    for result_test in run.tests:
+    for result_test in tests:
         suite = result_test.suite.config.name
         if suite not in by_suite:
             by_suite[suite] = {
