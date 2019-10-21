@@ -611,19 +611,6 @@ void CGRecordLowering::clipTailPadding() {
   }
 }
 
-static bool isPassedToHIPGlobalFn(const CXXRecordDecl *MaybeKernarg)
-{
-  if (!MaybeKernarg) return false;
-  if (!MaybeKernarg->hasAttr<AnnotateAttr>()) return false;
-
-  // N.B.: this is set in Sema::GatherArgumentsForCall, via
-  //       MarkByValueRecordsPassedToHIPGlobalFN.
-  static constexpr const char HIPKernargRecord[]{"__HIP_KERNARG_RECORD__"};
-
-  return MaybeKernarg->getAttr<AnnotateAttr>()->getAnnotation()
-    .find(HIPKernargRecord) != StringRef::npos;
-}
-
 void CGRecordLowering::determinePacked(bool NVBaseType) {
   if (Packed)
     return;
