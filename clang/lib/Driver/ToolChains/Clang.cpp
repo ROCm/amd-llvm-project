@@ -5397,10 +5397,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("-fgpu-rdc");
   }
 
-  if (IsHIP) {
+  if (IsHIP)
     CmdArgs.push_back("-fcuda-allow-variadic-functions");
-    CmdArgs.push_back("-fcuda-force-lambda-odr");
-  }
 
   // OpenMP offloading device jobs take the argument -fopenmp-host-ir-file-path
   // to specify the result of the compile phase on the host, so the meaningful
