@@ -308,6 +308,9 @@ void HCC::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
       // add the amdgpu target args
       construct_amdgpu_target_cmdargs(C, getToolChain(), Args, CmdArgs);
     }
+    if (Args.hasFlag(options::OPT_hc_function_calls, {}, false)) {
+      CmdArgs.push_back("--amdgpu-func-calls");
+    }
     const char *Exec = Args.MakeArgString(
       getToolChain().GetProgramPath("hc-kernel-assemble"));
     C.addCommand(std::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
