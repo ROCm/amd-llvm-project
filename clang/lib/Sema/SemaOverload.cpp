@@ -12708,10 +12708,16 @@ static void maybeCastArgsForHIPGlobalFunction(Sema &S,
                                               UnresolvedLookupExpr *ULE,
                                               MultiExprArg Args) {
   static constexpr const char HIPLaunch[]{"hipLaunchKernelGGL"};
+  static constexpr const char HIPExtLaunch[]{"hipExtLaunchKernelGGL"};
 
-  if (ULE->getName().getAsString().find(HIPLaunch) == std::string::npos) {
+  const bool IsHIPLaunch{
+    ULE->getName().getAsString().find(HIPLaunch) != std::string::npos};
+  const bool IsHIPExtLaunch{
+    !IsHIPLaunch &&
+    ULE->getName().getAsString().find(HIPExtLaunch) != std::string::npos};
+
+  if (!IsHIPLaunch && !IsHIPExtLaunch)
     return;
-  }
 
   auto F = Args.front();
   while (!isa<UnresolvedLookupExpr>(F)) {
@@ -12721,7 +12727,7 @@ static void maybeCastArgsForHIPGlobalFunction(Sema &S,
     F = PE->getSubExpr();
   }
 
-  static constexpr unsigned int IgnoreCnt{5u}; // Skip launch configuration.
+  const unsigned int IgnoreCnt{IsHIPLaunch ? 5u : 8u}; // Skip launch configuration.
 
   FunctionDecl *FD =
     getBestCandidateForHIP(S, cast<UnresolvedLookupExpr>(F),
