@@ -281,7 +281,7 @@ AMDGPUTargetInfo::AMDGPUTargetInfo(const llvm::Triple &Triple,
   setAddressSpaceMap(Triple.getOS() == llvm::Triple::Mesa3D ||
                      !isAMDGCN(Triple));
   UseAddrSpaceMapMangling = true;
-  HasFloat16=true;
+  HasFloat128=true;
 
   HasLegalHalfType = true;
   HasFloat16 = true;
