@@ -815,7 +815,8 @@ Error RelocationSection::removeSectionReferences(
   }
 
   for (const Relocation &R : Relocations) {
-    if (!R.RelocSymbol->DefinedIn || !ToRemove(R.RelocSymbol->DefinedIn))
+    if (!R.RelocSymbol || !R.RelocSymbol->DefinedIn ||
+        !ToRemove(R.RelocSymbol->DefinedIn))
       continue;
     return createStringError(llvm::errc::invalid_argument,
                              "section '%s' cannot be removed: (%s+0x%" PRIx64
@@ -868,7 +869,8 @@ static void writeRel(const RelRange &Relocations, T *Buf) {
   for (const auto &Reloc : Relocations) {
     Buf->r_offset = Reloc.Offset;
     setAddend(*Buf, Reloc.Addend);
-    Buf->setSymbolAndType(Reloc.RelocSymbol->Index, Reloc.Type, false);
+    Buf->setSymbolAndType(Reloc.RelocSymbol ? Reloc.RelocSymbol->Index : 0,
+                          Reloc.Type, false);
     ++Buf;
   }
 }
@@ -893,7 +895,7 @@ void RelocationSection::accept(MutableSectionVisitor &Visitor) {
 Error RelocationSection::removeSymbols(
     function_ref<bool(const Symbol &)> ToRemove) {
   for (const Relocation &Reloc : Relocations)
-    if (ToRemove(*Reloc.RelocSymbol))
+    if (Reloc.RelocSymbol && ToRemove(*Reloc.RelocSymbol))
       return createStringError(
           llvm::errc::invalid_argument,
           "not stripping symbol '%s' because it is named in a relocation",
@@ -903,7 +905,8 @@ Error RelocationSection::removeSymbols(
 
 void RelocationSection::markSymbols() {
   for (const Relocation &Reloc : Relocations)
-    Reloc.RelocSymbol->Referenced = true;
+    if (Reloc.RelocSymbol)
+      Reloc.RelocSymbol->Referenced = true;
 }
 
 void RelocationSection::replaceSectionReferences(
@@ -1418,7 +1421,15 @@ static void initRelocations(RelocationSection *Relocs,
     ToAdd.Offset = Rel.r_offset;
     getAddend(ToAdd.Addend, Rel);
     ToAdd.Type = Rel.getType(false);
-    ToAdd.RelocSymbol = SymbolTable->getSymbolByIndex(Rel.getSymbol(false));
+
+    if (uint32_t Sym = Rel.getSymbol(false)) {
+      if (!SymbolTable)
+        error("'" + Relocs->Name +
+              "': relocation references symbol with index " + Twine(Sym) +
+              ", but there is no symbol table");
+      ToAdd.RelocSymbol = SymbolTable->getSymbolByIndex(Sym);
+    }
+
     Relocs->addRelocation(ToAdd);
   }
 }
@@ -1528,6 +1539,21 @@ template <class ELFT> void ELFBuilder<ELFT>::readSectionHeaders() {
 }
 
 template <class ELFT> void ELFBuilder<ELFT>::readSections(bool EnsureSymtab) {
+  uint32_t ShstrIndex = ElfFile.getHeader()->e_shstrndx;
+  if (ShstrIndex == SHN_XINDEX)
+    ShstrIndex = unwrapOrError(ElfFile.getSection(0))->sh_link;
+
+  if (ShstrIndex == SHN_UNDEF)
+    Obj.HadShdrs = false;
+  else
+    Obj.SectionNames =
+        Obj.sections().template getSectionOfType<StringTableSection>(
+            ShstrIndex,
+            "e_shstrndx field value " + Twine(ShstrIndex) + " in elf header " +
+                " is invalid",
+            "e_shstrndx field value " + Twine(ShstrIndex) + " in elf header " +
+                " does not reference a string table");
+
   // If a section index table exists we'll need to initialize it before we
   // initialize the symbol table because the symbol table might need to
   // reference it.
@@ -1541,13 +1567,14 @@ template <class ELFT> void ELFBuilder<ELFT>::readSections(bool EnsureSymtab) {
     Obj.SymbolTable->initialize(Obj.sections());
     initSymbolTable(Obj.SymbolTable);
   } else if (EnsureSymtab) {
-    // Reuse the existing SHT_STRTAB section if exists.
+    // Reuse an existing SHT_STRTAB section if it exists.
     StringTableSection *StrTab = nullptr;
     for (auto &Sec : Obj.sections()) {
       if (Sec.Type == ELF::SHT_STRTAB && !(Sec.Flags & SHF_ALLOC)) {
         StrTab = static_cast<StringTableSection *>(&Sec);
 
-        // Prefer .strtab to .shstrtab.
+        // Prefer a string table that is not the section header string table, if
+        // such a table exists.
         if (Obj.SectionNames != &Sec)
           break;
       }
@@ -1582,21 +1609,6 @@ template <class ELFT> void ELFBuilder<ELFT>::readSections(bool EnsureSymtab) {
       initGroupSection(GroupSec);
     }
   }
-
-  uint32_t ShstrIndex = ElfFile.getHeader()->e_shstrndx;
-  if (ShstrIndex == SHN_XINDEX)
-    ShstrIndex = unwrapOrError(ElfFile.getSection(0))->sh_link;
-
-  if (ShstrIndex == SHN_UNDEF)
-    Obj.HadShdrs = false;
-  else
-    Obj.SectionNames =
-        Obj.sections().template getSectionOfType<StringTableSection>(
-            ShstrIndex,
-            "e_shstrndx field value " + Twine(ShstrIndex) + " in elf header " +
-                " is invalid",
-            "e_shstrndx field value " + Twine(ShstrIndex) + " in elf header " +
-                " is not a string table");
 }
 
 template <class ELFT> void ELFBuilder<ELFT>::build(bool EnsureSymtab) {

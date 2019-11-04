@@ -227,6 +227,16 @@ bool types::isHCC(ID Id) {
   case TY_CXX_AMP_CPU:
   case TY_HC_HOST:
   case TY_HC_KERNEL:
+     return true;
+  }
+}
+
+bool types::isFortran(ID Id) {
+  switch (Id) {
+  default:
+    return false;
+
+  case TY_Fortran: case TY_PP_Fortran:
     return true;
   }
 }

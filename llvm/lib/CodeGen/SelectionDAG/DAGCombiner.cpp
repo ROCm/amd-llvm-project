@@ -9108,6 +9108,8 @@ SDValue DAGCombiner::CombineExtLoad(SDNode *N) {
   if (!TLI.isLoadExtLegalOrCustom(ExtType, SplitDstVT, SplitSrcVT))
     return SDValue();
 
+  assert(!DstVT.isScalableVector() && "Unexpected scalable vector type");
+
   SDLoc DL(N);
   const unsigned NumSplits =
       DstVT.getVectorNumElements() / SplitDstVT.getVectorNumElements();
@@ -9671,6 +9673,29 @@ static bool isTruncateOf(SelectionDAG &DAG, SDValue N, SDValue &Op,
   return (Known.Zero | 1).isAllOnesValue();
 }
 
+/// Given an extending node with a pop-count operand, if the target does not
+/// support a pop-count in the narrow source type but does support it in the
+/// destination type, widen the pop-count to the destination type.
+static SDValue widenCtPop(SDNode *Extend, SelectionDAG &DAG) {
+  assert((Extend->getOpcode() == ISD::ZERO_EXTEND ||
+          Extend->getOpcode() == ISD::ANY_EXTEND) && "Expected extend op");
+
+  SDValue CtPop = Extend->getOperand(0);
+  if (CtPop.getOpcode() != ISD::CTPOP || !CtPop.hasOneUse())
+    return SDValue();
+
+  EVT VT = Extend->getValueType(0);
+  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
+  if (TLI.isOperationLegalOrCustom(ISD::CTPOP, CtPop.getValueType()) ||
+      !TLI.isOperationLegalOrCustom(ISD::CTPOP, VT))
+    return SDValue();
+
+  // zext (ctpop X) --> ctpop (zext X)
+  SDLoc DL(Extend);
+  SDValue NewZext = DAG.getZExtOrTrunc(CtPop.getOperand(0), DL, VT);
+  return DAG.getNode(ISD::CTPOP, DL, VT, NewZext);
+}
+
 SDValue DAGCombiner::visitZERO_EXTEND(SDNode *N) {
   SDValue N0 = N->getOperand(0);
   EVT VT = N->getValueType(0);
@@ -9921,6 +9946,9 @@ SDValue DAGCombiner::visitZERO_EXTEND(SDNode *N) {
   if (SDValue NewVSel = matchVSelectOpSizesWithSetCC(N))
     return NewVSel;
 
+  if (SDValue NewCtPop = widenCtPop(N, DAG))
+    return NewCtPop;
+
   return SDValue();
 }
 
@@ -10066,6 +10094,9 @@ SDValue DAGCombiner::visitANY_EXTEND(SDNode *N) {
             cast<CondCodeSDNode>(N0.getOperand(2))->get(), true))
       return SCC;
   }
+
+  if (SDValue NewCtPop = widenCtPop(N, DAG))
+    return NewCtPop;
 
   return SDValue();
 }
@@ -10735,16 +10766,16 @@ SDValue DAGCombiner::visitTRUNCATE(SDNode *N) {
   // e.g. trunc (i64 (bitcast v2i32:x)) -> extract_vector_elt v2i32:x, idx
   if (N0.getOpcode() == ISD::BITCAST && !VT.isVector()) {
     SDValue VecSrc = N0.getOperand(0);
-    EVT SrcVT = VecSrc.getValueType();
-    if (SrcVT.isVector() && SrcVT.getScalarType() == VT &&
+    EVT VecSrcVT = VecSrc.getValueType();
+    if (VecSrcVT.isVector() && VecSrcVT.getScalarType() == VT &&
         (!LegalOperations ||
-         TLI.isOperationLegal(ISD::EXTRACT_VECTOR_ELT, SrcVT))) {
+         TLI.isOperationLegal(ISD::EXTRACT_VECTOR_ELT, VecSrcVT))) {
       SDLoc SL(N);
 
       EVT IdxVT = TLI.getVectorIdxTy(DAG.getDataLayout());
-      unsigned Idx = isLE ? 0 : SrcVT.getVectorNumElements() - 1;
-      return DAG.getNode(ISD::EXTRACT_VECTOR_ELT, SL, VT,
-                         VecSrc, DAG.getConstant(Idx, SL, IdxVT));
+      unsigned Idx = isLE ? 0 : VecSrcVT.getVectorNumElements() - 1;
+      return DAG.getNode(ISD::EXTRACT_VECTOR_ELT, SL, VT, VecSrc,
+                         DAG.getConstant(Idx, SL, IdxVT));
     }
   }
 
@@ -11299,7 +11330,7 @@ SDValue DAGCombiner::visitFADDForFMACombine(SDNode *N) {
   const TargetOptions &Options = DAG.getTarget().Options;
 
   // Floating-point multiply-add with intermediate rounding.
-  bool HasFMAD = (LegalOperations && TLI.isOperationLegal(ISD::FMAD, VT));
+  bool HasFMAD = (LegalOperations && TLI.isFMADLegalForFAddFSub(DAG, N));
 
   // Floating-point multiply-add without intermediate rounding.
   bool HasFMA =
@@ -11359,7 +11390,8 @@ SDValue DAGCombiner::visitFADDForFMACombine(SDNode *N) {
   if (N0.getOpcode() == ISD::FP_EXTEND) {
     SDValue N00 = N0.getOperand(0);
     if (isContractableFMUL(N00) &&
-        TLI.isFPExtFoldable(PreferredFusedOpcode, VT, N00.getValueType())) {
+        TLI.isFPExtFoldable(DAG, PreferredFusedOpcode, VT,
+                            N00.getValueType())) {
       return DAG.getNode(PreferredFusedOpcode, SL, VT,
                          DAG.getNode(ISD::FP_EXTEND, SL, VT,
                                      N00.getOperand(0)),
@@ -11373,7 +11405,8 @@ SDValue DAGCombiner::visitFADDForFMACombine(SDNode *N) {
   if (N1.getOpcode() == ISD::FP_EXTEND) {
     SDValue N10 = N1.getOperand(0);
     if (isContractableFMUL(N10) &&
-        TLI.isFPExtFoldable(PreferredFusedOpcode, VT, N10.getValueType())) {
+        TLI.isFPExtFoldable(DAG, PreferredFusedOpcode, VT,
+                            N10.getValueType())) {
       return DAG.getNode(PreferredFusedOpcode, SL, VT,
                          DAG.getNode(ISD::FP_EXTEND, SL, VT,
                                      N10.getOperand(0)),
@@ -11427,7 +11460,8 @@ SDValue DAGCombiner::visitFADDForFMACombine(SDNode *N) {
       if (N02.getOpcode() == ISD::FP_EXTEND) {
         SDValue N020 = N02.getOperand(0);
         if (isContractableFMUL(N020) &&
-            TLI.isFPExtFoldable(PreferredFusedOpcode, VT, N020.getValueType())) {
+            TLI.isFPExtFoldable(DAG, PreferredFusedOpcode, VT,
+                                N020.getValueType())) {
           return FoldFAddFMAFPExtFMul(N0.getOperand(0), N0.getOperand(1),
                                       N020.getOperand(0), N020.getOperand(1),
                                       N1, Flags);
@@ -11456,7 +11490,8 @@ SDValue DAGCombiner::visitFADDForFMACombine(SDNode *N) {
       if (N00.getOpcode() == PreferredFusedOpcode) {
         SDValue N002 = N00.getOperand(2);
         if (isContractableFMUL(N002) &&
-            TLI.isFPExtFoldable(PreferredFusedOpcode, VT, N00.getValueType())) {
+            TLI.isFPExtFoldable(DAG, PreferredFusedOpcode, VT,
+                                N00.getValueType())) {
           return FoldFAddFPExtFMAFMul(N00.getOperand(0), N00.getOperand(1),
                                       N002.getOperand(0), N002.getOperand(1),
                                       N1, Flags);
@@ -11471,7 +11506,8 @@ SDValue DAGCombiner::visitFADDForFMACombine(SDNode *N) {
       if (N12.getOpcode() == ISD::FP_EXTEND) {
         SDValue N120 = N12.getOperand(0);
         if (isContractableFMUL(N120) &&
-            TLI.isFPExtFoldable(PreferredFusedOpcode, VT, N120.getValueType())) {
+            TLI.isFPExtFoldable(DAG, PreferredFusedOpcode, VT,
+                                N120.getValueType())) {
           return FoldFAddFMAFPExtFMul(N1.getOperand(0), N1.getOperand(1),
                                       N120.getOperand(0), N120.getOperand(1),
                                       N0, Flags);
@@ -11489,7 +11525,8 @@ SDValue DAGCombiner::visitFADDForFMACombine(SDNode *N) {
       if (N10.getOpcode() == PreferredFusedOpcode) {
         SDValue N102 = N10.getOperand(2);
         if (isContractableFMUL(N102) &&
-            TLI.isFPExtFoldable(PreferredFusedOpcode, VT, N10.getValueType())) {
+            TLI.isFPExtFoldable(DAG, PreferredFusedOpcode, VT,
+                                N10.getValueType())) {
           return FoldFAddFPExtFMAFMul(N10.getOperand(0), N10.getOperand(1),
                                       N102.getOperand(0), N102.getOperand(1),
                                       N0, Flags);
@@ -11510,7 +11547,7 @@ SDValue DAGCombiner::visitFSUBForFMACombine(SDNode *N) {
 
   const TargetOptions &Options = DAG.getTarget().Options;
   // Floating-point multiply-add with intermediate rounding.
-  bool HasFMAD = (LegalOperations && TLI.isOperationLegal(ISD::FMAD, VT));
+  bool HasFMAD = (LegalOperations && TLI.isFMADLegalForFAddFSub(DAG, N));
 
   // Floating-point multiply-add without intermediate rounding.
   bool HasFMA =
@@ -11579,7 +11616,8 @@ SDValue DAGCombiner::visitFSUBForFMACombine(SDNode *N) {
   if (N0.getOpcode() == ISD::FP_EXTEND) {
     SDValue N00 = N0.getOperand(0);
     if (isContractableFMUL(N00) &&
-        TLI.isFPExtFoldable(PreferredFusedOpcode, VT, N00.getValueType())) {
+        TLI.isFPExtFoldable(DAG, PreferredFusedOpcode, VT,
+                            N00.getValueType())) {
       return DAG.getNode(PreferredFusedOpcode, SL, VT,
                          DAG.getNode(ISD::FP_EXTEND, SL, VT,
                                      N00.getOperand(0)),
@@ -11595,7 +11633,8 @@ SDValue DAGCombiner::visitFSUBForFMACombine(SDNode *N) {
   if (N1.getOpcode() == ISD::FP_EXTEND) {
     SDValue N10 = N1.getOperand(0);
     if (isContractableFMUL(N10) &&
-        TLI.isFPExtFoldable(PreferredFusedOpcode, VT, N10.getValueType())) {
+        TLI.isFPExtFoldable(DAG, PreferredFusedOpcode, VT,
+                            N10.getValueType())) {
       return DAG.getNode(PreferredFusedOpcode, SL, VT,
                          DAG.getNode(ISD::FNEG, SL, VT,
                                      DAG.getNode(ISD::FP_EXTEND, SL, VT,
@@ -11617,7 +11656,8 @@ SDValue DAGCombiner::visitFSUBForFMACombine(SDNode *N) {
     if (N00.getOpcode() == ISD::FNEG) {
       SDValue N000 = N00.getOperand(0);
       if (isContractableFMUL(N000) &&
-          TLI.isFPExtFoldable(PreferredFusedOpcode, VT, N00.getValueType())) {
+          TLI.isFPExtFoldable(DAG, PreferredFusedOpcode, VT,
+                              N00.getValueType())) {
         return DAG.getNode(ISD::FNEG, SL, VT,
                            DAG.getNode(PreferredFusedOpcode, SL, VT,
                                        DAG.getNode(ISD::FP_EXTEND, SL, VT,
@@ -11640,7 +11680,8 @@ SDValue DAGCombiner::visitFSUBForFMACombine(SDNode *N) {
     if (N00.getOpcode() == ISD::FP_EXTEND) {
       SDValue N000 = N00.getOperand(0);
       if (isContractableFMUL(N000) &&
-          TLI.isFPExtFoldable(PreferredFusedOpcode, VT, N000.getValueType())) {
+          TLI.isFPExtFoldable(DAG, PreferredFusedOpcode, VT,
+                              N000.getValueType())) {
         return DAG.getNode(ISD::FNEG, SL, VT,
                            DAG.getNode(PreferredFusedOpcode, SL, VT,
                                        DAG.getNode(ISD::FP_EXTEND, SL, VT,
@@ -11691,7 +11732,8 @@ SDValue DAGCombiner::visitFSUBForFMACombine(SDNode *N) {
       if (N02.getOpcode() == ISD::FP_EXTEND) {
         SDValue N020 = N02.getOperand(0);
         if (isContractableFMUL(N020) &&
-            TLI.isFPExtFoldable(PreferredFusedOpcode, VT, N020.getValueType())) {
+            TLI.isFPExtFoldable(DAG, PreferredFusedOpcode, VT,
+                                N020.getValueType())) {
           return DAG.getNode(PreferredFusedOpcode, SL, VT,
                              N0.getOperand(0), N0.getOperand(1),
                              DAG.getNode(PreferredFusedOpcode, SL, VT,
@@ -11716,7 +11758,8 @@ SDValue DAGCombiner::visitFSUBForFMACombine(SDNode *N) {
       if (N00.getOpcode() == PreferredFusedOpcode) {
         SDValue N002 = N00.getOperand(2);
         if (isContractableFMUL(N002) &&
-            TLI.isFPExtFoldable(PreferredFusedOpcode, VT, N00.getValueType())) {
+            TLI.isFPExtFoldable(DAG, PreferredFusedOpcode, VT,
+                                N00.getValueType())) {
           return DAG.getNode(PreferredFusedOpcode, SL, VT,
                              DAG.getNode(ISD::FP_EXTEND, SL, VT,
                                          N00.getOperand(0)),
@@ -11739,7 +11782,8 @@ SDValue DAGCombiner::visitFSUBForFMACombine(SDNode *N) {
         N1.getOperand(2).getOpcode() == ISD::FP_EXTEND) {
       SDValue N120 = N1.getOperand(2).getOperand(0);
       if (isContractableFMUL(N120) &&
-          TLI.isFPExtFoldable(PreferredFusedOpcode, VT, N120.getValueType())) {
+          TLI.isFPExtFoldable(DAG, PreferredFusedOpcode, VT,
+                              N120.getValueType())) {
         SDValue N1200 = N120.getOperand(0);
         SDValue N1201 = N120.getOperand(1);
         return DAG.getNode(PreferredFusedOpcode, SL, VT,
@@ -11768,7 +11812,8 @@ SDValue DAGCombiner::visitFSUBForFMACombine(SDNode *N) {
       SDValue N101 = CvtSrc.getOperand(1);
       SDValue N102 = CvtSrc.getOperand(2);
       if (isContractableFMUL(N102) &&
-          TLI.isFPExtFoldable(PreferredFusedOpcode, VT, CvtSrc.getValueType())) {
+          TLI.isFPExtFoldable(DAG, PreferredFusedOpcode, VT,
+                              CvtSrc.getValueType())) {
         SDValue N1020 = N102.getOperand(0);
         SDValue N1021 = N102.getOperand(1);
         return DAG.getNode(PreferredFusedOpcode, SL, VT,
@@ -16561,10 +16606,6 @@ SDValue DAGCombiner::visitINSERT_VECTOR_ELT(SDNode *N) {
   SDValue InVal = N->getOperand(1);
   SDValue EltNo = N->getOperand(2);
   SDLoc DL(N);
-
-  // If the inserted element is an UNDEF, just use the input vector.
-  if (InVal.isUndef())
-    return InVec;
 
   EVT VT = InVec.getValueType();
   unsigned NumElts = VT.getVectorNumElements();

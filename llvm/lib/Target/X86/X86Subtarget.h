@@ -40,7 +40,7 @@ class GlobalValue;
 ///
 namespace PICStyles {
 
-enum Style {
+enum class Style {
   StubPIC,          // Used on i386-darwin in pic mode.
   GOT,              // Used on 32 bit elf on when in pic mode.
   RIPRel,           // Used on X86-64 when in pic mode.
@@ -445,6 +445,9 @@ protected:
   /// Indicates target prefers 256 bit instructions.
   bool Prefer256Bit = false;
 
+  /// Indicates target prefers AVX512 mask registers.
+  bool PreferMaskRegisters = false;
+
   /// Threeway branch is profitable in this subtarget.
   bool ThreewayBranchProfitable = false;
 
@@ -706,6 +709,7 @@ public:
     return UseRetpolineIndirectBranches;
   }
   bool useRetpolineExternalThunk() const { return UseRetpolineExternalThunk; }
+  bool preferMaskRegisters() const { return PreferMaskRegisters; }
 
   unsigned getPreferVectorWidth() const { return PreferVectorWidth; }
   unsigned getRequiredVectorWidth() const { return RequiredVectorWidth; }
@@ -801,11 +805,11 @@ public:
 
   bool isTargetWin32() const { return !In64BitMode && isOSWindows(); }
 
-  bool isPICStyleGOT() const { return PICStyle == PICStyles::GOT; }
-  bool isPICStyleRIPRel() const { return PICStyle == PICStyles::RIPRel; }
+  bool isPICStyleGOT() const { return PICStyle == PICStyles::Style::GOT; }
+  bool isPICStyleRIPRel() const { return PICStyle == PICStyles::Style::RIPRel; }
 
   bool isPICStyleStubPIC() const {
-    return PICStyle == PICStyles::StubPIC;
+    return PICStyle == PICStyles::Style::StubPIC;
   }
 
   bool isPositionIndependent() const { return TM.isPositionIndependent(); }
