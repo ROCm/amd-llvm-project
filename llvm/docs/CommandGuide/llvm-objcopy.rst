@@ -72,6 +72,9 @@ multiple file formats.
  Remove all sections from the output, except for sections named ``<section>``.
  Can be specified multiple times to keep multiple sections.
 
+ For MachO objects, ``<section>`` must be formatted as
+ ``<segment name>,<section name>``.
+
 .. option:: --regex
 
  If specified, symbol and section names specified by other switches are treated
@@ -95,10 +98,11 @@ multiple file formats.
 .. option:: --strip-all, -S
 
  For ELF objects, remove from the output all symbols and non-alloc sections not
- within segments, except for .gnu.warning sections and the section name table.
+ within segments, except for .gnu.warning, .ARM.attribute sections and the
+ section name table.
 
- For COFF objects, remove all symbols, debug sections, and relocations from the
- output.
+ For COFF and Mach-O objects, remove all symbols, debug sections, and
+ relocations from the output.
 
 .. option:: --strip-debug, -g
 

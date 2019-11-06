@@ -3606,6 +3606,15 @@ def err_attribute_overloadable_no_prototype : Error<
 def err_attribute_overloadable_multiple_unmarked_overloads : Error<
   "at most one overload for a given name may lack the 'overloadable' "
   "attribute">;
+def warn_attribute_no_builtin_invalid_builtin_name : Warning<
+  "'%0' is not a valid builtin name for %1">,
+  InGroup<DiagGroup<"invalid-no-builtin-names">>;
+def err_attribute_no_builtin_wildcard_or_builtin_name : Error<
+  "empty %0 cannot be composed with named ones">;
+def err_attribute_no_builtin_on_non_definition : Error<
+  "%0 attribute is permitted on definitions only">;
+def err_attribute_no_builtin_on_defaulted_deleted_function : Error<
+  "%0 attribute has no effect on defaulted or deleted functions">;
 def warn_ns_attribute_wrong_return_type : Warning<
   "%0 attribute only applies to %select{functions|methods|properties}1 that "
   "return %select{an Objective-C object|a pointer|a non-retainable pointer}2">,
@@ -6432,6 +6441,8 @@ def warn_objc_unsafe_perform_selector : Warning<
   InGroup<DiagGroup<"objc-unsafe-perform-selector">>;
 def note_objc_unsafe_perform_selector_method_declared_here :  Note<
   "method %0 that returns %1 declared here">;
+def err_attribute_arm_mve_alias : Error<
+  "'__clang_arm_mve_alias' attribute can only be applied to an ARM MVE builtin">;
 
 def warn_setter_getter_impl_required : Warning<
   "property %0 requires method %1 to be defined - "
@@ -8101,6 +8112,46 @@ def note_vbase_moved_here : Note<
   "%select{%1 is a virtual base class of base class %2 declared here|"
   "virtual base class %1 declared here}0">;
 
+// C++20 defaulted comparisons
+// This corresponds to values of Sema::DefaultedComparisonKind.
+def select_defaulted_comparison_kind : TextSubstitution<
+  "%select{<ERROR>|equality|three-way|equality|relational}0 comparison "
+  "operator">;
+def ext_defaulted_comparison : ExtWarn<
+  "defaulted comparison operators are a C++20 extension">, InGroup<CXX2a>;
+def warn_cxx17_compat_defaulted_comparison : Warning<
+  "defaulted comparison operators are incompatible with C++ standards "
+  "before C++20">, InGroup<CXXPre2aCompat>, DefaultIgnore;
+def err_defaulted_comparison_template : Error<
+  "comparison operator template cannot be defaulted">;
+def err_defaulted_comparison_out_of_class : Error<
+  "%sub{select_defaulted_comparison_kind}0 can only be defaulted in a class "
+  "definition">;
+def err_defaulted_comparison_param : Error<
+  "invalid parameter type for defaulted %sub{select_defaulted_comparison_kind}0"
+  "%diff{; found $, expected $|}1,2">;
+def err_defaulted_comparison_non_const : Error<
+  "defaulted member %sub{select_defaulted_comparison_kind}0 must be "
+  "const-qualified">;
+def err_defaulted_comparison_return_type_not_bool : Error<
+  "return type for defaulted %sub{select_defaulted_comparison_kind}0 "
+  "must be 'bool', not %1">;
+def err_defaulted_comparison_reference_member : Error<
+  "cannot default %0 in class %1 with reference member">;
+def ext_defaulted_comparison_reference_member : ExtWarn<
+  "ISO C++2a does not allow defaulting %0 in class %1 with reference member">,
+  InGroup<DefaultedComparison>;
+def note_reference_member : Note<"reference member %0 declared here">;
+def err_defaulted_comparison_union : Error<
+  "cannot default %0 in %select{union-like class|union}1 %2">;
+def ext_defaulted_comparison_union : ExtWarn<
+  "ISO C++2a does not allow defaulting %0 in "
+  "%select{union-like class|union}1 %2">, InGroup<DefaultedComparison>;
+def ext_defaulted_comparison_empty_union : ExtWarn<
+  "ISO C++2a does not allow defaulting %0 in "
+  "%select{union-like class|union}1 %2 despite it having no variant members">,
+  InGroup<DefaultedComparison>;
+
 def ext_implicit_exception_spec_mismatch : ExtWarn<
   "function previously declared with an %select{explicit|implicit}0 exception "
   "specification redeclared with an %select{implicit|explicit}0 exception "
@@ -8637,6 +8688,12 @@ def warn_argument_invalid_range : Warning<
   InGroup<DiagGroup<"argument-outside-range">>;
 def err_argument_not_multiple : Error<
   "argument should be a multiple of %0">;
+def err_argument_not_power_of_2 : Error<
+  "argument should be a power of 2">;
+def err_argument_not_shifted_byte : Error<
+  "argument should be an 8-bit value shifted by a multiple of 8 bits">;
+def err_argument_not_shifted_byte_or_xxff : Error<
+  "argument should be an 8-bit value shifted by a multiple of 8 bits, or in the form 0x??FF">;
 def warn_neon_vector_initializer_non_portable : Warning<
   "vector initializers are not compatible with NEON intrinsics in big endian "
   "mode">, InGroup<DiagGroup<"nonportable-vector-initialization">>;
