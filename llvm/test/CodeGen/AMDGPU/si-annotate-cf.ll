@@ -33,6 +33,7 @@ ENDIF:
 
 ; SI: ; %else
 ; SI:     v_cmp_eq_u32_e64  [[TMP:s\[[0-9]+:[0-9]+\]]],
+; SI:     s_and_b64         [[PHI]], [[TMP]], exec
 
 ; SI: ; %endif
 

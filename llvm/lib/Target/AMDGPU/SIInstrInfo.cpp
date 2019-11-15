@@ -4273,7 +4273,7 @@ void SIInstrInfo::legalizeGenericOperand(MachineBasicBlock &InsertMBB,
     return;
 
   // Try to eliminate the copy if it is copying an immediate value.
-  if (Def->isMoveImmediate() && DstRC != &AMDGPU::VReg_1RegClass)
+  if (Def->isMoveImmediate())
     FoldImmediate(*Copy, *Def, OpReg, &MRI);
 
   bool ImpDef = Def->isImplicitDef();
@@ -4533,16 +4533,8 @@ void SIInstrInfo::legalizeOperands(MachineInstr &MI,
     if (VRC || !RI.isSGPRClass(getOpRegClass(MI, 0))) {
       if (!VRC) {
         assert(SRC);
-        if (getOpRegClass(MI, 0) == &AMDGPU::VReg_1RegClass) {
-          VRC = &AMDGPU::VReg_1RegClass;
-        } else
-          VRC = RI.hasAGPRs(getOpRegClass(MI, 0))
-                    ? RI.getEquivalentAGPRClass(SRC)
-                    : RI.getEquivalentVGPRClass(SRC);
-      } else {
-          VRC = RI.hasAGPRs(getOpRegClass(MI, 0))
-                    ? RI.getEquivalentAGPRClass(VRC)
-                    : RI.getEquivalentVGPRClass(VRC);
+        VRC = RI.hasAGPRs(getOpRegClass(MI, 0)) ? RI.getEquivalentAGPRClass(SRC)
+                                                : RI.getEquivalentVGPRClass(SRC);
       }
       RC = VRC;
     } else {
@@ -5740,7 +5732,7 @@ const TargetRegisterClass *SIInstrInfo::getDestEquivalentVGPRClass(
       if (!NewDstRC)
         return nullptr;
     } else {
-      if (RI.hasVGPRs(NewDstRC) || NewDstRC == &AMDGPU::VReg_1RegClass)
+       if (RI.hasVGPRs(NewDstRC))
         return nullptr;
 
       NewDstRC = RI.getEquivalentVGPRClass(NewDstRC);
