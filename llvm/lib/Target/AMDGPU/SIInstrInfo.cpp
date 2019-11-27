@@ -3484,32 +3484,6 @@ bool SIInstrInfo::verifyInstruction(const MachineInstr &MI,
     }
   }
 
-  // Special case for writelane - this can break the multiple constant bus rule,
-  // but still can't use more than one SGPR register
-  if (Desc.getOpcode() == AMDGPU::V_WRITELANE_B32) {
-    unsigned SGPRCount = 0;
-    Register SGPRUsed = AMDGPU::NoRegister;
-
-    for (int OpIdx : {Src0Idx, Src1Idx, Src2Idx}) {
-      if (OpIdx == -1)
-        break;
-
-      const MachineOperand &MO = MI.getOperand(OpIdx);
-
-      if (usesConstantBus(MRI, MO, MI.getDesc().OpInfo[OpIdx])) {
-        if (MO.isReg() && MO.getReg() != AMDGPU::M0) {
-          if (MO.getReg() != SGPRUsed)
-            ++SGPRCount;
-          SGPRUsed = MO.getReg();
-        }
-      }
-      if (SGPRCount > ST.getConstantBusLimit(Opcode)) {
-        ErrInfo = "WRITELANE instruction violates constant bus restriction";
-        return false;
-      }
-    }
-  }
-
   // Verify misc. restrictions on specific instructions.
   if (Desc.getOpcode() == AMDGPU::V_DIV_SCALE_F32 ||
       Desc.getOpcode() == AMDGPU::V_DIV_SCALE_F64) {
@@ -4299,7 +4273,7 @@ void SIInstrInfo::legalizeGenericOperand(MachineBasicBlock &InsertMBB,
     return;
 
   // Try to eliminate the copy if it is copying an immediate value.
-  if (Def->isMoveImmediate() && DstRC != &AMDGPU::VReg_1RegClass)
+  if (Def->isMoveImmediate())
     FoldImmediate(*Copy, *Def, OpReg, &MRI);
 
   bool ImpDef = Def->isImplicitDef();
@@ -4559,16 +4533,8 @@ void SIInstrInfo::legalizeOperands(MachineInstr &MI,
     if (VRC || !RI.isSGPRClass(getOpRegClass(MI, 0))) {
       if (!VRC) {
         assert(SRC);
-        if (getOpRegClass(MI, 0) == &AMDGPU::VReg_1RegClass) {
-          VRC = &AMDGPU::VReg_1RegClass;
-        } else
-          VRC = RI.hasAGPRs(getOpRegClass(MI, 0))
-                    ? RI.getEquivalentAGPRClass(SRC)
-                    : RI.getEquivalentVGPRClass(SRC);
-      } else {
-          VRC = RI.hasAGPRs(getOpRegClass(MI, 0))
-                    ? RI.getEquivalentAGPRClass(VRC)
-                    : RI.getEquivalentVGPRClass(VRC);
+        VRC = RI.hasAGPRs(getOpRegClass(MI, 0)) ? RI.getEquivalentAGPRClass(SRC)
+                                                : RI.getEquivalentVGPRClass(SRC);
       }
       RC = VRC;
     } else {
@@ -5766,7 +5732,7 @@ const TargetRegisterClass *SIInstrInfo::getDestEquivalentVGPRClass(
       if (!NewDstRC)
         return nullptr;
     } else {
-      if (RI.hasVGPRs(NewDstRC) || NewDstRC == &AMDGPU::VReg_1RegClass)
+       if (RI.hasVGPRs(NewDstRC))
         return nullptr;
 
       NewDstRC = RI.getEquivalentVGPRClass(NewDstRC);
