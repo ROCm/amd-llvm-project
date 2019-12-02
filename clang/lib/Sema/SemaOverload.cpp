@@ -1176,9 +1176,9 @@ bool Sema::IsOverload(FunctionDecl *New, FunctionDecl *Old,
     // void fun(...) restrict(amp)
     // void fun(...) restrict(cpu)
     bool OldisAMP = Old->hasAttr<CXXAMPRestrictAMPAttr>();
-    bool OldisCPU = Old->hasAttr<CXXAMPRestrictCPUAttr>();
+    bool OldisCPU = Old->hasAttr<CXXAMPRestrictCPUAttr>() || !OldisAMP;
     bool NewisAMP = New->hasAttr<CXXAMPRestrictAMPAttr>();
-    bool NewisCPU = New->hasAttr<CXXAMPRestrictCPUAttr>();
+    bool NewisCPU = New->hasAttr<CXXAMPRestrictCPUAttr>() || !NewisAMP;
     //support restrict overload
     if (NewisAMP && !NewisCPU && !OldisAMP && OldisCPU)
       return true;
