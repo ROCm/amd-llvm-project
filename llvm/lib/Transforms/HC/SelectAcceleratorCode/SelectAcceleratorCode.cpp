@@ -110,17 +110,28 @@ class SelectAcceleratorCode : public ModulePass {
     }
 
     static
-    bool alwaysInline_(Function &F)
+    bool forceAlwaysInline_(Function &F)
     {
-        if (!F.hasFnAttribute(Attribute::AlwaysInline)) {
-            if (F.hasFnAttribute(Attribute::NoInline)) {
-                F.removeFnAttr(Attribute::NoInline);
-            }
-            F.addFnAttr(Attribute::AlwaysInline);
-
+        if (F.hasFnAttribute(Attribute::AlwaysInline)) {
+            // already marked as always inline,
+            // nothing needs to be changed
+            assert(!F.hasFnAttribute(Attribute::OptimizeNone));
+            assert(!F.hasFnAttribute(Attribute::NoInline));
             return false;
         }
 
+        if (F.hasFnAttribute(Attribute::OptimizeNone)) {
+            // don't inline functions with optnone
+            // Function with optnone is required to have
+            // noinline
+            assert(F.hasFnAttribute(Attribute::NoInline));
+            return false;
+        }
+
+        if (F.hasFnAttribute(Attribute::NoInline)) {
+            F.removeFnAttr(Attribute::NoInline);
+        }
+        F.addFnAttr(Attribute::AlwaysInline);
         return true;
     }
 public:
@@ -148,7 +159,7 @@ public:
         Modified = eraseDeadAliases_(M) || Modified;
 
         if (!EnableFunctionCalls)
-            for (auto&& F : M.functions()) Modified = !alwaysInline_(F) || Modified;
+            for (auto&& F : M.functions()) Modified = forceAlwaysInline_(F) || Modified;
 
         return Modified;
     }

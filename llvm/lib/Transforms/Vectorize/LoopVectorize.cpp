@@ -200,9 +200,10 @@ static cl::opt<bool> EnableMaskedInterleavedMemAccesses(
     "enable-masked-interleaved-mem-accesses", cl::init(false), cl::Hidden,
     cl::desc("Enable vectorization on masked interleaved memory accesses in a loop"));
 
-/// We don't interleave loops with a known constant trip count below this
-/// number.
-static const unsigned TinyTripCountInterleaveThreshold = 128;
+static cl::opt<unsigned> TinyTripCountInterleaveThreshold(
+    "tiny-trip-count-interleave-threshold", cl::init(128), cl::Hidden,
+    cl::desc("We don't interleave loops with a estimated constant trip count "
+             "below this number"));
 
 static cl::opt<unsigned> ForceTargetNumScalarRegs(
     "force-target-num-scalar-regs", cl::init(0), cl::Hidden,
@@ -5143,9 +5144,10 @@ unsigned LoopVectorizationCostModel::selectInterleaveCount(unsigned VF,
   if (Legal->getMaxSafeDepDistBytes() != -1U)
     return 1;
 
-  // Do not interleave loops with a relatively small trip count.
-  unsigned TC = PSE.getSE()->getSmallConstantTripCount(TheLoop);
-  if (TC > 1 && TC < TinyTripCountInterleaveThreshold)
+  // Do not interleave loops with a relatively small known or estimated trip
+  // count.
+  auto BestKnownTC = getSmallBestKnownTC(*PSE.getSE(), TheLoop);
+  if (BestKnownTC && *BestKnownTC < TinyTripCountInterleaveThreshold)
     return 1;
 
   RegisterUsage R = calculateRegisterUsage({VF})[0];
@@ -5208,12 +5210,10 @@ unsigned LoopVectorizationCostModel::selectInterleaveCount(unsigned VF,
       MaxInterleaveCount = ForceTargetMaxVectorInterleaveFactor;
   }
 
-  // If the trip count is constant, limit the interleave count to be less than
-  // the trip count divided by VF.
-  if (TC > 0) {
-    assert(TC >= VF && "VF exceeds trip count?");
-    if ((TC / VF) < MaxInterleaveCount)
-      MaxInterleaveCount = (TC / VF);
+  // If trip count is known or estimated compile time constant, limit the
+  // interleave count to be less than the trip count divided by VF.
+  if (BestKnownTC) {
+    MaxInterleaveCount = std::min(*BestKnownTC / VF, MaxInterleaveCount);
   }
 
   // If we did not calculate the cost for VF (because the user selected the VF)
@@ -5746,7 +5746,7 @@ unsigned LoopVectorizationCostModel::getMemInstScalarizationCost(Instruction *I,
   // vectorized loop where the user of it is a vectorized instruction.
   const MaybeAlign Alignment = getLoadStoreAlignment(I);
   Cost += VF * TTI.getMemoryOpCost(I->getOpcode(), ValTy->getScalarType(),
-                                   Alignment ? Alignment->value() : 0, AS);
+                                   Alignment, AS);
 
   // Get the overhead of the extractelement and insertelement instructions
   // we might create due to scalarization.
@@ -5783,8 +5783,7 @@ unsigned LoopVectorizationCostModel::getConsecutiveMemOpCost(Instruction *I,
     Cost += TTI.getMaskedMemoryOpCost(I->getOpcode(), VectorTy,
                                       Alignment ? Alignment->value() : 0, AS);
   else
-    Cost += TTI.getMemoryOpCost(I->getOpcode(), VectorTy,
-                                Alignment ? Alignment->value() : 0, AS, I);
+    Cost += TTI.getMemoryOpCost(I->getOpcode(), VectorTy, Alignment, AS, I);
 
   bool Reverse = ConsecutiveStride < 0;
   if (Reverse)
@@ -5800,16 +5799,14 @@ unsigned LoopVectorizationCostModel::getUniformMemOpCost(Instruction *I,
   unsigned AS = getLoadStoreAddressSpace(I);
   if (isa<LoadInst>(I)) {
     return TTI.getAddressComputationCost(ValTy) +
-           TTI.getMemoryOpCost(Instruction::Load, ValTy,
-                               Alignment ? Alignment->value() : 0, AS) +
+           TTI.getMemoryOpCost(Instruction::Load, ValTy, Alignment, AS) +
            TTI.getShuffleCost(TargetTransformInfo::SK_Broadcast, VectorTy);
   }
   StoreInst *SI = cast<StoreInst>(I);
 
   bool isLoopInvariantStoreValue = Legal->isUniform(SI->getValueOperand());
   return TTI.getAddressComputationCost(ValTy) +
-         TTI.getMemoryOpCost(Instruction::Store, ValTy,
-                             Alignment ? Alignment->value() : 0, AS) +
+         TTI.getMemoryOpCost(Instruction::Store, ValTy, Alignment, AS) +
          (isLoopInvariantStoreValue
               ? 0
               : TTI.getVectorInstrCost(Instruction::ExtractElement, VectorTy,
@@ -5877,8 +5874,7 @@ unsigned LoopVectorizationCostModel::getMemoryInstructionCost(Instruction *I,
     unsigned AS = getLoadStoreAddressSpace(I);
 
     return TTI.getAddressComputationCost(ValTy) +
-           TTI.getMemoryOpCost(I->getOpcode(), ValTy,
-                               Alignment ? Alignment->value() : 0, AS, I);
+           TTI.getMemoryOpCost(I->getOpcode(), ValTy, Alignment, AS, I);
   }
   return getWideningCost(I, VF);
 }

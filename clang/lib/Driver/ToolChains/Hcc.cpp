@@ -300,9 +300,27 @@ void HCC::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
     if (Args.hasFlag(options::OPT_mcode_object_v3,
                      options::OPT_mno_code_object_v3, false))
       CmdArgs.push_back("--hcc-cov3");
+
     if (auto A = Args.getLastArg(options::OPT_O_Group)) {
-      CmdArgs.push_back(A->getSpelling().data());
+      StringRef OOpt = "3";
+      if (A->getOption().matches(options::OPT_O4) ||
+          A->getOption().matches(options::OPT_Ofast))
+        OOpt = "3";
+      else if (A->getOption().matches(options::OPT_O0))
+        OOpt = "0";
+      else if (A->getOption().matches(options::OPT_O)) {
+        // -Os, -Oz, and -O(anything else) map to -O2
+        OOpt = llvm::StringSwitch<const char *>(A->getValue())
+                   .Case("1", "1")
+                   .Case("2", "2")
+                   .Case("3", "3")
+                   .Case("s", "2")
+                   .Case("z", "2")
+                   .Default("2");
+      }
+      CmdArgs.emplace_back(C.getArgs().MakeArgString("-O" + OOpt));
     }
+
     if (!Args.hasFlag(options::OPT_fgpu_rdc, options::OPT_fno_gpu_rdc, true)) {
       CmdArgs.push_back("--early_finalize");
       // add the amdgpu target args
