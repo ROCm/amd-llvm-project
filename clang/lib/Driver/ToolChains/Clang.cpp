@@ -3324,6 +3324,13 @@ static void RenderDebugOptions(const ToolChain &TC, const Driver &D,
   // Adjust the debug info kind for the given toolchain.
   TC.adjustDebugInfoKind(DebugInfoKind, Args);
 
+  // On HCC's device path, force any debugging information request
+  // to only emit debug line table to workaround stability issues
+  if (IsHCCKernelPath &&
+      DebugInfoKind != codegenoptions::NoDebugInfo) {
+    DebugInfoKind = codegenoptions::DebugLineTablesOnly;
+  }
+
   RenderDebugEnablingArgs(Args, CmdArgs, DebugInfoKind, DWARFVersion,
                           DebuggerTuning);
 
