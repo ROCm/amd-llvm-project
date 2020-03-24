@@ -23,8 +23,6 @@ else()
   return()
 endif()
 set(LLVM_LIBDIR ${LLVM_INSTALL_PREFIX}/lib)
-message("--------> LLVM_LIBDIR is ${LLVM_LIBDIR}")
-message("--------> LLVM_INSTALL_PREFIX is ${LLVM_INSTALL_PREFIX}")
 
 find_package(Clang QUIET CONFIG PATHS ${CMAKE_INSTALL_PREFIX} NO_DEFAULT_PATH)
 if (CLANG_CMAKE_DIR)
