@@ -27,42 +27,54 @@ DEVICE
     omptarget_nvptx_Queue<omptarget_nvptx_ThreadPrivateContext, OMP_STATE_COUNT>
         omptarget_nvptx_device_State[MAX_SM];
 
-DEVICE omptarget_nvptx_SimpleMemoryManager
-    omptarget_nvptx_simpleMemoryManager;
-DEVICE SHARED uint32_t usedMemIdx;
-DEVICE SHARED uint32_t usedSlotIdx;
+    DEVICE void *omptarget_nest_par_call_stack;
+    DEVICE uint32_t omptarget_nest_par_call_struct_size =
+        sizeof(class omptarget_nvptx_TaskDescr);
 
-DEVICE SHARED uint8_t parallelLevel[MAX_THREADS_PER_TEAM / WARPSIZE];
-DEVICE SHARED uint16_t threadLimit;
-DEVICE SHARED uint16_t threadsInTeam;
-DEVICE SHARED uint16_t nThreads;
-// Pointer to this team's OpenMP state object
-DEVICE SHARED
-    omptarget_nvptx_ThreadPrivateContext *omptarget_nvptx_threadPrivateContext;
+    DEVICE omptarget_nvptx_SimpleMemoryManager
+        omptarget_nvptx_simpleMemoryManager;
+    DEVICE SHARED uint32_t usedMemIdx;
+    DEVICE SHARED uint32_t usedSlotIdx;
+#ifdef __AMDGCN__
+    DEVICE volatile SHARED uint8_t
+        parallelLevel[MAX_THREADS_PER_TEAM / WARPSIZE];
+#else
+    DEVICE SHARED uint8_t parallelLevel[MAX_THREADS_PER_TEAM / WARPSIZE];
+#endif
+    DEVICE SHARED uint16_t threadLimit;
+    DEVICE SHARED uint16_t threadsInTeam;
+    DEVICE SHARED uint16_t nThreads;
+    // Pointer to this team's OpenMP state object
+    DEVICE SHARED omptarget_nvptx_ThreadPrivateContext
+        *omptarget_nvptx_threadPrivateContext;
 
-////////////////////////////////////////////////////////////////////////////////
-// The team master sets the outlined parallel function in this variable to
-// communicate with the workers.  Since it is in shared memory, there is one
-// copy of these variables for each kernel, instance, and team.
-////////////////////////////////////////////////////////////////////////////////
-volatile DEVICE SHARED omptarget_nvptx_WorkFn omptarget_nvptx_workFn;
+    ////////////////////////////////////////////////////////////////////////////////
+    // The team master sets the outlined parallel function in this variable to
+    // communicate with the workers.  Since it is in shared memory, there is one
+    // copy of these variables for each kernel, instance, and team.
+    ////////////////////////////////////////////////////////////////////////////////
+    volatile DEVICE SHARED omptarget_nvptx_WorkFn omptarget_nvptx_workFn;
+#ifdef __AMDGCN__
+    volatile DEVICE SHARED bool omptarget_workers_active;
+    volatile DEVICE SHARED bool omptarget_master_active;
+#endif
 
-////////////////////////////////////////////////////////////////////////////////
-// OpenMP kernel execution parameters
-////////////////////////////////////////////////////////////////////////////////
-DEVICE SHARED uint32_t execution_param;
+    ////////////////////////////////////////////////////////////////////////////////
+    // OpenMP kernel execution parameters
+    ////////////////////////////////////////////////////////////////////////////////
+    DEVICE SHARED uint32_t execution_param;
 
-////////////////////////////////////////////////////////////////////////////////
-// Data sharing state
-////////////////////////////////////////////////////////////////////////////////
-DEVICE SHARED DataSharingStateTy DataSharingState;
+    ////////////////////////////////////////////////////////////////////////////////
+    // Data sharing state
+    ////////////////////////////////////////////////////////////////////////////////
+    DEVICE SHARED DataSharingStateTy DataSharingState;
 
-////////////////////////////////////////////////////////////////////////////////
-// Scratchpad for teams reduction.
-////////////////////////////////////////////////////////////////////////////////
-DEVICE SHARED void *ReductionScratchpadPtr;
+    ////////////////////////////////////////////////////////////////////////////////
+    // Scratchpad for teams reduction.
+    ////////////////////////////////////////////////////////////////////////////////
+    DEVICE SHARED void *ReductionScratchpadPtr;
 
-////////////////////////////////////////////////////////////////////////////////
-// Data sharing related variables.
-////////////////////////////////////////////////////////////////////////////////
-DEVICE SHARED omptarget_nvptx_SharedArgs omptarget_nvptx_globalArgs;
+    ////////////////////////////////////////////////////////////////////////////////
+    // Data sharing related variables.
+    ////////////////////////////////////////////////////////////////////////////////
+    DEVICE SHARED omptarget_nvptx_SharedArgs omptarget_nvptx_globalArgs;
