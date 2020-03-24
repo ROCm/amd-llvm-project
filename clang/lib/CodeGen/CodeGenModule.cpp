@@ -210,6 +210,7 @@ void CodeGenModule::createOpenMPRuntime() {
   switch (getTriple().getArch()) {
   case llvm::Triple::nvptx:
   case llvm::Triple::nvptx64:
+  case llvm::Triple::amdgcn:
     assert(getLangOpts().OpenMPIsDevice &&
            "OpenMP NVPTX is only prepared to deal with device code.");
     OpenMPRuntime.reset(new CGOpenMPRuntimeNVPTX(*this));
@@ -457,7 +458,10 @@ void CodeGenModule::Release() {
   if (SanStats)
     SanStats->finish();
 
+  // Disable linker.options for HIP device compilation. This is a workaround
+  // to get things going until https://reviews.llvm.org/D57829 is committed.
   if (CodeGenOpts.Autolink &&
+      !(Context.getLangOpts().CUDAIsDevice && Context.getLangOpts().HIP) &&
       (Context.getLangOpts().Modules || !LinkerOptionsMetadata.empty())) {
     EmitModuleLinkOptions();
   }
@@ -863,6 +867,9 @@ static bool shouldAssumeDSOLocal(const CodeGenModule &CGM,
   if (!TT.isOSBinFormatELF())
     return false;
 
+  if ((TT.getArch() == llvm::Triple::amdgcn) || TT.isNVPTX())
+    return false;
+
   // If this is not an executable, don't assume anything is local.
   const auto &CGOpts = CGM.getCodeGenOpts();
   llvm::Reloc::Model RM = CGOpts.RelocationModel;
@@ -903,7 +910,9 @@ static bool shouldAssumeDSOLocal(const CodeGenModule &CGM,
 }
 
 void CodeGenModule::setDSOLocal(llvm::GlobalValue *GV) const {
-  GV->setDSOLocal(shouldAssumeDSOLocal(*this, GV));
+  bool assumelocal = shouldAssumeDSOLocal(*this, GV);
+  GV->setDSOLocal(assumelocal);
+  // GV->setDSOLocal(shouldAssumeDSOLocal(*this, GV));
 }
 
 void CodeGenModule::setDLLImportDLLExport(llvm::GlobalValue *GV,
