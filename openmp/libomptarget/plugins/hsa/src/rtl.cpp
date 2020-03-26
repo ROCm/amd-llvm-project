@@ -468,10 +468,6 @@ int32_t dataSubmit(int32_t DeviceId, void *TgtPtr, void *HstPtr, int64_t Size,
 
 static char GPUName[256] = "--unknown gpu--";
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 int32_t __tgt_rtl_is_valid_binary(__tgt_device_image *image) {
   return elf_machine_id_is_amdgcn(image);
 }
@@ -1356,6 +1352,3 @@ int32_t __tgt_rtl_synchronize(int32_t device_id, __tgt_async_info *async_info) {
 }
 
 
-#ifdef __cplusplus
-}
-#endif
