@@ -2894,6 +2894,10 @@ def err_attribute_address_multiple_qualifiers : Error<
 def warn_attribute_address_multiple_identical_qualifiers : Warning<
   "multiple identical address spaces specified for type">,
   InGroup<DuplicateDeclSpecifier>;
+def err_attribute_not_clinkage : Error<
+  "function type with %0 attribute must have C linkage">;
+def err_function_decl_cmse_ns_call : Error<
+  "functions may not be declared with 'cmse_nonsecure_call' attribute">;
 def err_attribute_address_function_type : Error<
   "function type may not be qualified with an address space">;
 def err_as_qualified_auto_decl : Error<
@@ -3114,6 +3118,9 @@ def warn_attribute_weak_on_local : Warning<
   InGroup<IgnoredAttributes>;
 def warn_weak_identifier_undeclared : Warning<
   "weak identifier %0 never declared">;
+def warn_attribute_cmse_entry_static : Warning<
+  "'cmse_nonsecure_entry' cannot be applied to functions with internal linkage">,
+  InGroup<IgnoredAttributes>;
 def err_attribute_weak_static : Error<
   "weak declaration cannot have internal linkage">;
 def err_attribute_selectany_non_extern_data : Error<
@@ -9834,7 +9841,7 @@ def err_omp_prohibited_region : Error<
   "; perhaps you forget to enclose 'omp %3' directive into a for or a parallel for region with 'ordered' clause?|"
   "; perhaps you forget to enclose 'omp %3' directive into a target region?|"
   "; perhaps you forget to enclose 'omp %3' directive into a teams region?|"
-  "; perhaps you forget to enclose 'omp %3' directive into a for, simd, or for simd region?}2">;
+  "; perhaps you forget to enclose 'omp %3' directive into a for, simd, for simd, parallel for, or parallel for simd region?}2">;
 def err_omp_prohibited_region_simd : Error<
   "OpenMP constructs may not be nested inside a simd region%select{| except for ordered simd, simd, scan, or atomic directive}0">;
 def err_omp_prohibited_region_atomic : Error<
@@ -10031,7 +10038,8 @@ def warn_omp_nesting_simd : Warning<
   InGroup<SourceUsesOpenMP>;
 def err_omp_orphaned_device_directive : Error<
   "orphaned 'omp %0' directives are prohibited"
-  "; perhaps you forget to enclose the directive into a %select{|||target |teams|for, simd, or for simd }1region?">;
+  "; perhaps you forget to enclose the directive into a "
+  "%select{|||target |teams|for, simd, for simd, parallel for, or parallel for simd }1region?">;
 def err_omp_reduction_non_addressable_expression : Error<
   "expected addressable reduction item for the task-based directives">;
 def err_omp_reduction_with_nogroup : Error<
@@ -10156,6 +10164,10 @@ def err_omp_non_lvalue_in_map_or_motion_clauses: Error<
   >;
 def err_omp_event_var_expected : Error<
   "expected variable of the 'omp_event_handle_t' type%select{|, not %1}0">;
+def warn_nested_declare_variant
+    : Warning<"nesting `omp begin/end declare variant` is not supported yet; "
+              "nested context ignored">,
+      InGroup<SourceUsesOpenMP>;
 } // end of OpenMP category
 
 let CategoryName = "Related Result Type Issue" in {

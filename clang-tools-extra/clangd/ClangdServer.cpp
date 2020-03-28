@@ -58,9 +58,9 @@ namespace {
 struct UpdateIndexCallbacks : public ParsingCallbacks {
   UpdateIndexCallbacks(FileIndex *FIndex,
                        ClangdServer::Callbacks *ServerCallbacks,
-                       bool SemanticHighlighting)
+                       bool TheiaSemanticHighlighting)
       : FIndex(FIndex), ServerCallbacks(ServerCallbacks),
-        SemanticHighlighting(SemanticHighlighting) {}
+        TheiaSemanticHighlighting(TheiaSemanticHighlighting) {}
 
   void onPreambleAST(PathRef Path, llvm::StringRef Version, ASTContext &Ctx,
                      std::shared_ptr<clang::Preprocessor> PP,
@@ -75,14 +75,14 @@ struct UpdateIndexCallbacks : public ParsingCallbacks {
 
     std::vector<Diag> Diagnostics = AST.getDiagnostics();
     std::vector<HighlightingToken> Highlightings;
-    if (SemanticHighlighting)
+    if (TheiaSemanticHighlighting)
       Highlightings = getSemanticHighlightings(AST);
 
     if (ServerCallbacks)
       Publish([&]() {
         ServerCallbacks->onDiagnosticsReady(Path, AST.version(),
                                             std::move(Diagnostics));
-        if (SemanticHighlighting)
+        if (TheiaSemanticHighlighting)
           ServerCallbacks->onHighlightingsReady(Path, AST.version(),
                                                 std::move(Highlightings));
       });
@@ -103,7 +103,7 @@ struct UpdateIndexCallbacks : public ParsingCallbacks {
 private:
   FileIndex *FIndex;
   ClangdServer::Callbacks *ServerCallbacks;
-  bool SemanticHighlighting;
+  bool TheiaSemanticHighlighting;
 };
 } // namespace
 
@@ -112,7 +112,7 @@ ClangdServer::Options ClangdServer::optsForTest() {
   Opts.UpdateDebounce = DebouncePolicy::fixed(/*zero*/ {});
   Opts.StorePreamblesInMemory = true;
   Opts.AsyncThreadsCount = 4; // Consistent!
-  Opts.SemanticHighlighting = true;
+  Opts.TheiaSemanticHighlighting = true;
   return Opts;
 }
 
@@ -142,8 +142,8 @@ ClangdServer::ClangdServer(const GlobalCompilationDatabase &CDB,
       // critical paths.
       WorkScheduler(
           CDB, TUScheduler::Options(Opts),
-          std::make_unique<UpdateIndexCallbacks>(DynamicIdx.get(), Callbacks,
-                                                 Opts.SemanticHighlighting)) {
+          std::make_unique<UpdateIndexCallbacks>(
+              DynamicIdx.get(), Callbacks, Opts.TheiaSemanticHighlighting)) {
   // Adds an index to the stack, at higher priority than existing indexes.
   auto AddIndex = [&](SymbolIndex *Idx) {
     if (this->Index != nullptr) {
@@ -654,14 +654,22 @@ void ClangdServer::symbolInfo(PathRef File, Position Pos,
   WorkScheduler.runWithAST("SymbolInfo", File, std::move(Action));
 }
 
-void ClangdServer::semanticRanges(PathRef File, Position Pos,
-                                  Callback<std::vector<Range>> CB) {
-  auto Action =
-      [Pos, CB = std::move(CB)](llvm::Expected<InputsAndAST> InpAST) mutable {
-        if (!InpAST)
-          return CB(InpAST.takeError());
-        CB(clangd::getSemanticRanges(InpAST->AST, Pos));
-      };
+void ClangdServer::semanticRanges(PathRef File,
+                                  const std::vector<Position> &Positions,
+                                  Callback<std::vector<SelectionRange>> CB) {
+  auto Action = [Positions, CB = std::move(CB)](
+                    llvm::Expected<InputsAndAST> InpAST) mutable {
+    if (!InpAST)
+      return CB(InpAST.takeError());
+    std::vector<SelectionRange> Result;
+    for (const auto &Pos : Positions) {
+      if (auto Range = clangd::getSemanticRanges(InpAST->AST, Pos))
+        Result.push_back(std::move(*Range));
+      else
+        return CB(Range.takeError());
+    }
+    CB(std::move(Result));
+  };
   WorkScheduler.runWithAST("SemanticRanges", File, std::move(Action));
 }
 

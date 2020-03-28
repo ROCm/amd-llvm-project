@@ -107,7 +107,7 @@ static std::string ReadPCHRecord(StringRef type) {
       .Case("IdentifierInfo *", "Record.readIdentifier()")
       .Case("StringRef", "Record.readString()")
       .Case("ParamIdx", "ParamIdx::deserialize(Record.readInt())")
-      .Case("OMPTraitInfo", "Record.readOMPTraitInfo()")
+      .Case("OMPTraitInfo *", "Record.readOMPTraitInfo()")
       .Default("Record.readInt()");
 }
 
@@ -131,7 +131,7 @@ static std::string WritePCHRecord(StringRef type, StringRef name) {
              .Case("StringRef", "AddString(" + std::string(name) + ");\n")
              .Case("ParamIdx",
                    "push_back(" + std::string(name) + ".serialize());\n")
-             .Case("OMPTraitInfo",
+             .Case("OMPTraitInfo *",
                    "writeOMPTraitInfo(" + std::string(name) + ");\n")
              .Default("push_back(" + std::string(name) + ");\n");
 }
@@ -363,7 +363,7 @@ namespace {
           OS << "    if (SA->get" << getUpperName() << "().isValid())\n  ";
         OS << "    OS << \" \" << SA->get" << getUpperName()
            << "().getSourceIndex();\n";
-      } else if (type == "OMPTraitInfo") {
+      } else if (type == "OMPTraitInfo *") {
         OS << "    OS << \" \" << SA->get" << getUpperName() << "();\n";
       } else {
         llvm_unreachable("Unknown SimpleArgument type!");
@@ -1331,7 +1331,7 @@ createArgument(const Record &Arg, StringRef Attr,
   else if (ArgName == "VersionArgument")
     Ptr = std::make_unique<VersionArgument>(Arg, Attr);
   else if (ArgName == "OMPTraitInfoArgument")
-    Ptr = std::make_unique<SimpleArgument>(Arg, Attr, "OMPTraitInfo");
+    Ptr = std::make_unique<SimpleArgument>(Arg, Attr, "OMPTraitInfo *");
 
   if (!Ptr) {
     // Search in reverse order so that the most-derived type is handled first.
@@ -3739,10 +3739,8 @@ void EmitClangAttrParsedAttrImpl(RecordKeeper &Records, raw_ostream &OS) {
     for (const auto &S : GetFlattenedSpellings(Attr)) {
       const std::string &RawSpelling = S.name();
       std::string Spelling;
-      if (S.variety() == "CXX11" || S.variety() == "C2x") {
-        Spelling += S.nameSpace();
-        Spelling += "::";
-      }
+      if (!S.nameSpace().empty())
+        Spelling += S.nameSpace() + "::";
       if (S.variety() == "GNU")
         Spelling += NormalizeGNUAttrSpelling(RawSpelling);
       else
@@ -3815,12 +3813,12 @@ void EmitClangAttrParsedAttrKinds(RecordKeeper &Records, raw_ostream &OS) {
         const std::string &Variety = S.variety();
         if (Variety == "CXX11") {
           Matches = &CXX11;
-          Spelling += S.nameSpace();
-          Spelling += "::";
+          if (!S.nameSpace().empty())
+            Spelling += S.nameSpace() + "::";
         } else if (Variety == "C2x") {
           Matches = &C2x;
-          Spelling += S.nameSpace();
-          Spelling += "::";
+          if (!S.nameSpace().empty())
+            Spelling += S.nameSpace() + "::";
         } else if (Variety == "GNU")
           Matches = &GNU;
         else if (Variety == "Declspec")

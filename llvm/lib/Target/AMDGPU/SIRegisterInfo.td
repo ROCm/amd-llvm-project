@@ -103,7 +103,7 @@ def FP_REG : SIReg<"fp", 0>;
 def SP_REG : SIReg<"sp", 0>;
 
 // Pseudo-register to represent the program-counter DWARF register.
-def PC_REG : SIReg<"pc", 0>, DwarfRegNum<[16, 0]> {
+def PC_REG : SIReg<"pc", 0>, DwarfRegNum<[16, 16]> {
   // There is no physical register corresponding to a "program counter", but
   // we need to encode the concept in debug information in order to represent
   // things like the return value in unwind information.
@@ -578,7 +578,7 @@ def SReg_160 : RegisterClass<"AMDGPU", [v5i32, v5f32], 32,
   let AllocationPriority = 16;
 }
 
-def SGPR_256 : RegisterClass<"AMDGPU", [v8i32, v8f32], 32, (add SGPR_256Regs)> {
+def SGPR_256 : RegisterClass<"AMDGPU", [v8i32, v8f32, v4i64], 32, (add SGPR_256Regs)> {
   let AllocationPriority = 17;
 }
 
@@ -586,7 +586,7 @@ def TTMP_256 : RegisterClass<"AMDGPU", [v8i32, v8f32], 32, (add TTMP_256Regs)> {
   let isAllocatable = 0;
 }
 
-def SReg_256 : RegisterClass<"AMDGPU", [v8i32, v8f32], 32,
+def SReg_256 : RegisterClass<"AMDGPU", [v8i32, v8f32, v4i64], 32,
                              (add SGPR_256, TTMP_256)> {
   // Requires 4 s_mov_b64 to copy
   let CopyCost = 4;

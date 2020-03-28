@@ -3885,6 +3885,10 @@ public:
   void DiagnoseAmbiguousLookup(LookupResult &Result);
   //@}
 
+  /// Attempts to produce a RecoveryExpr after some AST node cannot be created.
+  ExprResult CreateRecoveryExpr(SourceLocation Begin, SourceLocation End,
+                                ArrayRef<Expr *> SubExprs);
+
   ObjCInterfaceDecl *getObjCInterfaceDecl(IdentifierInfo *&Id,
                                           SourceLocation IdLoc,
                                           bool TypoCorrection = false);
@@ -4812,6 +4816,15 @@ public:
                                  PredefinedExpr::IdentKind IK);
   ExprResult ActOnPredefinedExpr(SourceLocation Loc, tok::TokenKind Kind);
   ExprResult ActOnIntegerConstant(SourceLocation Loc, uint64_t Val);
+
+  ExprResult BuildUniqueStableName(SourceLocation Loc, TypeSourceInfo *Operand);
+  ExprResult BuildUniqueStableName(SourceLocation Loc, Expr *E);
+  ExprResult ActOnUniqueStableNameExpr(SourceLocation OpLoc,
+                                       SourceLocation LParen,
+                                       SourceLocation RParen, ParsedType Ty);
+  ExprResult ActOnUniqueStableNameExpr(SourceLocation OpLoc,
+                                       SourceLocation LParen,
+                                       SourceLocation RParen, Expr *E);
 
   bool CheckLoopHintExpr(Expr *E, SourceLocation Loc);
 
@@ -9799,14 +9812,55 @@ private:
                                      MapT &Map, unsigned Selector = 0,
                                      SourceRange SrcRange = SourceRange());
 
-  /// Marks all the functions that might be required for the currently active
-  /// OpenMP context.
-  void markOpenMPDeclareVariantFuncsReferenced(SourceLocation Loc,
-                                               FunctionDecl *Func,
-                                               bool MightBeOdrUse);
+  /// Helper to keep information about the current `omp begin/end declare
+  /// variant` nesting.
+  struct OMPDeclareVariantScope {
+    /// The associated OpenMP context selector.
+    OMPTraitInfo *TI;
+
+    /// The associated OpenMP context selector mangling.
+    std::string NameSuffix;
+
+    OMPDeclareVariantScope(OMPTraitInfo &TI)
+        : TI(&TI), NameSuffix(TI.getMangledName()) {}
+  };
+
+  /// The current `omp begin/end declare variant` scopes.
+  SmallVector<OMPDeclareVariantScope, 4> OMPDeclareVariantScopes;
+
+  /// The declarator \p D defines a function in the scope \p S which is nested
+  /// in an `omp begin/end declare variant` scope. In this method we create a
+  /// declaration for \p D and rename \p D according to the OpenMP context
+  /// selector of the surrounding scope.
+  FunctionDecl *
+  ActOnStartOfFunctionDefinitionInOpenMPDeclareVariantScope(Scope *S,
+                                                            Declarator &D);
+
+  /// Register \p FD as specialization of \p BaseFD in the current `omp
+  /// begin/end declare variant` scope.
+  void ActOnFinishedFunctionDefinitionInOpenMPDeclareVariantScope(
+      FunctionDecl *FD, FunctionDecl *BaseFD);
 
 public:
-  /// Struct to store the context selectors info for declare variant directive.
+
+  /// Can we exit a scope at the moment.
+  bool isInOpenMPDeclareVariantScope() {
+    return !OMPDeclareVariantScopes.empty();
+  }
+
+  /// Given the potential call expression \p Call, determine if there is a
+  /// specialization via the OpenMP declare variant mechanism available. If
+  /// there is, return the specialized call expression, otherwise return the
+  /// original \p Call.
+  ExprResult ActOnOpenMPCall(Sema &S, ExprResult Call, Scope *Scope,
+                             SourceLocation LParenLoc, MultiExprArg ArgExprs,
+                             SourceLocation RParenLoc, Expr *ExecConfig);
+
+  /// Handle a `omp begin declare variant`.
+  void ActOnOpenMPBeginDeclareVariant(SourceLocation Loc, OMPTraitInfo &TI);
+
+  /// Handle a `omp end declare variant`.
+  void ActOnOpenMPEndDeclareVariant();
 
   /// Checks if the variant/multiversion functions are compatible.
   bool areMultiversionVariantFunctionsCompatible(
@@ -10500,7 +10554,7 @@ public:
       DeclarationNameInfo &ReductionOrMapperId, int ExtraModifier,
       ArrayRef<OpenMPMapModifierKind> MapTypeModifiers,
       ArrayRef<SourceLocation> MapTypeModifiersLoc, bool IsMapTypeImplicit,
-      SourceLocation DepLinMapLastLoc);
+      SourceLocation ExtraModifierLoc);
   /// Called on well-formed 'inclusive' clause.
   OMPClause *ActOnOpenMPInclusiveClause(ArrayRef<Expr *> VarList,
                                         SourceLocation StartLoc,
@@ -10538,9 +10592,10 @@ public:
                                      SourceLocation EndLoc);
   /// Called on well-formed 'reduction' clause.
   OMPClause *ActOnOpenMPReductionClause(
-      ArrayRef<Expr *> VarList, SourceLocation StartLoc,
-      SourceLocation LParenLoc, SourceLocation ColonLoc, SourceLocation EndLoc,
-      CXXScopeSpec &ReductionIdScopeSpec,
+      ArrayRef<Expr *> VarList, OpenMPReductionClauseModifier Modifier,
+      SourceLocation StartLoc, SourceLocation LParenLoc,
+      SourceLocation ModifierLoc, SourceLocation ColonLoc,
+      SourceLocation EndLoc, CXXScopeSpec &ReductionIdScopeSpec,
       const DeclarationNameInfo &ReductionId,
       ArrayRef<Expr *> UnresolvedReductions = llvm::None);
   /// Called on well-formed 'task_reduction' clause.

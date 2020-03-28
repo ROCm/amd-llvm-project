@@ -707,14 +707,15 @@ static unsigned parseDebugTypes(const opt::InputArgList &args) {
   return debugTypes;
 }
 
-static std::string getMapFile(const opt::InputArgList &args) {
-  auto *arg = args.getLastArg(OPT_lldmap, OPT_lldmap_file);
+static std::string getMapFile(const opt::InputArgList &args,
+                              opt::OptSpecifier os, opt::OptSpecifier osFile) {
+  auto *arg = args.getLastArg(os, osFile);
   if (!arg)
     return "";
-  if (arg->getOption().getID() == OPT_lldmap_file)
+  if (arg->getOption().getID() == osFile.getID())
     return arg->getValue();
 
-  assert(arg->getOption().getID() == OPT_lldmap);
+  assert(arg->getOption().getID() == os.getID());
   StringRef outFile = config->outputFile;
   return (outFile.substr(0, outFile.rfind('.')) + ".map").str();
 }
@@ -1416,9 +1417,9 @@ void LinkerDriver::link(ArrayRef<const char *> argsArr) {
           error("/opt:lldlto: invalid optimization level: " + optLevel);
       } else if (s.startswith("lldltojobs=")) {
         StringRef jobs = s.substr(11);
-        if (jobs.getAsInteger(10, config->thinLTOJobs) ||
-            config->thinLTOJobs == 0)
+        if (!get_threadpool_strategy(jobs))
           error("/opt:lldltojobs: invalid job count: " + jobs);
+        config->thinLTOJobs = jobs.str();
       } else if (s.startswith("lldltopartitions=")) {
         StringRef n = s.substr(17);
         if (n.getAsInteger(10, config->ltoPartitions) ||
@@ -1564,7 +1565,14 @@ void LinkerDriver::link(ArrayRef<const char *> argsArr) {
   if (config->mingw || config->debugDwarf)
     config->warnLongSectionNames = false;
 
-  config->mapFile = getMapFile(args);
+  config->lldmapFile = getMapFile(args, OPT_lldmap, OPT_lldmap_file);
+  config->mapFile = getMapFile(args, OPT_map, OPT_map_file);
+
+  if (config->lldmapFile != "" && config->lldmapFile == config->mapFile) {
+    warn("/lldmap and /map have the same output file '" + config->mapFile +
+         "'.\n>>> ignoring /lldmap");
+    config->lldmapFile.clear();
+  }
 
   if (config->incremental && args.hasArg(OPT_profile)) {
     warn("ignoring '/incremental' due to '/profile' specification");

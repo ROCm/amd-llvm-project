@@ -285,7 +285,7 @@ static void createResumeEntryBlock(Function &F, coro::Shape &Shape) {
   auto *FramePtr = Shape.FramePtr;
   auto *FrameTy = Shape.FrameTy;
   auto *GepIndex = Builder.CreateStructGEP(
-      FrameTy, FramePtr, coro::Shape::SwitchFieldIndex::Index, "index.addr");
+      FrameTy, FramePtr, Shape.getSwitchIndexField(), "index.addr");
   auto *Index = Builder.CreateLoad(Shape.getIndexType(), GepIndex, "index");
   auto *Switch =
       Builder.CreateSwitch(Index, UnreachBB, Shape.CoroSuspends.size());
@@ -311,7 +311,7 @@ static void createResumeEntryBlock(Function &F, coro::Shape &Shape) {
       Builder.CreateStore(NullPtr, GepIndex);
     } else {
       auto *GepIndex = Builder.CreateStructGEP(
-          FrameTy, FramePtr, coro::Shape::SwitchFieldIndex::Index, "index.addr");
+          FrameTy, FramePtr, Shape.getSwitchIndexField(), "index.addr");
       Builder.CreateStore(IndexVal, GepIndex);
     }
     Save->replaceAllUsesWith(ConstantTokenNone::get(C));
@@ -567,8 +567,9 @@ void CoroCloner::replaceEntryBlock() {
   // branching to the original beginning of the coroutine.  Make this 
   // the entry block of the cloned function.
   auto *Entry = cast<BasicBlock>(VMap[Shape.AllocaSpillBlock]);
+  auto *OldEntry = &NewF->getEntryBlock();
   Entry->setName("entry" + Suffix);
-  Entry->moveBefore(&NewF->getEntryBlock());
+  Entry->moveBefore(OldEntry);
   Entry->getTerminator()->eraseFromParent();
 
   // Clear all predecessors of the new entry block.  There should be
@@ -581,8 +582,14 @@ void CoroCloner::replaceEntryBlock() {
   Builder.CreateUnreachable();
   BranchToEntry->eraseFromParent();
 
-  // TODO: move any allocas into Entry that weren't moved into the frame.
-  // (Currently we move all allocas into the frame.)
+  // Move any allocas into Entry that weren't moved into the frame.
+  for (auto IT = OldEntry->begin(), End = OldEntry->end(); IT != End;) {
+    Instruction &I = *IT++;
+    if (!isa<AllocaInst>(&I) || I.getNumUses() == 0)
+      continue;
+
+    I.moveBefore(*Entry, Entry->getFirstInsertionPt());
+  }
 
   // Branch from the entry to the appropriate place.
   Builder.SetInsertPoint(Entry);
@@ -638,6 +645,17 @@ Value *CoroCloner::deriveNewFramePointer() {
   llvm_unreachable("bad ABI");
 }
 
+static void addFramePointerAttrs(AttributeList &Attrs, LLVMContext &Context,
+                                 unsigned ParamIndex,
+                                 uint64_t Size, Align Alignment) {
+  AttrBuilder ParamAttrs;
+  ParamAttrs.addAttribute(Attribute::NonNull);
+  ParamAttrs.addAttribute(Attribute::NoAlias);
+  ParamAttrs.addAlignmentAttr(Alignment);
+  ParamAttrs.addDereferenceableAttr(Size);
+  Attrs = Attrs.addParamAttributes(Context, ParamIndex, ParamAttrs);
+}
+
 /// Clone the body of the original function into a resume function of
 /// some sort.
 void CoroCloner::create() {
@@ -686,6 +704,9 @@ void CoroCloner::create() {
     // original function.  This should include optimization settings and so on.
     NewAttrs = NewAttrs.addAttributes(Context, AttributeList::FunctionIndex,
                                       OrigAttrs.getFnAttributes());
+
+    addFramePointerAttrs(NewAttrs, Context, 0,
+                         Shape.FrameSize, Shape.FrameAlign);
     break;
 
   case coro::ABI::Retcon:
@@ -693,12 +714,12 @@ void CoroCloner::create() {
     // If we have a continuation prototype, just use its attributes,
     // full-stop.
     NewAttrs = Shape.RetconLowering.ResumePrototype->getAttributes();
+
+    addFramePointerAttrs(NewAttrs, Context, 0,
+                         Shape.getRetconCoroId()->getStorageSize(),
+                         Shape.getRetconCoroId()->getStorageAlignment());
     break;
   }
-
-  // Make the frame parameter nonnull and noalias.
-  NewAttrs = NewAttrs.addParamAttribute(Context, 0, Attribute::NonNull);
-  NewAttrs = NewAttrs.addParamAttribute(Context, 0, Attribute::NoAlias);
 
   switch (Shape.ABI) {
   // In these ABIs, the cloned functions always return 'void', and the
@@ -995,8 +1016,8 @@ static void handleNoSuspendCoroutine(coro::Shape &Shape) {
     coro::replaceCoroFree(SwitchId, /*Elide=*/AllocInst != nullptr);
     if (AllocInst) {
       IRBuilder<> Builder(AllocInst);
-      // FIXME: Need to handle overaligned members.
       auto *Frame = Builder.CreateAlloca(Shape.FrameTy);
+      Frame->setAlignment(Shape.FrameAlign);
       auto *VFrame = Builder.CreateBitCast(Frame, Builder.getInt8PtrTy());
       AllocInst->replaceAllUsesWith(Builder.getFalse());
       AllocInst->eraseFromParent();
@@ -1230,6 +1251,7 @@ static void splitRetconCoroutine(Function &F, coro::Shape &Shape,
 
     // Allocate.  We don't need to update the call graph node because we're
     // going to recompute it from scratch after splitting.
+    // FIXME: pass the required alignment
     RawFramePtr = Shape.emitAlloc(Builder, Builder.getInt64(Size), nullptr);
     RawFramePtr =
       Builder.CreateBitCast(RawFramePtr, Shape.CoroBegin->getType());

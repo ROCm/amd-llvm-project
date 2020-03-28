@@ -89,6 +89,7 @@ void DAGTypeLegalizer::ScalarizeVectorResult(SDNode *N, unsigned ResNo) {
   case ISD::FLOG2:
   case ISD::FNEARBYINT:
   case ISD::FNEG:
+  case ISD::FREEZE:
   case ISD::FP_EXTEND:
   case ISD::FP_TO_SINT:
   case ISD::FP_TO_UINT:
@@ -190,8 +191,8 @@ SDValue DAGTypeLegalizer::ScalarizeVecRes_TernaryOp(SDNode *N) {
   SDValue Op0 = GetScalarizedVector(N->getOperand(0));
   SDValue Op1 = GetScalarizedVector(N->getOperand(1));
   SDValue Op2 = GetScalarizedVector(N->getOperand(2));
-  return DAG.getNode(N->getOpcode(), SDLoc(N),
-                     Op0.getValueType(), Op0, Op1, Op2);
+  return DAG.getNode(N->getOpcode(), SDLoc(N), Op0.getValueType(), Op0, Op1,
+                     Op2, N->getFlags());
 }
 
 SDValue DAGTypeLegalizer::ScalarizeVecRes_FIX(SDNode *N) {
@@ -199,7 +200,7 @@ SDValue DAGTypeLegalizer::ScalarizeVecRes_FIX(SDNode *N) {
   SDValue Op1 = GetScalarizedVector(N->getOperand(1));
   SDValue Op2 = N->getOperand(2);
   return DAG.getNode(N->getOpcode(), SDLoc(N), Op0.getValueType(), Op0, Op1,
-                     Op2);
+                     Op2, N->getFlags());
 }
 
 SDValue DAGTypeLegalizer::ScalarizeVecRes_StrictFPOp(SDNode *N) {
@@ -224,7 +225,8 @@ SDValue DAGTypeLegalizer::ScalarizeVecRes_StrictFPOp(SDNode *N) {
     Opers[i] = Oper;
   }
 
-  SDValue Result = DAG.getNode(N->getOpcode(), dl, ValueVTs, Opers);
+  SDValue Result = DAG.getNode(N->getOpcode(), dl, DAG.getVTList(ValueVTs),
+                               Opers, N->getFlags());
 
   // Legalize the chain result - switch anything that used the old chain to
   // use the new one.
@@ -254,6 +256,7 @@ SDValue DAGTypeLegalizer::ScalarizeVecRes_OverflowOp(SDNode *N,
       ResVT.getVectorElementType(), OvVT.getVectorElementType());
   SDNode *ScalarNode = DAG.getNode(
       N->getOpcode(), DL, ScalarVTs, ScalarLHS, ScalarRHS).getNode();
+  ScalarNode->setFlags(N->getFlags());
 
   // Replace the other vector result not being explicitly scalarized here.
   unsigned OtherNo = 1 - ResNo;
@@ -363,7 +366,7 @@ SDValue DAGTypeLegalizer::ScalarizeVecRes_UnaryOp(SDNode *N) {
     Op = DAG.getNode(ISD::EXTRACT_VECTOR_ELT, DL, VT, Op,
                      DAG.getVectorIdxConstant(0, DL));
   }
-  return DAG.getNode(N->getOpcode(), SDLoc(N), DestVT, Op);
+  return DAG.getNode(N->getOpcode(), SDLoc(N), DestVT, Op, N->getFlags());
 }
 
 SDValue DAGTypeLegalizer::ScalarizeVecRes_InregOp(SDNode *N) {
@@ -879,6 +882,7 @@ void DAGTypeLegalizer::SplitVectorResult(SDNode *N, unsigned ResNo) {
   case ISD::FLOG2:
   case ISD::FNEARBYINT:
   case ISD::FNEG:
+  case ISD::FREEZE:
   case ISD::FP_EXTEND:
   case ISD::FP_ROUND:
   case ISD::FP_TO_SINT:
@@ -995,10 +999,10 @@ void DAGTypeLegalizer::SplitVecRes_TernaryOp(SDNode *N, SDValue &Lo,
   GetSplitVector(N->getOperand(2), Op2Lo, Op2Hi);
   SDLoc dl(N);
 
-  Lo = DAG.getNode(N->getOpcode(), dl, Op0Lo.getValueType(),
-                   Op0Lo, Op1Lo, Op2Lo);
-  Hi = DAG.getNode(N->getOpcode(), dl, Op0Hi.getValueType(),
-                   Op0Hi, Op1Hi, Op2Hi);
+  Lo = DAG.getNode(N->getOpcode(), dl, Op0Lo.getValueType(), Op0Lo, Op1Lo,
+                   Op2Lo, N->getFlags());
+  Hi = DAG.getNode(N->getOpcode(), dl, Op0Hi.getValueType(), Op0Hi, Op1Hi,
+                   Op2Hi, N->getFlags());
 }
 
 void DAGTypeLegalizer::SplitVecRes_FIX(SDNode *N, SDValue &Lo, SDValue &Hi) {
@@ -1010,8 +1014,10 @@ void DAGTypeLegalizer::SplitVecRes_FIX(SDNode *N, SDValue &Lo, SDValue &Hi) {
   SDValue Op2 = N->getOperand(2);
 
   unsigned Opcode = N->getOpcode();
-  Lo = DAG.getNode(Opcode, dl, LHSLo.getValueType(), LHSLo, RHSLo, Op2);
-  Hi = DAG.getNode(Opcode, dl, LHSHi.getValueType(), LHSHi, RHSHi, Op2);
+  Lo = DAG.getNode(Opcode, dl, LHSLo.getValueType(), LHSLo, RHSLo, Op2,
+                   N->getFlags());
+  Hi = DAG.getNode(Opcode, dl, LHSHi.getValueType(), LHSHi, RHSHi, Op2,
+                   N->getFlags());
 }
 
 void DAGTypeLegalizer::SplitVecRes_BITCAST(SDNode *N, SDValue &Lo,
@@ -1292,8 +1298,10 @@ void DAGTypeLegalizer::SplitVecRes_StrictFPOp(SDNode *N, SDValue &Lo,
 
   EVT LoValueVTs[] = {LoVT, MVT::Other};
   EVT HiValueVTs[] = {HiVT, MVT::Other};
-  Lo = DAG.getNode(N->getOpcode(), dl, LoValueVTs, OpsLo);
-  Hi = DAG.getNode(N->getOpcode(), dl, HiValueVTs, OpsHi);
+  Lo = DAG.getNode(N->getOpcode(), dl, DAG.getVTList(LoValueVTs), OpsLo,
+                   N->getFlags());
+  Hi = DAG.getNode(N->getOpcode(), dl, DAG.getVTList(HiValueVTs), OpsHi,
+                   N->getFlags());
 
   // Build a factor node to remember that this Op is independent of the
   // other one.
@@ -1383,6 +1391,8 @@ void DAGTypeLegalizer::SplitVecRes_OverflowOp(SDNode *N, unsigned ResNo,
   SDVTList HiVTs = DAG.getVTList(HiResVT, HiOvVT);
   SDNode *LoNode = DAG.getNode(Opcode, dl, LoVTs, LoLHS, LoRHS).getNode();
   SDNode *HiNode = DAG.getNode(Opcode, dl, HiVTs, HiLHS, HiRHS).getNode();
+  LoNode->setFlags(N->getFlags());
+  HiNode->setFlags(N->getFlags());
 
   Lo = SDValue(LoNode, ResNo);
   Hi = SDValue(HiNode, ResNo);
@@ -1708,11 +1718,13 @@ void DAGTypeLegalizer::SplitVecRes_UnaryOp(SDNode *N, SDValue &Lo,
     std::tie(Lo, Hi) = DAG.SplitVectorOperand(N, OpNo);
 
   if (N->getOpcode() == ISD::FP_ROUND) {
-    Lo = DAG.getNode(N->getOpcode(), dl, LoVT, Lo, N->getOperand(1));
-    Hi = DAG.getNode(N->getOpcode(), dl, HiVT, Hi, N->getOperand(1));
+    Lo = DAG.getNode(N->getOpcode(), dl, LoVT, Lo, N->getOperand(1),
+                     N->getFlags());
+    Hi = DAG.getNode(N->getOpcode(), dl, HiVT, Hi, N->getOperand(1),
+                     N->getFlags());
   } else {
-    Lo = DAG.getNode(N->getOpcode(), dl, LoVT, Lo);
-    Hi = DAG.getNode(N->getOpcode(), dl, HiVT, Hi);
+    Lo = DAG.getNode(N->getOpcode(), dl, LoVT, Lo, N->getFlags());
+    Hi = DAG.getNode(N->getOpcode(), dl, HiVT, Hi, N->getFlags());
   }
 }
 
@@ -2831,6 +2843,7 @@ void DAGTypeLegalizer::WidenVectorResult(SDNode *N, unsigned ResNo) {
   case ISD::CTTZ:
   case ISD::CTTZ_ZERO_UNDEF:
   case ISD::FNEG:
+  case ISD::FREEZE:
   case ISD::FCANONICALIZE:
     Res = WidenVecRes_Unary(N);
     break;

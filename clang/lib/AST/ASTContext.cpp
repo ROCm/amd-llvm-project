@@ -29,6 +29,7 @@
 #include "clang/AST/DeclOpenMP.h"
 #include "clang/AST/DeclTemplate.h"
 #include "clang/AST/DeclarationName.h"
+#include "clang/AST/DependenceFlags.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/ExprConcepts.h"
@@ -1005,6 +1006,9 @@ ASTContext::~ASTContext() {
 
   for (APValue *Value : APValueCleanups)
     Value->~APValue();
+
+  // Destroy the OMPTraitInfo objects that life here.
+  llvm::DeleteContainerPointers(OMPTraitInfoVector);
 }
 
 void ASTContext::setTraversalScope(const std::vector<Decl *> &TopLevelDecls) {
@@ -5122,8 +5126,12 @@ ASTContext::getAutoType(QualType DeducedType, AutoTypeKeyword Keyword,
   void *Mem = Allocate(sizeof(AutoType) +
                        sizeof(TemplateArgument) * TypeConstraintArgs.size(),
                        TypeAlignment);
-  auto *AT = new (Mem) AutoType(DeducedType, Keyword, IsDependent, IsPack,
-                                TypeConstraintConcept, TypeConstraintArgs);
+  auto *AT = new (Mem) AutoType(
+      DeducedType, Keyword,
+      (IsDependent ? TypeDependence::DependentInstantiation
+                   : TypeDependence::None) |
+          (IsPack ? TypeDependence::UnexpandedPack : TypeDependence::None),
+      TypeConstraintConcept, TypeConstraintArgs);
   Types.push_back(AT);
   if (InsertPos)
     AutoTypes.InsertNode(AT, InsertPos);
@@ -5183,11 +5191,11 @@ QualType ASTContext::getAtomicType(QualType T) const {
 /// getAutoDeductType - Get type pattern for deducing against 'auto'.
 QualType ASTContext::getAutoDeductType() const {
   if (AutoDeductTy.isNull())
-    AutoDeductTy = QualType(
-      new (*this, TypeAlignment) AutoType(QualType(), AutoTypeKeyword::Auto,
-                                          /*dependent*/false, /*pack*/false,
-                                          /*concept*/nullptr, /*args*/{}),
-      0);
+    AutoDeductTy = QualType(new (*this, TypeAlignment)
+                                AutoType(QualType(), AutoTypeKeyword::Auto,
+                                         TypeDependence::None,
+                                         /*concept*/ nullptr, /*args*/ {}),
+                            0);
   return AutoDeductTy;
 }
 
@@ -7787,6 +7795,57 @@ CreateSystemZBuiltinVaListDecl(const ASTContext *Context) {
   return Context->buildImplicitTypedef(VaListTagArrayType, "__builtin_va_list");
 }
 
+static TypedefDecl *CreateHexagonBuiltinVaListDecl(const ASTContext *Context) {
+  // typedef struct __va_list_tag {
+  RecordDecl *VaListTagDecl;
+  VaListTagDecl = Context->buildImplicitRecord("__va_list_tag");
+  VaListTagDecl->startDefinition();
+
+  const size_t NumFields = 3;
+  QualType FieldTypes[NumFields];
+  const char *FieldNames[NumFields];
+
+  //   void *CurrentSavedRegisterArea;
+  FieldTypes[0] = Context->getPointerType(Context->VoidTy);
+  FieldNames[0] = "__current_saved_reg_area_pointer";
+
+  //   void *SavedRegAreaEnd;
+  FieldTypes[1] = Context->getPointerType(Context->VoidTy);
+  FieldNames[1] = "__saved_reg_area_end_pointer";
+
+  //   void *OverflowArea;
+  FieldTypes[2] = Context->getPointerType(Context->VoidTy);
+  FieldNames[2] = "__overflow_area_pointer";
+
+  // Create fields
+  for (unsigned i = 0; i < NumFields; ++i) {
+    FieldDecl *Field = FieldDecl::Create(
+        const_cast<ASTContext &>(*Context), VaListTagDecl, SourceLocation(),
+        SourceLocation(), &Context->Idents.get(FieldNames[i]), FieldTypes[i],
+        /*TInfo=*/0,
+        /*BitWidth=*/0,
+        /*Mutable=*/false, ICIS_NoInit);
+    Field->setAccess(AS_public);
+    VaListTagDecl->addDecl(Field);
+  }
+  VaListTagDecl->completeDefinition();
+  Context->VaListTagDecl = VaListTagDecl;
+  QualType VaListTagType = Context->getRecordType(VaListTagDecl);
+
+  // } __va_list_tag;
+  TypedefDecl *VaListTagTypedefDecl =
+      Context->buildImplicitTypedef(VaListTagType, "__va_list_tag");
+
+  QualType VaListTagTypedefType = Context->getTypedefType(VaListTagTypedefDecl);
+
+  // typedef __va_list_tag __builtin_va_list[1];
+  llvm::APInt Size(Context->getTypeSize(Context->getSizeType()), 1);
+  QualType VaListTagArrayType = Context->getConstantArrayType(
+      VaListTagTypedefType, Size, nullptr, ArrayType::Normal, 0);
+
+  return Context->buildImplicitTypedef(VaListTagArrayType, "__builtin_va_list");
+}
+
 static TypedefDecl *CreateVaListDecl(const ASTContext *Context,
                                      TargetInfo::BuiltinVaListKind Kind) {
   switch (Kind) {
@@ -7806,6 +7865,8 @@ static TypedefDecl *CreateVaListDecl(const ASTContext *Context,
     return CreateAAPCSABIBuiltinVaListDecl(Context);
   case TargetInfo::SystemZBuiltinVaList:
     return CreateSystemZBuiltinVaListDecl(Context);
+  case TargetInfo::HexagonBuiltinVaList:
+    return CreateHexagonBuiltinVaListDecl(Context);
   }
 
   llvm_unreachable("Unhandled __builtin_va_list type kind");
@@ -10837,4 +10898,9 @@ void ASTContext::getFunctionFeatureMap(llvm::StringMap<bool> &FeatureMap,
     Target->initFeatureMap(FeatureMap, getDiagnostics(), TargetCPU,
                            Target->getTargetOpts().Features);
   }
+}
+
+OMPTraitInfo &ASTContext::getNewOMPTraitInfo() {
+  OMPTraitInfoVector.push_back(new OMPTraitInfo());
+  return *OMPTraitInfoVector.back();
 }

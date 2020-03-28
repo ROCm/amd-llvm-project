@@ -3373,6 +3373,70 @@ ExprResult Sema::BuildPredefinedExpr(SourceLocation Loc,
   return PredefinedExpr::Create(Context, Loc, ResTy, IK, SL);
 }
 
+static std::pair<QualType, StringLiteral *>
+GetUniqueStableNameInfo(ASTContext &Context, QualType OpType,
+                        SourceLocation OpLoc, PredefinedExpr::IdentKind K) {
+  std::pair<QualType, StringLiteral*> Result{{}, nullptr};
+
+  if (OpType->isDependentType()) {
+      Result.first = Context.DependentTy;
+      return Result;
+  }
+
+  std::string Str = PredefinedExpr::ComputeName(Context, K, OpType);
+  llvm::APInt Length(32, Str.length() + 1);
+  Result.first =
+      Context.adjustStringLiteralBaseType(Context.CharTy.withConst());
+  Result.first = Context.getConstantArrayType(
+      Result.first, Length, nullptr, ArrayType::Normal, /*IndexTypeQuals*/ 0);
+  Result.second = StringLiteral::Create(Context, Str, StringLiteral::Ascii,
+                                        /*Pascal*/ false, Result.first, OpLoc);
+  return Result;
+}
+
+ExprResult Sema::BuildUniqueStableName(SourceLocation OpLoc,
+                                       TypeSourceInfo *Operand) {
+  QualType ResultTy;
+  StringLiteral *SL;
+  std::tie(ResultTy, SL) = GetUniqueStableNameInfo(
+      Context, Operand->getType(), OpLoc, PredefinedExpr::UniqueStableNameType);
+
+  return PredefinedExpr::Create(Context, OpLoc, ResultTy,
+                                PredefinedExpr::UniqueStableNameType, SL,
+                                Operand);
+}
+
+ExprResult Sema::BuildUniqueStableName(SourceLocation OpLoc,
+                                       Expr *E) {
+  QualType ResultTy;
+  StringLiteral *SL;
+  std::tie(ResultTy, SL) = GetUniqueStableNameInfo(
+      Context, E->getType(), OpLoc, PredefinedExpr::UniqueStableNameExpr);
+
+  return PredefinedExpr::Create(Context, OpLoc, ResultTy,
+                                PredefinedExpr::UniqueStableNameExpr, SL, E);
+}
+
+ExprResult Sema::ActOnUniqueStableNameExpr(SourceLocation OpLoc,
+                                           SourceLocation L, SourceLocation R,
+                                           ParsedType Ty) {
+  TypeSourceInfo *TInfo = nullptr;
+  QualType T = GetTypeFromParser(Ty, &TInfo);
+
+  if (T.isNull())
+    return ExprError();
+  if (!TInfo)
+    TInfo = Context.getTrivialTypeSourceInfo(T, OpLoc);
+
+  return BuildUniqueStableName(OpLoc, TInfo);
+}
+
+ExprResult Sema::ActOnUniqueStableNameExpr(SourceLocation OpLoc,
+                                           SourceLocation L, SourceLocation R,
+                                           Expr *E) {
+  return BuildUniqueStableName(OpLoc, E);
+}
+
 ExprResult Sema::ActOnPredefinedExpr(SourceLocation Loc, tok::TokenKind Kind) {
   PredefinedExpr::IdentKind IK;
 
@@ -5730,6 +5794,10 @@ ExprResult Sema::ActOnCallExpr(Scope *Scope, Expr *Fn, SourceLocation LParenLoc,
     }
   }
 
+  if (LangOpts.OpenMP)
+    Call = ActOnOpenMPCall(*this, Call, Scope, LParenLoc, ArgExprs, RParenLoc,
+                           ExecConfig);
+
   return Call;
 }
 
@@ -7586,6 +7654,11 @@ QualType Sema::CheckConditionalOperands(ExprResult &Cond, ExprResult &LHS,
       /*IsIntFirstExpr=*/false))
     return LHSTy;
 
+  // Allow ?: operations in which both operands have the same
+  // built-in sizeless type.
+  if (LHSTy->isSizelessBuiltinType() && LHSTy == RHSTy)
+    return LHSTy;
+
   // Emit a better diagnostic if one of the expressions is a null pointer
   // constant and the other is not a pointer type. In this case, the user most
   // likely forgot to take the address of the other expression.
@@ -8029,6 +8102,24 @@ ExprResult Sema::ActOnConditionalOp(SourceLocation QuestionLoc,
       ColonLoc, result, VK, OK);
 }
 
+// Check if we have a conversion between incompatible cmse function pointer
+// types, that is, a conversion between a function pointer with the
+// cmse_nonsecure_call attribute and one without.
+static bool IsInvalidCmseNSCallConversion(Sema &S, QualType FromType,
+                                          QualType ToType) {
+  if (const auto *ToFn =
+          dyn_cast<FunctionType>(S.Context.getCanonicalType(ToType))) {
+    if (const auto *FromFn =
+            dyn_cast<FunctionType>(S.Context.getCanonicalType(FromType))) {
+      FunctionType::ExtInfo ToEInfo = ToFn->getExtInfo();
+      FunctionType::ExtInfo FromEInfo = FromFn->getExtInfo();
+
+      return ToEInfo.getCmseNSCall() != FromEInfo.getCmseNSCall();
+    }
+  }
+  return false;
+}
+
 // checkPointerTypesForAssignment - This is a very tricky routine (despite
 // being closely modeled after the C99 spec:-). The odd characteristic of this
 // routine is it effectively iqnores the qualifiers on the top level pointee.
@@ -8166,6 +8257,8 @@ checkPointerTypesForAssignment(Sema &S, QualType LHSType, QualType RHSType) {
   }
   if (!S.getLangOpts().CPlusPlus &&
       S.IsFunctionConversion(ltrans, rtrans, ltrans))
+    return Sema::IncompatibleFunctionPointer;
+  if (IsInvalidCmseNSCallConversion(S, ltrans, rtrans))
     return Sema::IncompatibleFunctionPointer;
   return ConvTy;
 }
@@ -9112,7 +9205,13 @@ static bool tryGCCVectorConvertAndSplat(Sema &S, ExprResult *Scalar,
       // Reject cases where the scalar type is not a constant and has a higher
       // Order than the vector element type.
       llvm::APFloat Result(0.0);
-      bool CstScalar = Scalar->get()->EvaluateAsFloat(Result, S.Context);
+
+      // Determine whether this is a constant scalar. In the event that the
+      // value is dependent (and thus cannot be evaluated by the constant
+      // evaluator), skip the evaluation. This will then diagnose once the
+      // expression is instantiated.
+      bool CstScalar = Scalar->get()->isValueDependent() ||
+                       Scalar->get()->EvaluateAsFloat(Result, S.Context);
       int Order = S.Context.getFloatingTypeOrder(VectorEltTy, ScalarTy);
       if (!CstScalar && Order < 0)
         return true;
@@ -16016,9 +16115,6 @@ void Sema::MarkFunctionReferenced(SourceLocation Loc, FunctionDecl *Func,
 
     Func->markUsed(Context);
   }
-
-  if (LangOpts.OpenMP)
-    markOpenMPDeclareVariantFuncsReferenced(Loc, Func, MightBeOdrUse);
 }
 
 /// Directly mark a variable odr-used. Given a choice, prefer to use
@@ -18413,4 +18509,18 @@ ExprResult Sema::ActOnObjCAvailabilityCheckExpr(
 bool Sema::IsDependentFunctionNameExpr(Expr *E) {
   assert(E->isTypeDependent());
   return isa<UnresolvedLookupExpr>(E);
+}
+
+ExprResult Sema::CreateRecoveryExpr(SourceLocation Begin, SourceLocation End,
+                                    ArrayRef<Expr *> SubExprs) {
+  // FIXME: enable it for C++, RecoveryExpr is type-dependent to suppress
+  // bogus diagnostics and this trick does not work in C.
+  // FIXME: use containsErrors() to suppress unwanted diags in C.
+  if (!Context.getLangOpts().RecoveryAST)
+    return ExprError();
+
+  if (isSFINAEContext())
+    return ExprError();
+
+  return RecoveryExpr::Create(Context, Begin, End, SubExprs);
 }

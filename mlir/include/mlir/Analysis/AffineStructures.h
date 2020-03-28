@@ -210,6 +210,12 @@ public:
                                      ValueRange operands, bool eq,
                                      bool lower = true);
 
+  /// Returns the constraint system as an integer set. Returns a null integer
+  /// set if the system has no constraints, or if an integer set couldn't be
+  /// constructed as a result of a local variable's explicit representation not
+  /// being known and such a local variable appearing in any of the constraints.
+  IntegerSet getAsIntegerSet(MLIRContext *context) const;
+
   /// Computes the lower and upper bounds of the first 'num' dimensional
   /// identifiers (starting at 'offset') as an affine map of the remaining
   /// identifiers (dimensional and symbolic). This method is able to detect
@@ -443,16 +449,17 @@ public:
   /// identifier. Returns None if it's not a constant. This method employs
   /// trivial (low complexity / cost) checks and detection. Symbolic identifiers
   /// are treated specially, i.e., it looks for constant differences between
-  /// affine expressions involving only the symbolic identifiers. See comments
-  /// at function definition for examples. 'lb' and 'lbDivisor', if provided,
-  /// are used to express the lower bound associated with the constant
-  /// difference: 'lb' has the coefficients and lbDivisor, the divisor. For eg.,
-  /// if the lower bound is [(s0 + s2 - 1) floordiv 32] for a system with three
-  /// symbolic identifiers, *lb = [1, 0, 1], lbDivisor = 32.
+  /// affine expressions involving only the symbolic identifiers. `lb` and
+  /// `ub` (along with the `boundFloorDivisor`) are set to represent the lower
+  /// and upper bound associated with the constant difference: `lb`, `ub` have
+  /// the coefficients, and boundFloorDivisor, their divisor.
+  /// Ex: if the lower bound is [(s0 + s2 - 1) floordiv 32] for a system with
+  /// three symbolic identifiers, *lb = [1, 0, 1], boundDivisor = 32. See
+  /// comments at function definition for examples.
   Optional<int64_t>
   getConstantBoundOnDimSize(unsigned pos,
                             SmallVectorImpl<int64_t> *lb = nullptr,
-                            int64_t *lbFloorDivisor = nullptr,
+                            int64_t *boundFloorDivisor = nullptr,
                             SmallVectorImpl<int64_t> *ub = nullptr) const;
 
   /// Returns the constant lower bound for the pos^th identifier if there is
@@ -483,7 +490,8 @@ public:
   /// that can be detected as redundant as a result of differing only in their
   /// constant term part. A constraint of the form <non-negative constant> >= 0
   /// is considered trivially true. This method is a linear time method on the
-  /// constraints, does a single scan, and updates in place.
+  /// constraints, does a single scan, and updates in place. It also normalizes
+  /// constraints by their GCD and performs GCD tightening on inequalities.
   void removeTrivialRedundancy();
 
   /// A more expensive check to detect redundant inequalities thatn

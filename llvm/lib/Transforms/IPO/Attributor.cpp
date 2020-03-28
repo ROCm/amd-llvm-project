@@ -558,7 +558,7 @@ ChangeStatus AbstractAttribute::update(Attributor &A) {
 ChangeStatus
 IRAttributeManifest::manifestAttrs(Attributor &A, const IRPosition &IRP,
                                    const ArrayRef<Attribute> &DeducedAttrs) {
-  Function *ScopeFn = IRP.getAssociatedFunction();
+  Function *ScopeFn = IRP.getAnchorScope();
   IRPosition::Kind PK = IRP.getPositionKind();
 
   // In the following some generic code that will manifest attributes in
@@ -627,8 +627,7 @@ SubsumingPositionIterator::SubsumingPositionIterator(const IRPosition &IRP) {
     return;
   case IRPosition::IRP_ARGUMENT:
   case IRPosition::IRP_RETURNED:
-    IRPositions.emplace_back(
-        IRPosition::function(*IRP.getAssociatedFunction()));
+    IRPositions.emplace_back(IRPosition::function(*IRP.getAnchorScope()));
     return;
   case IRPosition::IRP_CALL_SITE:
     assert(ICS && "Expected call site!");
@@ -678,7 +677,7 @@ SubsumingPositionIterator::SubsumingPositionIterator(const IRPosition &IRP) {
 }
 
 bool IRPosition::hasAttr(ArrayRef<Attribute::AttrKind> AKs,
-                         bool IgnoreSubsumingPositions) const {
+                         bool IgnoreSubsumingPositions, Attributor *A) const {
   SmallVector<Attribute, 4> Attrs;
   for (const IRPosition &EquivIRP : SubsumingPositionIterator(*this)) {
     for (Attribute::AttrKind AK : AKs)
@@ -690,12 +689,16 @@ bool IRPosition::hasAttr(ArrayRef<Attribute::AttrKind> AKs,
     if (IgnoreSubsumingPositions)
       break;
   }
+  if (A)
+    for (Attribute::AttrKind AK : AKs)
+      if (getAttrsFromAssumes(AK, Attrs, *A))
+        return true;
   return false;
 }
 
 void IRPosition::getAttrs(ArrayRef<Attribute::AttrKind> AKs,
                           SmallVectorImpl<Attribute> &Attrs,
-                          bool IgnoreSubsumingPositions) const {
+                          bool IgnoreSubsumingPositions, Attributor *A) const {
   for (const IRPosition &EquivIRP : SubsumingPositionIterator(*this)) {
     for (Attribute::AttrKind AK : AKs)
       EquivIRP.getAttrsFromIRAttr(AK, Attrs);
@@ -705,6 +708,9 @@ void IRPosition::getAttrs(ArrayRef<Attribute::AttrKind> AKs,
     if (IgnoreSubsumingPositions)
       break;
   }
+  if (A)
+    for (Attribute::AttrKind AK : AKs)
+     getAttrsFromAssumes(AK, Attrs, *A);
 }
 
 bool IRPosition::getAttrsFromIRAttr(Attribute::AttrKind AK,
@@ -722,6 +728,31 @@ bool IRPosition::getAttrsFromIRAttr(Attribute::AttrKind AK,
   if (HasAttr)
     Attrs.push_back(AttrList.getAttribute(getAttrIdx(), AK));
   return HasAttr;
+}
+
+bool IRPosition::getAttrsFromAssumes(Attribute::AttrKind AK,
+                                     SmallVectorImpl<Attribute> &Attrs,
+                                     Attributor &A) const {
+  assert(getPositionKind() != IRP_INVALID && "Did expect a valid position!");
+  Value &AssociatedValue = getAssociatedValue();
+
+  const Assume2KnowledgeMap &A2K =
+      A.getInfoCache().getKnowledgeMap().lookup({&AssociatedValue, AK});
+
+  // Check if we found any potential assume use, if not we don't need to create
+  // explorer iterators.
+  if (A2K.empty())
+    return false;
+
+  LLVMContext &Ctx = AssociatedValue.getContext();
+  unsigned AttrsSize = Attrs.size();
+  MustBeExecutedContextExplorer &Explorer =
+      A.getInfoCache().getMustBeExecutedContextExplorer();
+  auto EIt = Explorer.begin(getCtxI()), EEnd = Explorer.end(getCtxI());
+  for (auto &It : A2K)
+    if (Explorer.findInContextOf(It.first, EIt, EEnd))
+      Attrs.push_back(Attribute::get(Ctx, AK, It.second.Max));
+  return AttrsSize != Attrs.size();
 }
 
 void IRPosition::verify() {
@@ -2058,7 +2089,8 @@ struct AANonNullImpl : AANonNull {
   /// See AbstractAttribute::initialize(...).
   void initialize(Attributor &A) override {
     if (!NullIsDefined &&
-        hasAttr({Attribute::NonNull, Attribute::Dereferenceable}))
+        hasAttr({Attribute::NonNull, Attribute::Dereferenceable},
+                /* IgnoreSubsumingPositions */ false, &A))
       indicateOptimisticFixpoint();
     else if (isa<ConstantPointerNull>(getAssociatedValue()))
       indicatePessimisticFixpoint();
@@ -2528,7 +2560,7 @@ struct AAWillReturnImpl : public AAWillReturn {
   void initialize(Attributor &A) override {
     AAWillReturn::initialize(A);
 
-    Function *F = getAssociatedFunction();
+    Function *F = getAnchorScope();
     if (!F || !A.isFunctionIPOAmendable(*F) || mayContainUnboundedCycle(*F, A))
       indicatePessimisticFixpoint();
   }
@@ -3113,7 +3145,7 @@ struct AAIsDeadArgument : public AAIsDeadFloating {
 
   /// See AbstractAttribute::initialize(...).
   void initialize(Attributor &A) override {
-    if (!A.isFunctionIPOAmendable(*getAssociatedFunction()))
+    if (!A.isFunctionIPOAmendable(*getAnchorScope()))
       indicatePessimisticFixpoint();
   }
 
@@ -3273,7 +3305,7 @@ struct AAIsDeadFunction : public AAIsDead {
 
   /// See AbstractAttribute::initialize(...).
   void initialize(Attributor &A) override {
-    const Function *F = getAssociatedFunction();
+    const Function *F = getAnchorScope();
     if (F && !F->isDeclaration()) {
       ToBeExploredFrom.insert(&F->getEntryBlock().front());
       assumeLive(A, F->getEntryBlock());
@@ -3283,7 +3315,7 @@ struct AAIsDeadFunction : public AAIsDead {
   /// See AbstractAttribute::getAsStr().
   const std::string getAsStr() const override {
     return "Live[#BB " + std::to_string(AssumedLiveBlocks.size()) + "/" +
-           std::to_string(getAssociatedFunction()->size()) + "][#TBEP " +
+           std::to_string(getAnchorScope()->size()) + "][#TBEP " +
            std::to_string(ToBeExploredFrom.size()) + "][#KDE " +
            std::to_string(KnownDeadEnds.size()) + "]";
   }
@@ -3294,7 +3326,7 @@ struct AAIsDeadFunction : public AAIsDead {
            "Attempted to manifest an invalid state!");
 
     ChangeStatus HasChanged = ChangeStatus::UNCHANGED;
-    Function &F = *getAssociatedFunction();
+    Function &F = *getAnchorScope();
 
     if (AssumedLiveBlocks.empty()) {
       A.deleteAfterManifest(F);
@@ -3346,7 +3378,7 @@ struct AAIsDeadFunction : public AAIsDead {
 
   /// See AAIsDead::isAssumedDead(BasicBlock *).
   bool isAssumedDead(const BasicBlock *BB) const override {
-    assert(BB->getParent() == getAssociatedFunction() &&
+    assert(BB->getParent() == getAnchorScope() &&
            "BB must be in the same anchor scope function.");
 
     if (!getAssumed())
@@ -3361,7 +3393,7 @@ struct AAIsDeadFunction : public AAIsDead {
 
   /// See AAIsDead::isAssumed(Instruction *I).
   bool isAssumedDead(const Instruction *I) const override {
-    assert(I->getParent()->getParent() == getAssociatedFunction() &&
+    assert(I->getParent()->getParent() == getAnchorScope() &&
            "Instruction must be in the same anchor scope function.");
 
     if (!getAssumed())
@@ -3515,7 +3547,7 @@ ChangeStatus AAIsDeadFunction::updateImpl(Attributor &A) {
   ChangeStatus Change = ChangeStatus::UNCHANGED;
 
   LLVM_DEBUG(dbgs() << "[AAIsDead] Live [" << AssumedLiveBlocks.size() << "/"
-                    << getAssociatedFunction()->size() << "] BBs and "
+                    << getAnchorScope()->size() << "] BBs and "
                     << ToBeExploredFrom.size() << " exploration points and "
                     << KnownDeadEnds.size() << " known dead ends\n");
 
@@ -3595,7 +3627,7 @@ ChangeStatus AAIsDeadFunction::updateImpl(Attributor &A) {
   // discovered any non-trivial dead end and (2) not ruled unreachable code
   // dead.
   if (ToBeExploredFrom.empty() &&
-      getAssociatedFunction()->size() == AssumedLiveBlocks.size() &&
+      getAnchorScope()->size() == AssumedLiveBlocks.size() &&
       llvm::all_of(KnownDeadEnds, [](const Instruction *DeadEndI) {
         return DeadEndI->isTerminator() && DeadEndI->getNumSuccessors() == 0;
       }))
@@ -3644,7 +3676,7 @@ struct AADereferenceableImpl : AADereferenceable {
   void initialize(Attributor &A) override {
     SmallVector<Attribute, 4> Attrs;
     getAttrs({Attribute::Dereferenceable, Attribute::DereferenceableOrNull},
-             Attrs);
+             Attrs, /* IgnoreSubsumingPositions */ false, &A);
     for (const Attribute &Attr : Attrs)
       takeKnownDerefBytesMaximum(Attr.getValueAsInt());
 
@@ -3935,7 +3967,7 @@ struct AAAlignImpl : AAAlign {
       takeKnownMaximum(Attr.getValueAsInt());
 
     if (getIRPosition().isFnInterfaceKind() &&
-        (!getAssociatedFunction() ||
+        (!getAnchorScope() ||
          !A.isFunctionIPOAmendable(*getAssociatedFunction())))
       indicatePessimisticFixpoint();
   }
@@ -4395,8 +4427,9 @@ struct AACaptureUseTracker final : public CaptureTracker {
 
   /// See CaptureTracker::shouldExplore(...).
   bool shouldExplore(const Use *U) override {
-    // Check liveness.
-    return !A.isAssumedDead(*U, &NoCaptureAA, &IsDeadAA);
+    // Check liveness and ignore droppable users.
+    return !U->getUser()->isDroppable() &&
+           !A.isAssumedDead(*U, &NoCaptureAA, &IsDeadAA);
   }
 
   /// Update the state according to \p CapturedInMem, \p CapturedInInt, and
@@ -4736,7 +4769,7 @@ struct AAValueSimplifyArgument final : AAValueSimplifyImpl {
 
   void initialize(Attributor &A) override {
     AAValueSimplifyImpl::initialize(A);
-    if (!getAssociatedFunction() || getAssociatedFunction()->isDeclaration())
+    if (!getAnchorScope() || getAnchorScope()->isDeclaration())
       indicatePessimisticFixpoint();
     if (hasAttr({Attribute::InAlloca, Attribute::StructRet, Attribute::Nest},
                 /* IgnoreSubsumingPositions */ true))
@@ -4980,7 +5013,7 @@ struct AAHeapToStackImpl : public AAHeapToStack {
            "Attempted to manifest an invalid state!");
 
     ChangeStatus HasChanged = ChangeStatus::UNCHANGED;
-    Function *F = getAssociatedFunction();
+    Function *F = getAnchorScope();
     const auto *TLI = A.getInfoCache().getTargetLibraryInfoForFunction(*F);
 
     for (Instruction *MallocCall : MallocCalls) {
@@ -5057,7 +5090,7 @@ struct AAHeapToStackImpl : public AAHeapToStack {
 };
 
 ChangeStatus AAHeapToStackImpl::updateImpl(Attributor &A) {
-  const Function *F = getAssociatedFunction();
+  const Function *F = getAnchorScope();
   const auto *TLI = A.getInfoCache().getTargetLibraryInfoForFunction(*F);
 
   MustBeExecutedContextExplorer &Explorer =
@@ -6156,6 +6189,10 @@ ChangeStatus AAMemoryBehaviorFloating::updateImpl(Attributor &A) {
                       << " [Dead: " << (A.isAssumedDead(*U, this, &LivenessAA))
                       << "]\n");
     if (A.isAssumedDead(*U, this, &LivenessAA))
+      continue;
+
+    // Droppable users, e.g., llvm::assume does not actually perform any action.
+    if (UserI->isDroppable())
       continue;
 
     // Check if the users of UserI should also be visited.
@@ -7415,6 +7452,10 @@ bool Attributor::checkForAllUses(function_ref<bool(const Use &, bool &)> Pred,
       LLVM_DEBUG(dbgs() << "[Attributor] Dead use, skip!\n");
       continue;
     }
+    if (U->getUser()->isDroppable()) {
+      LLVM_DEBUG(dbgs() << "[Attributor] Droppable user, skip!\n");
+      continue;
+    }
 
     bool Follow = false;
     if (!Pred(*U, Follow))
@@ -7655,7 +7696,7 @@ ChangeStatus Attributor::run() {
 
   unsigned IterationCounter = 1;
 
-  SmallVector<AbstractAttribute *, 64> ChangedAAs;
+  SmallVector<AbstractAttribute *, 32> ChangedAAs;
   SetVector<AbstractAttribute *> Worklist, InvalidAAs;
   Worklist.insert(AllAbstractAttributes.begin(), AllAbstractAttributes.end());
 
@@ -8306,14 +8347,21 @@ void Attributor::initializeInformationCache(Function &F) {
     switch (I.getOpcode()) {
     default:
       assert((!ImmutableCallSite(&I)) && (!isa<CallBase>(&I)) &&
-             "New call site/base instruction type needs to be known int the "
+             "New call site/base instruction type needs to be known in the "
              "Attributor.");
       break;
+    case Instruction::Call:
+      // Calls are interesting but for `llvm.assume` calls we also fill the
+      // KnowledgeMap as we find them.
+      if (IntrinsicInst *Assume = dyn_cast<IntrinsicInst>(&I)) {
+        if (Assume->getIntrinsicID() == Intrinsic::assume)
+          fillMapFromAssume(*Assume, InfoCache.KnowledgeMap);
+      }
+      LLVM_FALLTHROUGH;
     case Instruction::Load:
       // The alignment of a pointer is interesting for loads.
     case Instruction::Store:
       // The alignment of a pointer is interesting for stores.
-    case Instruction::Call:
     case Instruction::CallBr:
     case Instruction::Invoke:
     case Instruction::CleanupRet:
@@ -8635,6 +8683,10 @@ static bool runAttributorOnFunctions(InformationCache &InfoCache,
   // while we identify default attribute opportunities.
   Attributor A(Functions, InfoCache, CGUpdater, DepRecInterval);
 
+  // Note: _Don't_ combine/fuse this loop with the one below because
+  // when A.identifyDefaultAbstractAttributes() is called for one
+  // function, it assumes that the information cach has been
+  // initialized for _all_ functions.
   for (Function *F : Functions)
     A.initializeInformationCache(*F);
 

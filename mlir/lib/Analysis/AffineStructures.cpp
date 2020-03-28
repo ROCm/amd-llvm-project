@@ -726,15 +726,14 @@ LogicalResult FlatAffineConstraints::addAffineForOpDomain(AffineForOp forOp) {
 // equality (isEq=true) or inequality (isEq=false) constraints.
 // Returns true and sets row found in search in 'rowIdx'.
 // Returns false otherwise.
-static bool
-findConstraintWithNonZeroAt(const FlatAffineConstraints &constraints,
-                            unsigned colIdx, bool isEq, unsigned *rowIdx) {
+static bool findConstraintWithNonZeroAt(const FlatAffineConstraints &cst,
+                                        unsigned colIdx, bool isEq,
+                                        unsigned *rowIdx) {
+  assert(colIdx < cst.getNumCols() && "position out of bounds");
   auto at = [&](unsigned rowIdx) -> int64_t {
-    return isEq ? constraints.atEq(rowIdx, colIdx)
-                : constraints.atIneq(rowIdx, colIdx);
+    return isEq ? cst.atEq(rowIdx, colIdx) : cst.atIneq(rowIdx, colIdx);
   };
-  unsigned e =
-      isEq ? constraints.getNumEqualities() : constraints.getNumInequalities();
+  unsigned e = isEq ? cst.getNumEqualities() : cst.getNumInequalities();
   for (*rowIdx = 0; *rowIdx < e; ++(*rowIdx)) {
     if (at(*rowIdx) != 0) {
       return true;
@@ -1201,17 +1200,30 @@ static bool detectAsMod(const FlatAffineConstraints &cst, unsigned pos,
   return false;
 }
 
-/// Gather all lower and upper bounds of the identifier at `pos`.
+/// Gather all lower and upper bounds of the identifier at `pos`. The bounds are
+/// to be independent of [offset, offset + num) identifiers.
 static void getLowerAndUpperBoundIndices(const FlatAffineConstraints &cst,
                                          unsigned pos,
                                          SmallVectorImpl<unsigned> *lbIndices,
-                                         SmallVectorImpl<unsigned> *ubIndices) {
+                                         SmallVectorImpl<unsigned> *ubIndices,
+                                         unsigned offset = 0,
+                                         unsigned num = 0) {
   assert(pos < cst.getNumIds() && "invalid position");
 
   // Gather all lower bounds and upper bounds of the variable. Since the
   // canonical form c_1*x_1 + c_2*x_2 + ... + c_0 >= 0, a constraint is a lower
   // bound for x_i if c_i >= 1, and an upper bound if c_i <= -1.
   for (unsigned r = 0, e = cst.getNumInequalities(); r < e; r++) {
+    // The bounds are to be independent of [offset, offset + num) columns.
+    unsigned c, f;
+    for (c = offset, f = offset + num; c < f; ++c) {
+      if (c == pos)
+        continue;
+      if (cst.atIneq(r, c) != 0)
+        break;
+    }
+    if (c < f)
+      continue;
     if (cst.atIneq(r, pos) >= 1) {
       // Lower bound.
       lbIndices->push_back(r);
@@ -1866,7 +1878,8 @@ void FlatAffineConstraints::removeEquality(unsigned pos) {
 /// Finds an equality that equates the specified identifier to a constant.
 /// Returns the position of the equality row. If 'symbolic' is set to true,
 /// symbols are also treated like a constant, i.e., an affine function of the
-/// symbols is also treated like a constant.
+/// symbols is also treated like a constant. Returns -1 if such an equality
+/// could not be found.
 static int findEqualityToConstant(const FlatAffineConstraints &cst,
                                   unsigned pos, bool symbolic = false) {
   assert(pos < cst.getNumIds() && "invalid position");
@@ -1937,19 +1950,15 @@ void FlatAffineConstraints::constantFoldIdRange(unsigned pos, unsigned num) {
 //       s0 - 7 <= 8*j <= s0 returns 1 with lb = s0, lbDivisor = 8 (since lb =
 //       ceil(s0 - 7 / 8) = floor(s0 / 8)).
 Optional<int64_t> FlatAffineConstraints::getConstantBoundOnDimSize(
-    unsigned pos, SmallVectorImpl<int64_t> *lb, int64_t *lbFloorDivisor,
+    unsigned pos, SmallVectorImpl<int64_t> *lb, int64_t *boundFloorDivisor,
     SmallVectorImpl<int64_t> *ub) const {
   assert(pos < getNumDimIds() && "Invalid identifier position");
   assert(getNumLocalIds() == 0);
 
-  // TODO(bondhugula): eliminate all remaining dimensional identifiers (other
-  // than the one at 'pos' to make this more powerful. Not needed for
-  // hyper-rectangular spaces.
-
   // Find an equality for 'pos'^th identifier that equates it to some function
   // of the symbolic identifiers (+ constant).
-  int eqRow = findEqualityToConstant(*this, pos, /*symbolic=*/true);
-  if (eqRow != -1) {
+  int eqPos = findEqualityToConstant(*this, pos, /*symbolic=*/true);
+  if (eqPos != -1) {
     // This identifier can only take a single value.
     if (lb) {
       // Set lb to that symbolic value.
@@ -1957,18 +1966,18 @@ Optional<int64_t> FlatAffineConstraints::getConstantBoundOnDimSize(
       if (ub)
         ub->resize(getNumSymbolIds() + 1);
       for (unsigned c = 0, f = getNumSymbolIds() + 1; c < f; c++) {
-        int64_t v = atEq(eqRow, pos);
+        int64_t v = atEq(eqPos, pos);
         // atEq(eqRow, pos) is either -1 or 1.
         assert(v * v == 1);
-        (*lb)[c] = v < 0 ? atEq(eqRow, getNumDimIds() + c) / -v
-                         : -atEq(eqRow, getNumDimIds() + c) / v;
+        (*lb)[c] = v < 0 ? atEq(eqPos, getNumDimIds() + c) / -v
+                         : -atEq(eqPos, getNumDimIds() + c) / v;
         // Since this is an equality, ub = lb.
         if (ub)
           (*ub)[c] = (*lb)[c];
       }
-      assert(lbFloorDivisor &&
+      assert(boundFloorDivisor &&
              "both lb and divisor or none should be provided");
-      *lbFloorDivisor = 1;
+      *boundFloorDivisor = 1;
     }
     return 1;
   }
@@ -1990,25 +1999,9 @@ Optional<int64_t> FlatAffineConstraints::getConstantBoundOnDimSize(
   // the bounds can only involve symbolic (and local) identifiers. Since the
   // canonical form c_1*x_1 + c_2*x_2 + ... + c_0 >= 0, a constraint is a lower
   // bound for x_i if c_i >= 1, and an upper bound if c_i <= -1.
-  for (unsigned r = 0, e = getNumInequalities(); r < e; r++) {
-    unsigned c, f;
-    for (c = 0, f = getNumDimIds(); c < f; c++) {
-      if (c != pos && atIneq(r, c) != 0)
-        break;
-    }
-    if (c < getNumDimIds())
-      // Not a pure symbolic bound.
-      continue;
-    if (atIneq(r, pos) >= 1)
-      // Lower bound.
-      lbIndices.push_back(r);
-    else if (atIneq(r, pos) <= -1)
-      // Upper bound.
-      ubIndices.push_back(r);
-  }
-
-  // TODO(bondhugula): eliminate other dimensional identifiers to make this more
-  // powerful. Not needed for hyper-rectangular iteration spaces.
+  getLowerAndUpperBoundIndices(*this, pos, &lbIndices, &ubIndices,
+                               /*offset=*/0,
+                               /*num=*/getNumDimIds());
 
   Optional<int64_t> minDiff = None;
   unsigned minLbPosition, minUbPosition;
@@ -2046,8 +2039,8 @@ Optional<int64_t> FlatAffineConstraints::getConstantBoundOnDimSize(
     // of the variable at 'pos'. We express the ceildiv equivalently as a floor
     // for uniformity. For eg., if the lower bound constraint was: 32*d0 - N +
     // 31 >= 0, the lower bound for d0 is ceil(N - 31, 32), i.e., floor(N, 32).
-    *lbFloorDivisor = atIneq(minLbPosition, pos);
-    assert(*lbFloorDivisor == -atIneq(minUbPosition, pos));
+    *boundFloorDivisor = atIneq(minLbPosition, pos);
+    assert(*boundFloorDivisor == -atIneq(minUbPosition, pos));
     for (unsigned c = 0, e = getNumSymbolIds() + 1; c < e; c++) {
       (*lb)[c] = -atIneq(minLbPosition, getNumDimIds() + c);
     }
@@ -2197,13 +2190,16 @@ void FlatAffineConstraints::dump() const { print(llvm::errs()); }
 //  Uses a DenseSet to hash and detect duplicates followed by a linear scan to
 //  remove duplicates in place.
 void FlatAffineConstraints::removeTrivialRedundancy() {
-  SmallDenseSet<ArrayRef<int64_t>, 8> rowSet;
+  GCDTightenInequalities();
+  normalizeConstraintsByGCD();
 
   // A map used to detect redundancy stemming from constraints that only differ
   // in their constant term. The value stored is <row position, const term>
   // for a given row.
   SmallDenseMap<ArrayRef<int64_t>, std::pair<unsigned, int64_t>>
       rowsWithoutConstTerm;
+  // To unique rows.
+  SmallDenseSet<ArrayRef<int64_t>, 8> rowSet;
 
   // Check if constraint is of the form <non-negative-constant> >= 0.
   auto isTriviallyValid = [&](unsigned r) -> bool {
@@ -2695,4 +2691,90 @@ FlatAffineConstraints::unionBoundingBox(const FlatAffineConstraints &otherCst) {
   // shouldn't be discarding any other constraints on the symbols.
 
   return success();
+}
+
+/// Compute an explicit representation for local vars. For all systems coming
+/// from MLIR integer sets, maps, or expressions where local vars were
+/// introduced to model floordivs and mods, this always succeeds.
+static LogicalResult computeLocalVars(const FlatAffineConstraints &cst,
+                                      SmallVectorImpl<AffineExpr> &memo,
+                                      MLIRContext *context) {
+  unsigned numDims = cst.getNumDimIds();
+  unsigned numSyms = cst.getNumSymbolIds();
+
+  // Initialize dimensional and symbolic identifiers.
+  for (unsigned i = 0; i < numDims; i++)
+    memo[i] = getAffineDimExpr(i, context);
+  for (unsigned i = numDims, e = numDims + numSyms; i < e; i++)
+    memo[i] = getAffineSymbolExpr(i - numDims, context);
+
+  bool changed;
+  do {
+    // Each time `changed` is true at the end of this iteration, one or more
+    // local vars would have been detected as floordivs and set in memo; so the
+    // number of null entries in memo[...] strictly reduces; so this converges.
+    changed = false;
+    for (unsigned i = 0, e = cst.getNumLocalIds(); i < e; ++i)
+      if (!memo[numDims + numSyms + i] &&
+          detectAsFloorDiv(cst, /*pos=*/numDims + numSyms + i, context, memo))
+        changed = true;
+  } while (changed);
+
+  ArrayRef<AffineExpr> localExprs =
+      ArrayRef<AffineExpr>(memo).take_back(cst.getNumLocalIds());
+  return success(
+      llvm::all_of(localExprs, [](AffineExpr expr) { return expr; }));
+}
+
+/// Returns true if the pos^th column is all zero for both inequalities and
+/// equalities..
+static bool isColZero(const FlatAffineConstraints &cst, unsigned pos) {
+  unsigned rowPos;
+  return !findConstraintWithNonZeroAt(cst, pos, /*isEq=*/false, &rowPos) &&
+         !findConstraintWithNonZeroAt(cst, pos, /*isEq=*/true, &rowPos);
+}
+
+IntegerSet FlatAffineConstraints::getAsIntegerSet(MLIRContext *context) const {
+  if (getNumConstraints() == 0)
+    // Return universal set (always true): 0 == 0.
+    return IntegerSet::get(getNumDimIds(), getNumSymbolIds(),
+                           getAffineConstantExpr(/*constant=*/0, context),
+                           true);
+
+  // Construct local references.
+  SmallVector<AffineExpr, 8> memo(getNumIds(), AffineExpr());
+
+  if (failed(computeLocalVars(*this, memo, context))) {
+    // Check if the local variables without an explicit representation have
+    // zero coefficients everywhere.
+    for (unsigned i = getNumDimAndSymbolIds(), e = getNumIds(); i < e; ++i) {
+      if (!memo[i] && !isColZero(*this, /*pos=*/i)) {
+        LLVM_DEBUG(llvm::dbgs() << "one or more local exprs do not have an "
+                                   "explicit representation");
+        return IntegerSet();
+      }
+    }
+  }
+
+  ArrayRef<AffineExpr> localExprs =
+      ArrayRef<AffineExpr>(memo).take_back(getNumLocalIds());
+
+  // Construct the IntegerSet from the equalities/inequalities.
+  unsigned numDims = getNumDimIds();
+  unsigned numSyms = getNumSymbolIds();
+
+  SmallVector<bool, 16> eqFlags(getNumConstraints());
+  std::fill(eqFlags.begin(), eqFlags.begin() + getNumEqualities(), true);
+  std::fill(eqFlags.begin() + getNumEqualities(), eqFlags.end(), false);
+
+  SmallVector<AffineExpr, 8> exprs;
+  exprs.reserve(getNumConstraints());
+
+  for (unsigned i = 0, e = getNumEqualities(); i < e; ++i)
+    exprs.push_back(getAffineExprFromFlatForm(getEquality(i), numDims, numSyms,
+                                              localExprs, context));
+  for (unsigned i = 0, e = getNumInequalities(); i < e; ++i)
+    exprs.push_back(getAffineExprFromFlatForm(getInequality(i), numDims,
+                                              numSyms, localExprs, context));
+  return IntegerSet::get(numDims, numSyms, exprs, eqFlags);
 }
