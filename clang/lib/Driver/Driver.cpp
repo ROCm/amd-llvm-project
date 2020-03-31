@@ -4611,11 +4611,12 @@ InputInfo Driver::BuildJobsForActionNoCache(
         /*CreatePrefixForHost=*/!!A->getOffloadingHostActiveKinds() &&
             !AtTopLevel);
     if (isa<OffloadWrapperJobAction>(JA)) {
-      OffloadingPrefix += "-wrapper";
+      std::string NewBI = "wrapper-";
       if (Arg *FinalOutput = C.getArgs().getLastArg(options::OPT_o))
-        BaseInput = FinalOutput->getValue();
+        NewBI += FinalOutput->getValue();
       else
-        BaseInput = getDefaultImageName();
+        NewBI += getDefaultImageName();
+      BaseInput = strdup(NewBI.c_str()); 
     }
     Result = InputInfo(A, GetNamedOutputPath(C, *JA, BaseInput, BoundArch,
                                              AtTopLevel, MultipleArchs,
