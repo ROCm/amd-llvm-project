@@ -7,18 +7,15 @@
 //===----------------------------------------------------------------------===//
 //
 // Definitions of openmp lock functions
-// A 'thread' maps onto a lane of the wavefront. This means a per-thread lock
-// cannot be implemented - if one thread gets the lock, it can't continue on to
-// the next instruction in order to do anything as the other threads are waiting
-// to take the lock
-// The closest approximatation we can implement is to lock per-wavefront.
+// Warning: Derived from nvptx, suspected to deadlock on amdgcn: aomp/issues/50
 //
 //===----------------------------------------------------------------------===//
 
-#include "common/support.h"
+#include "common/debug.h"
 #include "common/target_atomic.h"
 #include "target_impl.h"
 
+#define __OMP_SPIN 1000
 #define UNSET 0u
 #define SET 1u
 
@@ -31,21 +28,29 @@ DEVICE void __kmpc_impl_destroy_lock(omp_lock_t *lock) {
 }
 
 DEVICE void __kmpc_impl_set_lock(omp_lock_t *lock) {
-  uint64_t lowestActiveThread = __kmpc_impl_ffs(__kmpc_impl_activemask()) - 1;
-  if (GetLaneId() == lowestActiveThread) {
-    while (__kmpc_atomic_cas(lock, UNSET, SET) != UNSET) {
-      __builtin_amdgcn_s_sleep(0);
+  // int atomicCAS(int* address, int compare, int val);
+  // (old == compare ? val : old)
+
+  // TODO: not sure spinning is a good idea here..
+  while (__kmpc_atomic_cas(lock, UNSET, SET) != UNSET) {
+    uint64_t start = __clock64();
+    uint64_t now;
+    for (;;) {
+      now = __clock64();
+      uint64_t cycles = now > start ? now - start : now + (0xffffffff - start);
+      if (cycles >= __OMP_SPIN * GetBlockIdInKernel()) {
+        break;
+      }
     }
-  }
-  // test_lock will now return true for any thread in the warp
+  } // wait for 0 to be the read value
 }
 
 DEVICE void __kmpc_impl_unset_lock(omp_lock_t *lock) {
-  // Could be an atomic store of UNSET
   (void)__kmpc_atomic_exchange(lock, UNSET);
 }
 
 DEVICE int __kmpc_impl_test_lock(omp_lock_t *lock) {
-  // Could be an atomic load
+  // int atomicCAS(int* address, int compare, int val);
+  // (old == compare ? val : old)
   return __kmpc_atomic_add(lock, 0u);
 }
