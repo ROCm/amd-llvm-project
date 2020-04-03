@@ -1242,7 +1242,15 @@ void CGOpenMPRuntimeNVPTX::GenerateMetaData(CodeGenModule &CGM,
                                             const OMPExecutableDirective &D,
                                             llvm::Function *&OutlinedFn,
                                             bool IsGeneric) {
+  // If constant ThreadLimit(), set reqd_work_group_size metadata
+  // Emitting Metadata for thread_limit causes an issue in ISEL, due to
+  // an optimization in OPT.
+  // See line 230 lib/Target/AMDGPU/AMDGPULowerKernelAttributes.cpp
+  bool enableMetaOptBug = false;
+  bool flatAttrEmitted = false;
   int FlatAttr = 0;
+  int DefaultWorkGroupSz =
+      CGM.getTarget().getGridValue(GVIDX::GV_Default_WG_Size);
 
   if ((CGM.getTriple().isAMDGCN()) &&
       (isOpenMPTeamsDirective(D.getDirectiveKind()) ||
@@ -1253,8 +1261,6 @@ void CGOpenMPRuntimeNVPTX::GenerateMetaData(CodeGenModule &CGM,
     const auto *NumThreadsClause = D.getSingleClause<OMPNumThreadsClause>();
     int MaxWorkGroupSz =
         CGM.getTarget().getGridValue(GVIDX::GV_Max_WG_Size);
-    int DefaultWorkGroupSz =
-        CGM.getTarget().getGridValue(GVIDX::GV_Default_WG_Size);
     int compileTimeThreadLimit = 0;
     // Only one of thread_limit or num_threads is used, cant do it for both
     if (ThreadLimitClause && !NumThreadsClause) {
@@ -1293,6 +1299,7 @@ void CGOpenMPRuntimeNVPTX::GenerateMetaData(CodeGenModule &CGM,
       FlatAttr = compileTimeThreadLimit;
       OutlinedFn->addFnAttr("amdgpu-flat-work-group-size",
                             AttrVal + "," + AttrVal);
+      flatAttrEmitted = true;
       wgs_is_constant = true;
       setPropertyWorkGroupSize(CGM, OutlinedFn->getName(),
                                compileTimeThreadLimit);
@@ -1311,6 +1318,12 @@ void CGOpenMPRuntimeNVPTX::GenerateMetaData(CodeGenModule &CGM,
     }
   } // end of amdgcn teams or parallel directive
 
+  // emit amdgpu-flat-work-group-size if not emitted already.
+  if (!flatAttrEmitted) {
+    std::string FlatAttrVal = llvm::utostr(DefaultWorkGroupSz);
+    OutlinedFn->addFnAttr("amdgpu-flat-work-group-size",
+                            FlatAttrVal + "," + FlatAttrVal);
+  }
   // Emit a kernel descriptor for runtime.
   StringRef KernDescName = OutlinedFn->getName();
   CGOpenMPRuntime::emitStructureKernelDesc(CGM, KernDescName, FlatAttr,
