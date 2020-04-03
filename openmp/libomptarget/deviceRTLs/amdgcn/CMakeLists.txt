@@ -122,6 +122,10 @@ macro(add_cuda_bc_library)
     -I${CMAKE_CURRENT_SOURCE_DIR}/src
     -I${devicertl_base_directory})
 
+  if(NOT ${AOMP_STANDALONE_BUILD})
+    set(cu_cmd "${cu_cmd};--hip-device-lib-path=${ROCM_DIR}/lib/bitcode")
+  endif(NOT ${AOMP_STANDALONE_BUILD})
+
   set(bc1_files)
 
   foreach(file ${ARGN})

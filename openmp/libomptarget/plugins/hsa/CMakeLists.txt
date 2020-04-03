@@ -43,7 +43,7 @@ if(NOT ROCM_DIR)
   libomptarget_say("Not building HSA plugin: ROCM_DIR is not set")
   return()
 endif()
-set(LIBOMPTARGET_DEP_LIBHSA_INCLUDE_DIRS ${ROCM_DIR}/hsa/include/hsa)
+set(LIBOMPTARGET_DEP_LIBHSA_INCLUDE_DIRS ${ROCM_DIR}/hsa/include ${ROCM_DIR}/hsa/include/hsa)
 set(LIBOMPTARGET_DEP_LIBHSA_LIBRARIES_DIRS ${ROCM_DIR}/hsa/lib)
 set(LIBOMPTARGET_DEP_LIBHSAKMT_LIBRARIES_DIRS ${ROCM_DIR}/lib)
 

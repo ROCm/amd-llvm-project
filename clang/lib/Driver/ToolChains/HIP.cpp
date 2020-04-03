@@ -86,6 +86,9 @@ const char *AMDGCN::Linker::constructOmpExtraCmds(
   LibraryPaths.push_back(
       Args.MakeArgString(C.getDriver().Dir + "/../lib/libdevice"));
   LibraryPaths.push_back(Args.MakeArgString(C.getDriver().Dir + "/../lib"));
+  LibraryPaths.push_back(
+      Args.MakeArgString(C.getDriver().Dir + "/../../lib/libdevice"));
+  LibraryPaths.push_back(Args.MakeArgString(C.getDriver().Dir + "/../../lib"));
 
   llvm::StringRef WaveFrontSizeBC;
   std::string GFXVersion = SubArchName.drop_front(3).str();
@@ -443,6 +446,9 @@ void HIPToolChain::addClangTargetOptions(
   LibraryPaths.push_back(
       DriverArgs.MakeArgString(getDriver().Dir + "/../lib/libdevice"));
   LibraryPaths.push_back(DriverArgs.MakeArgString(getDriver().Dir + "/../lib"));
+  LibraryPaths.push_back(
+      DriverArgs.MakeArgString(getDriver().Dir + "/../../lib/libdevice"));
+  LibraryPaths.push_back(DriverArgs.MakeArgString(getDriver().Dir + "/../../lib"));
 
   llvm::SmallVector<std::string, 10> BCLibs;
 
