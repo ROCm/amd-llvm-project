@@ -458,6 +458,14 @@ void ClangdLSPServer::notify(llvm::StringRef Method, llvm::json::Value Params) {
   Transp.notify(Method, std::move(Params));
 }
 
+static std::vector<llvm::StringRef> semanticTokenTypes() {
+  std::vector<llvm::StringRef> Types;
+  for (unsigned I = 0; I <= static_cast<unsigned>(HighlightingKind::LastKind);
+       ++I)
+    Types.push_back(toSemanticTokenType(static_cast<HighlightingKind>(I)));
+  return Types;
+}
+
 void ClangdLSPServer::onInitialize(const InitializeParams &Params,
                                    Callback<llvm::json::Value> Reply) {
   // Determine character encoding first as it affects constructed ClangdServer.
@@ -472,6 +480,13 @@ void ClangdLSPServer::onInitialize(const InitializeParams &Params,
 
   ClangdServerOpts.TheiaSemanticHighlighting =
       Params.capabilities.TheiaSemanticHighlighting;
+  if (Params.capabilities.TheiaSemanticHighlighting &&
+      Params.capabilities.SemanticTokens) {
+    log("Client supports legacy semanticHighlights notification and standard "
+        "semanticTokens request, choosing the latter (no notifications).");
+    ClangdServerOpts.TheiaSemanticHighlighting = false;
+  }
+
   if (Params.rootUri && *Params.rootUri)
     ClangdServerOpts.WorkspaceRoot = std::string(Params.rootUri->file());
   else if (Params.rootPath && !Params.rootPath->empty())
@@ -569,6 +584,14 @@ void ClangdLSPServer::onInitialize(const InitializeParams &Params,
                  // trigger on '->' and '::'.
                  {"triggerCharacters", {".", ">", ":"}},
              }},
+            {"semanticTokensProvider",
+             llvm::json::Object{
+                 {"documentProvider", llvm::json::Object{{"edits", true}}},
+                 {"rangeProvider", false},
+                 {"legend",
+                  llvm::json::Object{{"tokenTypes", semanticTokenTypes()},
+                                     {"tokenModifiers", llvm::json::Array()}}},
+             }},
             {"signatureHelpProvider",
              llvm::json::Object{
                  {"triggerCharacters", {"(", ","}},
@@ -596,7 +619,7 @@ void ClangdLSPServer::onInitialize(const InitializeParams &Params,
         }}}};
   if (NegotiatedOffsetEncoding)
     Result["offsetEncoding"] = *NegotiatedOffsetEncoding;
-  if (Params.capabilities.TheiaSemanticHighlighting)
+  if (ClangdServerOpts.TheiaSemanticHighlighting)
     Result.getObject("capabilities")
         ->insert(
             {"semanticHighlighting",
@@ -809,6 +832,10 @@ void ClangdLSPServer::onDocumentDidClose(
   {
     std::lock_guard<std::mutex> HLock(HighlightingsMutex);
     FileToHighlightings.erase(File);
+  }
+  {
+    std::lock_guard<std::mutex> HLock(SemanticTokensMutex);
+    LastSemanticTokens.erase(File);
   }
   // clangd will not send updates for this file anymore, so we empty out the
   // list of diagnostics shown on the client (e.g. in the "Problems" pane of
@@ -1220,6 +1247,75 @@ void ClangdLSPServer::onDocumentLink(
       });
 }
 
+// Increment a numeric string: "" -> 1 -> 2 -> ... -> 9 -> 10 -> 11 ...
+static void increment(std::string &S) {
+  for (char &C : llvm::reverse(S)) {
+    if (C != '9') {
+      ++C;
+      return;
+    }
+    C = '0';
+  }
+  S.insert(S.begin(), '1');
+}
+
+void ClangdLSPServer::onSemanticTokens(const SemanticTokensParams &Params,
+                                       Callback<SemanticTokens> CB) {
+  Server->semanticHighlights(
+      Params.textDocument.uri.file(),
+      [this, File(Params.textDocument.uri.file().str()), CB(std::move(CB))](
+          llvm::Expected<std::vector<HighlightingToken>> HT) mutable {
+        if (!HT)
+          return CB(HT.takeError());
+        SemanticTokens Result;
+        Result.tokens = toSemanticTokens(*HT);
+        {
+          std::lock_guard<std::mutex> Lock(SemanticTokensMutex);
+          auto& Last = LastSemanticTokens[File];
+
+          Last.tokens = Result.tokens;
+          increment(Last.resultId);
+          Result.resultId = Last.resultId;
+        }
+        CB(std::move(Result));
+      });
+}
+
+void ClangdLSPServer::onSemanticTokensEdits(
+    const SemanticTokensEditsParams &Params,
+    Callback<SemanticTokensOrEdits> CB) {
+  Server->semanticHighlights(
+      Params.textDocument.uri.file(),
+      [this, PrevResultID(Params.previousResultId),
+       File(Params.textDocument.uri.file().str()), CB(std::move(CB))](
+          llvm::Expected<std::vector<HighlightingToken>> HT) mutable {
+        if (!HT)
+          return CB(HT.takeError());
+        std::vector<SemanticToken> Toks = toSemanticTokens(*HT);
+
+        SemanticTokensOrEdits Result;
+        {
+          std::lock_guard<std::mutex> Lock(SemanticTokensMutex);
+          auto& Last = LastSemanticTokens[File];
+
+          if (PrevResultID == Last.resultId) {
+            Result.edits = diffTokens(Last.tokens, Toks);
+          } else {
+            vlog("semanticTokens/edits: wanted edits vs {0} but last result "
+                 "had ID {1}. Returning full token list.",
+                 PrevResultID, Last.resultId);
+            Result.tokens = Toks;
+          }
+
+          Last.tokens = std::move(Toks);
+          increment(Last.resultId);
+          Result.resultId = Last.resultId;
+        }
+
+        CB(std::move(Result));
+      });
+}
+
 ClangdLSPServer::ClangdLSPServer(
     class Transport &Transp, const FileSystemProvider &FSProvider,
     const clangd::CodeCompleteOptions &CCOpts,
@@ -1267,6 +1363,8 @@ ClangdLSPServer::ClangdLSPServer(
   MsgHandler->bind("typeHierarchy/resolve", &ClangdLSPServer::onResolveTypeHierarchy);
   MsgHandler->bind("textDocument/selectionRange", &ClangdLSPServer::onSelectionRange);
   MsgHandler->bind("textDocument/documentLink", &ClangdLSPServer::onDocumentLink);
+  MsgHandler->bind("textDocument/semanticTokens", &ClangdLSPServer::onSemanticTokens);
+  MsgHandler->bind("textDocument/semanticTokens/edits", &ClangdLSPServer::onSemanticTokensEdits);
   // clang-format on
 }
 

@@ -1386,8 +1386,11 @@ void ASTContext::InitBuiltinTypes(const TargetInfo &Target,
   InitBuiltinType(BuiltinFnTy,  BuiltinType::BuiltinFn);
 
   // Placeholder type for OMP array sections.
-  if (LangOpts.OpenMP)
+  if (LangOpts.OpenMP) {
     InitBuiltinType(OMPArraySectionTy, BuiltinType::OMPArraySection);
+    InitBuiltinType(OMPArrayShapingTy, BuiltinType::OMPArrayShaping);
+    InitBuiltinType(OMPIteratorTy, BuiltinType::OMPIterator);
+  }
 
   // C99 6.2.5p11.
   FloatComplexTy      = getComplexType(FloatTy);
@@ -2161,6 +2164,11 @@ TypeInfo ASTContext::getTypeInfoImpl(const Type *T) const {
     return getTypeInfo(cast<AdjustedType>(T)->getAdjustedType().getTypePtr());
   case Type::ObjCInterface: {
     const auto *ObjCI = cast<ObjCInterfaceType>(T);
+    if (ObjCI->getDecl()->isInvalidDecl()) {
+      Width = 8;
+      Align = 8;
+      break;
+    }
     const ASTRecordLayout &Layout = getASTObjCInterfaceLayout(ObjCI->getDecl());
     Width = toBits(Layout.getSize());
     Align = toBits(Layout.getAlignment());

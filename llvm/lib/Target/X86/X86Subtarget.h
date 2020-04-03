@@ -397,6 +397,9 @@ protected:
   /// Processor supports PCONFIG instruction
   bool HasPCONFIG = false;
 
+  /// Processor supports SERIALIZE instruction
+  bool HasSERIALIZE = false;
+
   /// Processor has a single uop BEXTR implementation.
   bool HasFastBEXTR = false;
 
@@ -706,11 +709,21 @@ public:
   bool threewayBranchProfitable() const { return ThreewayBranchProfitable; }
   bool hasINVPCID() const { return HasINVPCID; }
   bool hasENQCMD() const { return HasENQCMD; }
+  bool hasSERIALIZE() const { return HasSERIALIZE; }
   bool useRetpolineIndirectCalls() const { return UseRetpolineIndirectCalls; }
   bool useRetpolineIndirectBranches() const {
     return UseRetpolineIndirectBranches;
   }
   bool useRetpolineExternalThunk() const { return UseRetpolineExternalThunk; }
+
+  // These are generic getters that OR together all of the thunk types
+  // supported by the subtarget. Therefore useIndirectThunk*() will return true
+  // if any respective thunk feature is enabled.
+  bool useIndirectThunkCalls() const { return useRetpolineIndirectCalls(); }
+  bool useIndirectThunkBranches() const {
+    return useRetpolineIndirectBranches();
+  }
+
   bool preferMaskRegisters() const { return PreferMaskRegisters; }
   bool useGLMDivSqrtCosts() const { return UseGLMDivSqrtCosts; }
 
@@ -857,10 +870,10 @@ public:
   /// Return true if the subtarget allows calls to immediate address.
   bool isLegalToCallImmediateAddr() const;
 
-  /// If we are using retpolines, we need to expand indirectbr to avoid it
+  /// If we are using indirect thunks, we need to expand indirectbr to avoid it
   /// lowering to an actual indirect jump.
   bool enableIndirectBrExpand() const override {
-    return useRetpolineIndirectBranches();
+    return useIndirectThunkBranches();
   }
 
   /// Enable the MachineScheduler pass for all X86 subtargets.

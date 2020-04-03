@@ -2583,7 +2583,7 @@ Value *InnerLoopVectorizer::getOrCreateTripCount(Loop *L) {
   // compare. The only way that we get a backedge taken count is that the
   // induction variable was signed and as such will not overflow. In such a case
   // truncation is legal.
-  if (BackedgeTakenCount->getType()->getPrimitiveSizeInBits() >
+  if (SE->getTypeSizeInBits(BackedgeTakenCount->getType()) >
       IdxTy->getPrimitiveSizeInBits())
     BackedgeTakenCount = SE->getTruncateOrNoop(BackedgeTakenCount, IdxTy);
   BackedgeTakenCount = SE->getNoopOrZeroExtend(BackedgeTakenCount, IdxTy);
@@ -3405,7 +3405,7 @@ void InnerLoopVectorizer::truncateToMinimalBitwidths() {
         auto *O1 = B.CreateZExtOrTrunc(
             SI->getOperand(1), VectorType::get(ScalarTruncatedTy, Elements1));
 
-        NewI = B.CreateShuffleVector(O0, O1, SI->getMask());
+        NewI = B.CreateShuffleVector(O0, O1, SI->getShuffleMask());
       } else if (isa<LoadInst>(I) || isa<PHINode>(I)) {
         // Don't do anything with the operands, just extend the result.
         continue;

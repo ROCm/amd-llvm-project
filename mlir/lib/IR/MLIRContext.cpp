@@ -162,6 +162,15 @@ public:
   DiagnosticEngine diagEngine;
 
   //===--------------------------------------------------------------------===//
+  // Options
+  //===--------------------------------------------------------------------===//
+
+  /// In most cases, creating operation in unregistered dialect is not desired
+  /// and indicate a misconfiguration of the compiler. This option enables to
+  /// detect such use cases
+  bool allowUnregisteredDialects = false;
+
+  //===--------------------------------------------------------------------===//
   // Other
   //===--------------------------------------------------------------------===//
 
@@ -347,6 +356,14 @@ void Dialect::registerDialect(MLIRContext *context) {
                              "' has already been registered");
   }
   impl.dialects.insert(insertPt, std::move(dialect));
+}
+
+bool MLIRContext::allowsUnregisteredDialects() {
+  return impl->allowUnregisteredDialects;
+}
+
+void MLIRContext::allowUnregisteredDialects(bool allowing) {
+  impl->allowUnregisteredDialects = allowing;
 }
 
 /// Return information about all registered operations.  This isn't very
@@ -613,7 +630,7 @@ AffineMap AffineMap::get(MLIRContext *context) {
 
 AffineMap AffineMap::get(unsigned dimCount, unsigned symbolCount,
                          MLIRContext *context) {
-  return getImpl(dimCount, /*symbolCount=*/0, /*results=*/{}, context);
+  return getImpl(dimCount, symbolCount, /*results=*/{}, context);
 }
 
 AffineMap AffineMap::get(unsigned dimCount, unsigned symbolCount,
@@ -621,6 +638,11 @@ AffineMap AffineMap::get(unsigned dimCount, unsigned symbolCount,
   // The number of results can't be zero.
   assert(!results.empty());
   return getImpl(dimCount, symbolCount, results, results[0].getContext());
+}
+
+AffineMap AffineMap::get(unsigned dimCount, unsigned symbolCount,
+                         ArrayRef<AffineExpr> results, MLIRContext *context) {
+  return getImpl(dimCount, symbolCount, results, context);
 }
 
 //===----------------------------------------------------------------------===//

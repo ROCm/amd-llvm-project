@@ -763,13 +763,17 @@ public:
   }
 
   /// getTypeAnnotation - Read a parsed type out of an annotation token.
-  static ParsedType getTypeAnnotation(const Token &Tok) {
+  static TypeResult getTypeAnnotation(const Token &Tok) {
+    if (!Tok.getAnnotationValue())
+      return TypeError();
     return ParsedType::getFromOpaquePtr(Tok.getAnnotationValue());
   }
 
 private:
-  static void setTypeAnnotation(Token &Tok, ParsedType T) {
-    Tok.setAnnotationValue(T.getAsOpaquePtr());
+  static void setTypeAnnotation(Token &Tok, TypeResult T) {
+    assert((T.isInvalid() || T.get()) &&
+           "produced a valid-but-null type annotation?");
+    Tok.setAnnotationValue(T.isInvalid() ? nullptr : T.get().getAsOpaquePtr());
   }
 
   static NamedDecl *getNonTypeAnnotation(const Token &Tok) {
@@ -3010,6 +3014,10 @@ private:
                                              DeclarationName &Name,
                                              AccessSpecifier AS = AS_none);
 
+  /// Tries to parse cast part of OpenMP array shaping operation:
+  /// '[' expression ']' { '[' expression ']' } ')'.
+  bool tryParseOpenMPArrayShapingCastPart();
+
   /// Parses simple list of variables.
   ///
   /// \param Kind Kind of the directive.
@@ -3078,6 +3086,11 @@ private:
   OMPClause *ParseOpenMPVarListClause(OpenMPDirectiveKind DKind,
                                       OpenMPClauseKind Kind, bool ParseOnly);
 
+  /// Parses and creates OpenMP 5.0 iterators expression:
+  /// <iterators> = 'iterator' '(' { [ <iterator-type> ] identifier =
+  /// <range-specification> }+ ')'
+  ExprResult ParseOpenMPIteratorsExpr();
+
 public:
   /// Parses simple expression in parens for single-expression clauses of OpenMP
   /// constructs.
@@ -3087,7 +3100,7 @@ public:
 
   /// Data used for parsing list of variables in OpenMP clauses.
   struct OpenMPVarListDataTy {
-    Expr *TailExpr = nullptr;
+    Expr *DepModOrTailExpr = nullptr;
     SourceLocation ColonLoc;
     SourceLocation RLoc;
     CXXScopeSpec ReductionOrMapperIdScopeSpec;

@@ -5436,17 +5436,32 @@ std::pair<llvm::Value *, Address> CGOpenMPRuntime::emitDependClause(
       if (Dependencies[I].first == OMPC_DEPEND_depobj)
         continue;
       const Expr *E = Dependencies[I].second;
-      LValue Addr = CGF.EmitLValue(E);
+      const auto *OASE = dyn_cast<OMPArrayShapingExpr>(E);
+      llvm::Value *Addr;
+      if (OASE) {
+        const Expr *Base = OASE->getBase();
+        Addr = CGF.EmitScalarExpr(Base);
+      } else {
+        Addr = CGF.EmitLValue(E).getPointer(CGF);
+      }
       llvm::Value *Size;
       QualType Ty = E->getType();
-      if (const auto *ASE =
-              dyn_cast<OMPArraySectionExpr>(E->IgnoreParenImpCasts())) {
+      if (OASE) {
+        Size = CGF.getTypeSize(OASE->getBase()->getType()->getPointeeType());
+        for (const Expr *SE : OASE->getDimensions()) {
+           llvm::Value *Sz = CGF.EmitScalarExpr(SE);
+           Sz = CGF.EmitScalarConversion(Sz, SE->getType(),
+                                    CGF.getContext().getSizeType(),
+                                    SE->getExprLoc());
+           Size = CGF.Builder.CreateNUWMul(Size, Sz);
+        }
+      } else if (const auto *ASE =
+                     dyn_cast<OMPArraySectionExpr>(E->IgnoreParenImpCasts())) {
         LValue UpAddrLVal =
             CGF.EmitOMPArraySectionExpr(ASE, /*IsLowerBound=*/false);
         llvm::Value *UpAddr = CGF.Builder.CreateConstGEP1_32(
             UpAddrLVal.getPointer(CGF), /*Idx0=*/1);
-        llvm::Value *LowIntPtr =
-            CGF.Builder.CreatePtrToInt(Addr.getPointer(CGF), CGM.SizeTy);
+        llvm::Value *LowIntPtr = CGF.Builder.CreatePtrToInt(Addr, CGM.SizeTy);
         llvm::Value *UpIntPtr = CGF.Builder.CreatePtrToInt(UpAddr, CGM.SizeTy);
         Size = CGF.Builder.CreateNUWSub(UpIntPtr, LowIntPtr);
       } else {
@@ -5465,9 +5480,8 @@ std::pair<llvm::Value *, Address> CGOpenMPRuntime::emitDependClause(
       // deps[i].base_addr = &<Dependencies[i].second>;
       LValue BaseAddrLVal = CGF.EmitLValueForField(
           Base, *std::next(KmpDependInfoRD->field_begin(), BaseAddr));
-      CGF.EmitStoreOfScalar(
-          CGF.Builder.CreatePtrToInt(Addr.getPointer(CGF), CGF.IntPtrTy),
-          BaseAddrLVal);
+      CGF.EmitStoreOfScalar(CGF.Builder.CreatePtrToInt(Addr, CGF.IntPtrTy),
+                            BaseAddrLVal);
       // deps[i].len = sizeof(<Dependencies[i].second>);
       LValue LenLVal = CGF.EmitLValueForField(
           Base, *std::next(KmpDependInfoRD->field_begin(), Len));
@@ -7507,6 +7521,20 @@ private:
   llvm::Value *getExprTypeSize(const Expr *E) const {
     QualType ExprTy = E->getType().getCanonicalType();
 
+    // Calculate the size for array shaping expression.
+    if (const auto *OAE = dyn_cast<OMPArrayShapingExpr>(E)) {
+      llvm::Value *Size =
+          CGF.getTypeSize(OAE->getBase()->getType()->getPointeeType());
+      for (const Expr *SE : OAE->getDimensions()) {
+        llvm::Value *Sz = CGF.EmitScalarExpr(SE);
+        Sz = CGF.EmitScalarConversion(Sz, SE->getType(),
+                                      CGF.getContext().getSizeType(),
+                                      SE->getExprLoc());
+        Size = CGF.Builder.CreateNUWMul(Size, Sz);
+      }
+      return Size;
+    }
+
     // Reference types are ignored for mapping purposes.
     if (const auto *RefTy = ExprTy->getAs<ReferenceType>())
       ExprTy = RefTy->getPointeeType().getCanonicalType();
@@ -7838,6 +7866,7 @@ private:
     const Expr *AssocExpr = I->getAssociatedExpression();
     const auto *AE = dyn_cast<ArraySubscriptExpr>(AssocExpr);
     const auto *OASE = dyn_cast<OMPArraySectionExpr>(AssocExpr);
+    const auto *OAShE = dyn_cast<OMPArrayShapingExpr>(AssocExpr);
 
     if (isa<MemberExpr>(AssocExpr)) {
       // The base is the 'this' pointer. The content of the pointer is going
@@ -7847,6 +7876,11 @@ private:
                (OASE &&
                 isa<CXXThisExpr>(OASE->getBase()->IgnoreParenImpCasts()))) {
       BP = CGF.EmitOMPSharedLValue(AssocExpr).getAddress(CGF);
+    } else if (OAShE &&
+               isa<CXXThisExpr>(OAShE->getBase()->IgnoreParenCasts())) {
+      BP = Address(
+          CGF.EmitScalarExpr(OAShE->getBase()),
+          CGF.getContext().getTypeAlignInChars(OAShE->getBase()->getType()));
     } else {
       // The base is the reference to the variable.
       // BP = &Var.
@@ -7929,9 +7963,12 @@ private:
       // types.
       const auto *OASE =
           dyn_cast<OMPArraySectionExpr>(I->getAssociatedExpression());
+      const auto *OAShE =
+          dyn_cast<OMPArrayShapingExpr>(I->getAssociatedExpression());
       const auto *UO = dyn_cast<UnaryOperator>(I->getAssociatedExpression());
       const auto *BO = dyn_cast<BinaryOperator>(I->getAssociatedExpression());
       bool IsPointer =
+          OAShE ||
           (OASE && OMPArraySectionExpr::getBaseOriginalType(OASE)
                        .getCanonicalType()
                        ->isAnyPointerType()) ||
@@ -7949,8 +7986,15 @@ private:
                 isa<BinaryOperator>(Next->getAssociatedExpression())) &&
                "Unexpected expression");
 
-        Address LB = CGF.EmitOMPSharedLValue(I->getAssociatedExpression())
-                         .getAddress(CGF);
+        Address LB = Address::invalid();
+        if (OAShE) {
+          LB = Address(CGF.EmitScalarExpr(OAShE->getBase()),
+                       CGF.getContext().getTypeAlignInChars(
+                           OAShE->getBase()->getType()));
+        } else {
+          LB = CGF.EmitOMPSharedLValue(I->getAssociatedExpression())
+                   .getAddress(CGF);
+        }
 
         // If this component is a pointer inside the base struct then we don't
         // need to create any entry for it - it will be combined with the object

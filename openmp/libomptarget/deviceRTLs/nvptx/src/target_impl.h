@@ -12,7 +12,9 @@
 #ifndef _TARGET_IMPL_H_
 #define _TARGET_IMPL_H_
 
+#include <assert.h>
 #include <cuda.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 

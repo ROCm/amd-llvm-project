@@ -2272,9 +2272,9 @@ ARMTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
         for (i = 0, j = RegBegin; j < RegEnd; i++, j++) {
           SDValue Const = DAG.getConstant(4*i, dl, MVT::i32);
           SDValue AddArg = DAG.getNode(ISD::ADD, dl, PtrVT, Arg, Const);
-          SDValue Load = DAG.getLoad(PtrVT, dl, Chain, AddArg,
-                                     MachinePointerInfo(),
-                                     DAG.InferPtrAlignment(AddArg));
+          SDValue Load =
+              DAG.getLoad(PtrVT, dl, Chain, AddArg, MachinePointerInfo(),
+                          DAG.InferPtrAlign(AddArg));
           MemOpChains.push_back(Load.getValue(1));
           RegsToPass.push_back(std::make_pair(j, Load));
         }
@@ -7181,7 +7181,7 @@ SDValue ARMTargetLowering::LowerBUILD_VECTOR(SDValue Op, SelectionDAG &DAG,
       return DAG.getUNDEF(VT);
 
     if ((ST->hasNEON() && SplatBitSize <= 64) ||
-        (ST->hasMVEIntegerOps() && SplatBitSize <= 32)) {
+        (ST->hasMVEIntegerOps() && SplatBitSize <= 64)) {
       // Check if an immediate VMOV works.
       EVT VmovVT;
       SDValue Val = isVMOVModifiedImm(SplatBits.getZExtValue(),
@@ -9578,11 +9578,11 @@ void ARMTargetLowering::SetupEntryBlockForSjLj(MachineInstr &MI,
   // Grab constant pool and fixed stack memory operands.
   MachineMemOperand *CPMMO =
       MF->getMachineMemOperand(MachinePointerInfo::getConstantPool(*MF),
-                               MachineMemOperand::MOLoad, 4, 4);
+                               MachineMemOperand::MOLoad, 4, Align(4));
 
   MachineMemOperand *FIMMOSt =
       MF->getMachineMemOperand(MachinePointerInfo::getFixedStack(*MF, FI),
-                               MachineMemOperand::MOStore, 4, 4);
+                               MachineMemOperand::MOStore, 4, Align(4));
 
   // Load the address of the dispatch MBB into the jump buffer.
   if (isThumb2) {
@@ -9768,7 +9768,7 @@ void ARMTargetLowering::EmitSjLjDispatchBlock(MachineInstr &MI,
 
   MachineMemOperand *FIMMOLd = MF->getMachineMemOperand(
       MachinePointerInfo::getFixedStack(*MF, FI),
-      MachineMemOperand::MOLoad | MachineMemOperand::MOVolatile, 4, 4);
+      MachineMemOperand::MOLoad | MachineMemOperand::MOVolatile, 4, Align(4));
 
   MachineInstrBuilder MIB;
   MIB = BuildMI(DispatchBB, dl, TII->get(ARM::Int_eh_sjlj_dispatchsetup));
@@ -9899,8 +9899,9 @@ void ARMTargetLowering::EmitSjLjDispatchBlock(MachineInstr &MI,
         .addReg(NewVReg3)
         .add(predOps(ARMCC::AL));
 
-    MachineMemOperand *JTMMOLd = MF->getMachineMemOperand(
-        MachinePointerInfo::getJumpTable(*MF), MachineMemOperand::MOLoad, 4, 4);
+    MachineMemOperand *JTMMOLd =
+        MF->getMachineMemOperand(MachinePointerInfo::getJumpTable(*MF),
+                                 MachineMemOperand::MOLoad, 4, Align(4));
 
     Register NewVReg5 = MRI->createVirtualRegister(TRC);
     BuildMI(DispContBB, dl, TII->get(ARM::tLDRi), NewVReg5)
@@ -9993,8 +9994,9 @@ void ARMTargetLowering::EmitSjLjDispatchBlock(MachineInstr &MI,
         .addJumpTableIndex(MJTI)
         .add(predOps(ARMCC::AL));
 
-    MachineMemOperand *JTMMOLd = MF->getMachineMemOperand(
-        MachinePointerInfo::getJumpTable(*MF), MachineMemOperand::MOLoad, 4, 4);
+    MachineMemOperand *JTMMOLd =
+        MF->getMachineMemOperand(MachinePointerInfo::getJumpTable(*MF),
+                                 MachineMemOperand::MOLoad, 4, Align(4));
     Register NewVReg5 = MRI->createVirtualRegister(TRC);
     BuildMI(DispContBB, dl, TII->get(ARM::LDRrs), NewVReg5)
         .addReg(NewVReg3, RegState::Kill)
@@ -10233,7 +10235,7 @@ ARMTargetLowering::EmitStructByval(MachineInstr &MI,
   Register dest = MI.getOperand(0).getReg();
   Register src = MI.getOperand(1).getReg();
   unsigned SizeVal = MI.getOperand(2).getImm();
-  unsigned Align = MI.getOperand(3).getImm();
+  unsigned Alignment = MI.getOperand(3).getImm();
   DebugLoc dl = MI.getDebugLoc();
 
   MachineFunction *MF = BB->getParent();
@@ -10246,17 +10248,17 @@ ARMTargetLowering::EmitStructByval(MachineInstr &MI,
   bool IsThumb2 = Subtarget->isThumb2();
   bool IsThumb = Subtarget->isThumb();
 
-  if (Align & 1) {
+  if (Alignment & 1) {
     UnitSize = 1;
-  } else if (Align & 2) {
+  } else if (Alignment & 2) {
     UnitSize = 2;
   } else {
     // Check whether we can use NEON instructions.
     if (!MF->getFunction().hasFnAttribute(Attribute::NoImplicitFloat) &&
         Subtarget->hasNEON()) {
-      if ((Align % 16 == 0) && SizeVal >= 16)
+      if ((Alignment % 16 == 0) && SizeVal >= 16)
         UnitSize = 16;
-      else if ((Align % 8 == 0) && SizeVal >= 8)
+      else if ((Alignment % 8 == 0) && SizeVal >= 8)
         UnitSize = 8;
     }
     // Can't use NEON instructions.
@@ -10362,13 +10364,11 @@ ARMTargetLowering::EmitStructByval(MachineInstr &MI,
     const Constant *C = ConstantInt::get(Int32Ty, LoopSize);
 
     // MachineConstantPool wants an explicit alignment.
-    unsigned Align = MF->getDataLayout().getPrefTypeAlignment(Int32Ty);
-    if (Align == 0)
-      Align = MF->getDataLayout().getTypeAllocSize(C->getType());
-    unsigned Idx = ConstantPool->getConstantPoolIndex(C, Align);
+    Align Alignment = MF->getDataLayout().getPrefTypeAlign(Int32Ty);
+    unsigned Idx = ConstantPool->getConstantPoolIndex(C, Alignment.value());
     MachineMemOperand *CPMMO =
         MF->getMachineMemOperand(MachinePointerInfo::getConstantPool(*MF),
-                                 MachineMemOperand::MOLoad, 4, 4);
+                                 MachineMemOperand::MOLoad, 4, Align(4));
 
     if (IsThumb)
       BuildMI(*BB, MI, dl, TII->get(ARM::tLDRpci))
@@ -12125,10 +12125,79 @@ static SDValue PerformVMULCombine(SDNode *N,
                      DAG.getNode(ISD::MUL, DL, VT, N01, N1));
 }
 
+static SDValue PerformMVEVMULLCombine(SDNode *N, SelectionDAG &DAG,
+                                      const ARMSubtarget *Subtarget) {
+  EVT VT = N->getValueType(0);
+  if (VT != MVT::v2i64)
+    return SDValue();
+
+  SDValue N0 = N->getOperand(0);
+  SDValue N1 = N->getOperand(1);
+
+  auto IsSignExt = [&](SDValue Op) {
+    if (Op->getOpcode() != ISD::SIGN_EXTEND_INREG)
+      return SDValue();
+    EVT VT = cast<VTSDNode>(Op->getOperand(1))->getVT();
+    if (VT.getScalarSizeInBits() == 32)
+      return Op->getOperand(0);
+    return SDValue();
+  };
+  auto IsZeroExt = [&](SDValue Op) {
+    // Zero extends are a little more awkward. At the point we are matching
+    // this, we are looking for an AND with a (-1, 0, -1, 0) buildvector mask.
+    // That might be before of after a bitcast depending on how the and is
+    // placed. Because this has to look through bitcasts, it is currently only
+    // supported on LE.
+    if (!Subtarget->isLittle())
+      return SDValue();
+
+    SDValue And = Op;
+    if (And->getOpcode() == ISD::BITCAST)
+      And = And->getOperand(0);
+    if (And->getOpcode() != ISD::AND)
+      return SDValue();
+    SDValue Mask = And->getOperand(1);
+    if (Mask->getOpcode() == ISD::BITCAST)
+      Mask = Mask->getOperand(0);
+
+    if (Mask->getOpcode() != ISD::BUILD_VECTOR ||
+        Mask.getValueType() != MVT::v4i32)
+      return SDValue();
+    if (isAllOnesConstant(Mask->getOperand(0)) &&
+        isNullConstant(Mask->getOperand(1)) &&
+        isAllOnesConstant(Mask->getOperand(2)) &&
+        isNullConstant(Mask->getOperand(3)))
+      return And->getOperand(0);
+    return SDValue();
+  };
+
+  SDLoc dl(N);
+  if (SDValue Op0 = IsSignExt(N0)) {
+    if (SDValue Op1 = IsSignExt(N1)) {
+      SDValue New0a = DAG.getNode(ARMISD::VECTOR_REG_CAST, dl, MVT::v4i32, Op0);
+      SDValue New1a = DAG.getNode(ARMISD::VECTOR_REG_CAST, dl, MVT::v4i32, Op1);
+      return DAG.getNode(ARMISD::VMULLs, dl, VT, New0a, New1a);
+    }
+  }
+  if (SDValue Op0 = IsZeroExt(N0)) {
+    if (SDValue Op1 = IsZeroExt(N1)) {
+      SDValue New0a = DAG.getNode(ARMISD::VECTOR_REG_CAST, dl, MVT::v4i32, Op0);
+      SDValue New1a = DAG.getNode(ARMISD::VECTOR_REG_CAST, dl, MVT::v4i32, Op1);
+      return DAG.getNode(ARMISD::VMULLu, dl, VT, New0a, New1a);
+    }
+  }
+
+  return SDValue();
+}
+
 static SDValue PerformMULCombine(SDNode *N,
                                  TargetLowering::DAGCombinerInfo &DCI,
                                  const ARMSubtarget *Subtarget) {
   SelectionDAG &DAG = DCI.DAG;
+
+  EVT VT = N->getValueType(0);
+  if (Subtarget->hasMVEIntegerOps() && VT == MVT::v2i64)
+    return PerformMVEVMULLCombine(N, DAG, Subtarget);
 
   if (Subtarget->isThumb1Only())
     return SDValue();
@@ -12136,7 +12205,6 @@ static SDValue PerformMULCombine(SDNode *N,
   if (DCI.isBeforeLegalize() || DCI.isCalledByLegalizer())
     return SDValue();
 
-  EVT VT = N->getValueType(0);
   if (VT.is64BitVector() || VT.is128BitVector())
     return PerformVMULCombine(N, DCI, Subtarget);
   if (VT != MVT::i32)
@@ -13924,7 +13992,7 @@ static SDValue PerformSplittingToNarrowingStores(StoreSDNode *St,
   // Details about the old store
   SDValue Ch = St->getChain();
   SDValue BasePtr = St->getBasePtr();
-  unsigned Alignment = St->getOriginalAlignment();
+  Align Alignment = St->getOriginalAlign();
   MachineMemOperand::Flags MMOFlags = St->getMemOperand()->getFlags();
   AAMDNodes AAInfo = St->getAAInfo();
 
@@ -13941,7 +14009,7 @@ static SDValue PerformSplittingToNarrowingStores(StoreSDNode *St,
                     DAG.getConstant(i * NumElements, DL, MVT::i32));
     SDValue Store = DAG.getTruncStore(
         Ch, DL, Extract, NewPtr, St->getPointerInfo().getWithOffset(NewOffset),
-        NewToVT, Alignment, MMOFlags, AAInfo);
+        NewToVT, Alignment.value(), MMOFlags, AAInfo);
     Stores.push_back(Store);
   }
   return DAG.getNode(ISD::TokenFactor, DL, MVT::Other, Stores);
@@ -14586,7 +14654,7 @@ static SDValue PerformSplittingToWideningLoad(SDNode *N, SelectionDAG &DAG) {
   // Details about the old load
   SDValue Ch = LD->getChain();
   SDValue BasePtr = LD->getBasePtr();
-  unsigned Alignment = LD->getOriginalAlignment();
+  Align Alignment = LD->getOriginalAlign();
   MachineMemOperand::Flags MMOFlags = LD->getMemOperand()->getFlags();
   AAMDNodes AAInfo = LD->getAAInfo();
 
@@ -14602,13 +14670,13 @@ static SDValue PerformSplittingToWideningLoad(SDNode *N, SelectionDAG &DAG) {
   // is good enough, as legalisation will take it from there. They are either
   // already legal or they will be split further into something that is
   // legal.
-  SDValue NewLoad1 =
-      DAG.getLoad(ISD::UNINDEXED, NewExtType, NewToVT, DL, Ch, BasePtr, Offset,
-                  LD->getPointerInfo(), NewFromVT, Alignment, MMOFlags, AAInfo);
+  SDValue NewLoad1 = DAG.getLoad(
+      ISD::UNINDEXED, NewExtType, NewToVT, DL, Ch, BasePtr, Offset,
+      LD->getPointerInfo(), NewFromVT, Alignment.value(), MMOFlags, AAInfo);
   SDValue NewLoad2 =
       DAG.getLoad(ISD::UNINDEXED, NewExtType, NewToVT, DL, Ch, NewPtr, Offset,
                   LD->getPointerInfo().getWithOffset(NewOffset), NewFromVT,
-                  Alignment, MMOFlags, AAInfo);
+                  Alignment.value(), MMOFlags, AAInfo);
 
   SDValue NewChain = DAG.getNode(ISD::TokenFactor, DL, MVT::Other,
                                  SDValue(NewLoad1.getNode(), 1),
@@ -15547,7 +15615,7 @@ bool ARMTargetLowering::shouldSinkOperands(Instruction *I,
     return false;
   if (!match(I->getOperand(Op),
              m_ShuffleVector(m_InsertElement(m_Undef(), m_Value(), m_ZeroInt()),
-                             m_Undef(), m_Zero()))) {
+                             m_Undef(), m_ZeroMask()))) {
     return false;
   }
   Instruction *Shuffle = cast<Instruction>(I->getOperand(Op));
@@ -17237,7 +17305,7 @@ bool ARMTargetLowering::getTgtMemIntrinsic(IntrinsicInfo &Info,
     Info.memVT = MVT::getVT(PtrTy->getElementType());
     Info.ptrVal = I.getArgOperand(0);
     Info.offset = 0;
-    Info.align = MaybeAlign(DL.getABITypeAlignment(PtrTy->getElementType()));
+    Info.align = DL.getABITypeAlign(PtrTy->getElementType());
     Info.flags = MachineMemOperand::MOLoad | MachineMemOperand::MOVolatile;
     return true;
   }
@@ -17249,7 +17317,7 @@ bool ARMTargetLowering::getTgtMemIntrinsic(IntrinsicInfo &Info,
     Info.memVT = MVT::getVT(PtrTy->getElementType());
     Info.ptrVal = I.getArgOperand(1);
     Info.offset = 0;
-    Info.align = MaybeAlign(DL.getABITypeAlignment(PtrTy->getElementType()));
+    Info.align = DL.getABITypeAlign(PtrTy->getElementType());
     Info.flags = MachineMemOperand::MOStore | MachineMemOperand::MOVolatile;
     return true;
   }

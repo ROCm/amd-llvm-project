@@ -2417,8 +2417,7 @@ static void fixupFuncForFI(SelectionDAG &DAG, int FrameIdx, EVT VT) {
   MachineFunction &MF = DAG.getMachineFunction();
   MachineFrameInfo &MFI = MF.getFrameInfo();
 
-  unsigned Align = MFI.getObjectAlignment(FrameIdx);
-  if (Align >= 4)
+  if (MFI.getObjectAlign(FrameIdx) >= Align(4))
     return;
 
   PPCFunctionInfo *FuncInfo = MF.getInfo<PPCFunctionInfo>();
@@ -2750,7 +2749,7 @@ SDValue PPCTargetLowering::getTOCEntry(SelectionDAG &DAG, const SDLoc &dl,
   SDValue Ops[] = { GA, Reg };
   return DAG.getMemIntrinsicNode(
       PPCISD::TOC_ENTRY, dl, DAG.getVTList(VT, MVT::Other), Ops, VT,
-      MachinePointerInfo::getGOT(DAG.getMachineFunction()), 0,
+      MachinePointerInfo::getGOT(DAG.getMachineFunction()), None,
       MachineMemOperand::MOLoad);
 }
 
@@ -7900,7 +7899,7 @@ void PPCTargetLowering::LowerFP_TO_INTForReuse(SDValue Op, ReuseLoadInfo &RLI,
   if (i32Stack) {
     MachineFunction &MF = DAG.getMachineFunction();
     MachineMemOperand *MMO =
-      MF.getMachineMemOperand(MPI, MachineMemOperand::MOStore, 4, 4);
+        MF.getMachineMemOperand(MPI, MachineMemOperand::MOStore, 4, Align(4));
     SDValue Ops[] = { DAG.getEntryNode(), Tmp, FIPtr };
     Chain = DAG.getMemIntrinsicNode(PPCISD::STFIWX, dl,
               DAG.getVTList(MVT::Other), Ops, MVT::i32, MMO);
@@ -8054,7 +8053,7 @@ bool PPCTargetLowering::canReuseLoadAddress(SDValue Op, EVT MemVT,
   RLI.MPI = LD->getPointerInfo();
   RLI.IsDereferenceable = LD->isDereferenceable();
   RLI.IsInvariant = LD->isInvariant();
-  RLI.Alignment = LD->getAlignment();
+  RLI.Alignment = LD->getAlign();
   RLI.AAInfo = LD->getAAInfo();
   RLI.Ranges = LD->getRanges();
 
@@ -8380,7 +8379,7 @@ SDValue PPCTargetLowering::LowerINT_TO_FP(SDValue Op,
       RLI.Chain = Store;
       RLI.MPI =
           MachinePointerInfo::getFixedStack(DAG.getMachineFunction(), FrameIdx);
-      RLI.Alignment = 4;
+      RLI.Alignment = Align(4);
 
       MachineMemOperand *MMO =
         MF.getMachineMemOperand(RLI.MPI, MachineMemOperand::MOLoad, 4,
@@ -8432,7 +8431,7 @@ SDValue PPCTargetLowering::LowerINT_TO_FP(SDValue Op,
       RLI.Chain = Store;
       RLI.MPI =
           MachinePointerInfo::getFixedStack(DAG.getMachineFunction(), FrameIdx);
-      RLI.Alignment = 4;
+      RLI.Alignment = Align(4);
     }
 
     MachineMemOperand *MMO =
@@ -12036,9 +12035,9 @@ PPCTargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
         int FrameIdx = MFI.CreateStackObject(8, 8, false);
 
         MachineMemOperand *MMOStore = F->getMachineMemOperand(
-          MachinePointerInfo::getFixedStack(*F, FrameIdx, 0),
-          MachineMemOperand::MOStore, MFI.getObjectSize(FrameIdx),
-          MFI.getObjectAlignment(FrameIdx));
+            MachinePointerInfo::getFixedStack(*F, FrameIdx, 0),
+            MachineMemOperand::MOStore, MFI.getObjectSize(FrameIdx),
+            MFI.getObjectAlign(FrameIdx));
 
         // Store the SrcReg into the stack.
         BuildMI(*BB, MI, dl, TII->get(StoreOp))
@@ -12048,9 +12047,9 @@ PPCTargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
           .addMemOperand(MMOStore);
 
         MachineMemOperand *MMOLoad = F->getMachineMemOperand(
-          MachinePointerInfo::getFixedStack(*F, FrameIdx, 0),
-          MachineMemOperand::MOLoad, MFI.getObjectSize(FrameIdx),
-          MFI.getObjectAlignment(FrameIdx));
+            MachinePointerInfo::getFixedStack(*F, FrameIdx, 0),
+            MachineMemOperand::MOLoad, MFI.getObjectSize(FrameIdx),
+            MFI.getObjectAlign(FrameIdx));
 
         // Load from the stack where SrcReg is stored, and save to DestReg,
         // so we have done the RegClass conversion from RegClass::SrcReg to
@@ -13768,7 +13767,7 @@ SDValue PPCTargetLowering::combineStoreFPToInt(SDNode *N,
         (Op1VT == MVT::i32 || Op1VT == MVT::i64 ||
          (Subtarget.hasP9Vector() && (Op1VT == MVT::i16 || Op1VT == MVT::i8)));
 
-  if (ResVT == MVT::ppcf128 || !Subtarget.hasP8Altivec() ||
+  if (ResVT == MVT::ppcf128 || !Subtarget.hasP8Vector() ||
       cast<StoreSDNode>(N)->isTruncatingStore() || !ValidTypeForStoreFltAsInt)
     return SDValue();
 

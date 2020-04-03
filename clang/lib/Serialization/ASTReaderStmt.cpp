@@ -911,6 +911,42 @@ void ASTStmtReader::VisitOMPArraySectionExpr(OMPArraySectionExpr *E) {
   E->setRBracketLoc(readSourceLocation());
 }
 
+void ASTStmtReader::VisitOMPArrayShapingExpr(OMPArrayShapingExpr *E) {
+  VisitExpr(E);
+  unsigned NumDims = Record.readInt();
+  E->setBase(Record.readSubExpr());
+  SmallVector<Expr *, 4> Dims(NumDims);
+  for (unsigned I = 0; I < NumDims; ++I)
+    Dims[I] = Record.readSubExpr();
+  E->setDimensions(Dims);
+  SmallVector<SourceRange, 4> SRs(NumDims);
+  for (unsigned I = 0; I < NumDims; ++I)
+    SRs[I] = readSourceRange();
+  E->setBracketsRanges(SRs);
+  E->setLParenLoc(readSourceLocation());
+  E->setRParenLoc(readSourceLocation());
+}
+
+void ASTStmtReader::VisitOMPIteratorExpr(OMPIteratorExpr *E) {
+  VisitExpr(E);
+  unsigned NumIters = Record.readInt();
+  E->setIteratorKwLoc(readSourceLocation());
+  E->setLParenLoc(readSourceLocation());
+  E->setRParenLoc(readSourceLocation());
+  for (unsigned I = 0; I < NumIters; ++I) {
+    E->setIteratorDeclaration(I, Record.readDeclRef());
+    E->setAssignmentLoc(I, readSourceLocation());
+    Expr *Begin = Record.readSubExpr();
+    Expr *End = Record.readSubExpr();
+    Expr *Step = Record.readSubExpr();
+    SourceLocation ColonLoc = readSourceLocation();
+    SourceLocation SecColonLoc;
+    if (Step)
+      SecColonLoc = readSourceLocation();
+    E->setIteratorRange(I, Begin, ColonLoc, End, SecColonLoc, Step);
+  }
+}
+
 void ASTStmtReader::VisitCallExpr(CallExpr *E) {
   VisitExpr(E);
   unsigned NumArgs = Record.readInt();
@@ -2864,6 +2900,16 @@ Stmt *ASTReader::ReadStmtFromStream(ModuleFile &F) {
 
     case EXPR_OMP_ARRAY_SECTION:
       S = new (Context) OMPArraySectionExpr(Empty);
+      break;
+
+    case EXPR_OMP_ARRAY_SHAPING:
+      S = OMPArrayShapingExpr::CreateEmpty(
+          Context, Record[ASTStmtReader::NumExprFields]);
+      break;
+
+    case EXPR_OMP_ITERATOR:
+      S = OMPIteratorExpr::CreateEmpty(Context,
+                                       Record[ASTStmtReader::NumExprFields]);
       break;
 
     case EXPR_CALL:

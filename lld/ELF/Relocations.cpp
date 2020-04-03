@@ -870,7 +870,7 @@ static void reportUndefinedSymbol(const UndefinedDiag &undef,
   if (msg.empty())
     msg = "undefined " + visibility() + "symbol: " + toString(sym);
 
-  const size_t maxUndefReferences = 10;
+  const size_t maxUndefReferences = 3;
   size_t i = 0;
   for (UndefinedDiag::Loc l : undef.locs) {
     if (i >= maxUndefReferences)
@@ -901,8 +901,9 @@ static void reportUndefinedSymbol(const UndefinedDiag &undef,
   }
 
   if (sym.getName().startswith("_ZTV"))
-    msg += "\nthe vtable symbol may be undefined because the class is missing "
-           "its key function (see https://lld.llvm.org/missingkeyfunction)";
+    msg +=
+        "\n>>> the vtable symbol may be undefined because the class is missing "
+        "its key function (see https://lld.llvm.org/missingkeyfunction)";
 
   if (undef.isWarning)
     warn(msg);
