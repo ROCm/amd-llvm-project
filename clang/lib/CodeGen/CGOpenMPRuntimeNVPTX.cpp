@@ -1248,7 +1248,10 @@ void CGOpenMPRuntimeNVPTX::GenerateMetaData(CodeGenModule &CGM,
   // an optimization in OPT.
   // See line 230 lib/Target/AMDGPU/AMDGPULowerKernelAttributes.cpp
   bool enableMetaOptBug = false;
+  bool flatAttrEmitted = false;
   int FlatAttr = 0;
+  int DefaultWorkGroupSz =
+      CGM.getTarget().getGridValue(GPU::GVIDX::GV_Default_WG_Size);
   if (char *envStr = getenv("AMDGPU_ENABLE_META_OPT_BUG"))
     enableMetaOptBug = atoi(envStr);
 
@@ -1261,8 +1264,6 @@ void CGOpenMPRuntimeNVPTX::GenerateMetaData(CodeGenModule &CGM,
     const auto *NumThreadsClause = D.getSingleClause<OMPNumThreadsClause>();
     int MaxWorkGroupSz =
         CGM.getTarget().getGridValue(GPU::GVIDX::GV_Max_WG_Size);
-    int DefaultWorkGroupSz =
-        CGM.getTarget().getGridValue(GPU::GVIDX::GV_Default_WG_Size);
     int compileTimeThreadLimit = 0;
     // Only one of thread_limit or num_threads is used, cant do it for both
     if (ThreadLimitClause && !NumThreadsClause) {
@@ -1302,6 +1303,7 @@ void CGOpenMPRuntimeNVPTX::GenerateMetaData(CodeGenModule &CGM,
       FlatAttr = compileTimeThreadLimit;
       OutlinedFn->addFnAttr("amdgpu-flat-work-group-size",
                             AttrVal + "," + AttrVal);
+      flatAttrEmitted = true;
       wgs_is_constant = true;
       setPropertyWorkGroupSize(CGM, OutlinedFn->getName(),
                                compileTimeThreadLimit);
@@ -1320,6 +1322,12 @@ void CGOpenMPRuntimeNVPTX::GenerateMetaData(CodeGenModule &CGM,
     }
   } // end of amdgcn teams or parallel directive
 
+  // emit amdgpu-flat-work-group-size if not emitted already.
+  if (!flatAttrEmitted) {
+    std::string FlatAttrVal = llvm::utostr(DefaultWorkGroupSz);
+    OutlinedFn->addFnAttr("amdgpu-flat-work-group-size",
+                            FlatAttrVal + "," + FlatAttrVal);
+  }
   // Emit a kernel descriptor for runtime.
   StringRef KernDescName = OutlinedFn->getName();
   CGOpenMPRuntime::emitStructureKernelDesc(CGM, KernDescName, FlatAttr,
