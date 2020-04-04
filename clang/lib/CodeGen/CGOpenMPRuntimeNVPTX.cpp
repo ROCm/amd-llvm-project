@@ -116,15 +116,9 @@ enum OpenMPRTLFunctionNVPTX {
   OMPRTL_NVPTX__kmpc_warp_active_thread_mask,
   /// Call to void __kmpc_syncwarp(int32_t Mask);
   OMPRTL_NVPTX__kmpc_syncwarp,
-
-  /// Call to int64_t __kmpc_warp_active_thread_mask64(void);
-  OMPRTL_kmpc_warp_active_thread_mask64,
-  /// Call to void __kmpc_syncwarp64(int64_t Mask);
-  OMPRTL_kmpc_syncwarp64,
-
+  /// Call void __kmpc_amd_master_start(ident_t *loc, kmp_int32 global_tid)
   /// See openmp/libomptarget/deviceRTLS/amdgcn/src/sync.cu for more details
   /// on these four amdgcn deviceRTL functions.
-  /// Call void __kmpc_amd_master_start(ident_t *loc, kmp_int32 global_tid)
   OMPRTL__kmpc_amd_master_start,
   /// Call void __kmpc_amd_master_end(ident_t *loc, kmp_int32 global_tid)
   OMPRTL__kmpc_amd_master_end,
@@ -2142,20 +2136,6 @@ CGOpenMPRuntimeNVPTX::createNVPTXRuntimeFunction(unsigned Function) {
     RTLFn = CGM.CreateConvergentRuntimeFunction(FnTy, "__kmpc_syncwarp");
     break;
   }
-  case OMPRTL_kmpc_warp_active_thread_mask64: {
-    // Build int64_t __kmpc_warp_active_thread_mask64(void);
-    auto *FnTy =
-        llvm::FunctionType::get(CGM.Int64Ty, llvm::None, /*isVarArg=*/false);
-    RTLFn = CGM.CreateConvergentRuntimeFunction(FnTy, "__kmpc_warp_active_thread_mask64");
-    break;
-  }
-  case OMPRTL_kmpc_syncwarp64: {
-    // Build void __kmpc_syncwarp64(kmp_int64 Mask);
-    auto *FnTy =
-        llvm::FunctionType::get(CGM.VoidTy, CGM.Int64Ty, /*isVarArg=*/false);
-    RTLFn = CGM.CreateConvergentRuntimeFunction(FnTy, "__kmpc_syncwarp64");
-    break;
-  }
   case OMPRTL__kmpc_amd_master_start: {
     // Build void __kmpc_amd_master_start(ident_t *loc, kmp_int32
     // global_tid);
@@ -3204,18 +3184,14 @@ void CGOpenMPRuntimeNVPTX::emitCriticalRegion(
     CodeGenFunction &CGF, StringRef CriticalName,
     const RegionCodeGenTy &CriticalOpGen, SourceLocation Loc,
     const Expr *Hint) {
-  bool is64bitwarp = CGF.CGM.getTriple().getArch() == llvm::Triple::amdgcn ;
   llvm::BasicBlock *LoopBB = CGF.createBasicBlock("omp.critical.loop");
   llvm::BasicBlock *TestBB = CGF.createBasicBlock("omp.critical.test");
   llvm::BasicBlock *SyncBB = CGF.createBasicBlock("omp.critical.sync");
   llvm::BasicBlock *BodyBB = CGF.createBasicBlock("omp.critical.body");
   llvm::BasicBlock *ExitBB = CGF.createBasicBlock("omp.critical.exit");
 
-  // Get the mask of active thread
-  llvm::Value *Mask = is64bitwarp
-    ? CGF.EmitRuntimeCall(
-      createNVPTXRuntimeFunction(OMPRTL_kmpc_warp_active_thread_mask64))
-    : CGF.EmitRuntimeCall(
+  // Get the mask of active threads in the warp.
+  llvm::Value *Mask = CGF.EmitRuntimeCall(
       createNVPTXRuntimeFunction(OMPRTL_NVPTX__kmpc_warp_active_thread_mask));
   // Fetch team-local id of the thread.
   llvm::Value *ThreadID = getNVPTXThreadID(CGF);
@@ -3258,11 +3234,7 @@ void CGOpenMPRuntimeNVPTX::emitCriticalRegion(
   // counter variable and returns to the loop.
   CGF.EmitBlock(SyncBB);
   // Reconverge active threads in the warp.
-  if (is64bitwarp)
-    (void)CGF.EmitRuntimeCall(
-      createNVPTXRuntimeFunction(OMPRTL_kmpc_syncwarp64), Mask);
-  else
-    (void)CGF.EmitRuntimeCall(
+  (void)CGF.EmitRuntimeCall(
       createNVPTXRuntimeFunction(OMPRTL_NVPTX__kmpc_syncwarp), Mask);
 
   llvm::Value *IncCounterVal =
