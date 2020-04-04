@@ -2125,16 +2125,20 @@ CGOpenMPRuntimeNVPTX::createNVPTXRuntimeFunction(unsigned Function) {
     break;
   }
   case OMPRTL_NVPTX__kmpc_warp_active_thread_mask: {
-    // Build int32_t __kmpc_warp_active_thread_mask(void);
-    auto *FnTy =
-        llvm::FunctionType::get(CGM.Int32Ty, llvm::None, /*isVarArg=*/false);
+    // Build int[64|32]_t __kmpc_warp_active_thread_mask(void);
+    bool IsAMDGCN = CGM.getTriple().getArch() == llvm::Triple::amdgcn;
+    auto *FnTy = llvm::FunctionType::get(IsAMDGCN ? CGM.Int64Ty : CGM.Int32Ty,
+        llvm::None, /*isVarArg=*/false);
     RTLFn = CGM.CreateConvergentRuntimeFunction(FnTy, "__kmpc_warp_active_thread_mask");
     break;
   }
   case OMPRTL_NVPTX__kmpc_syncwarp: {
-    // Build void __kmpc_syncwarp(kmp_int32 Mask);
+    // Build void __kmpc_syncwarp(kmp_int[64|32] Mask);
+    bool IsAMDGCN = CGM.getTriple().getArch() == llvm::Triple::amdgcn;
     auto *FnTy =
-        llvm::FunctionType::get(CGM.VoidTy, CGM.Int32Ty, /*isVarArg=*/false);
+        llvm::FunctionType::get(CGM.VoidTy,
+	  IsAMDGCN ? CGM.Int64Ty : CGM.Int32Ty,
+          /*isVarArg=*/false);
     RTLFn = CGM.CreateConvergentRuntimeFunction(FnTy, "__kmpc_syncwarp");
     break;
   }
