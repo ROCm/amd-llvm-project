@@ -140,32 +140,6 @@ static std::unique_ptr<Module> loadFile(const char *argv0,
   return Result;
 }
 
-LLVM_ATTRIBUTE_NORETURN static void fail(Twine Error) {
-  errs() << ": " << Error << ".\n";
-  exit(1);
-}
-
-static void failIfError(std::error_code EC, Twine Context = "") {
-  if (!EC)
-    return;
-  std::string ContextStr = Context.str();
-  if (ContextStr == "")
-    fail(EC.message());
-  fail(Context + ": " + EC.message());
-}
-
-static void failIfError(Error E, Twine Context = "") {
-  if (!E)
-    return;
-
-  handleAllErrors(std::move(E), [&](const llvm::ErrorInfoBase &EIB) {
-    std::string ContextStr = Context.str();
-    if (ContextStr == "")
-      fail(EIB.message());
-    fail(Context + ": " + EIB.message());
-  });
-}
-
 static std::unique_ptr<Module> loadArFile(const char *argv0,
                                           const std::string ArchiveName,
                                           LLVMContext &Context, Linker &L,
@@ -177,59 +151,54 @@ static std::unique_ptr<Module> loadArFile(const char *argv0,
            << "' to memory\n";
   ErrorOr<std::unique_ptr<MemoryBuffer>> Buf =
       MemoryBuffer::getFile(ArchiveName, -1, false);
-  if (std::error_code EC = Buf.getError()) {
-    failIfError(EC, Twine("error loading archive'") + ArchiveName + "'");
-  } else {
-    Error Err = Error::success();
-    object::Archive Archive(Buf.get()->getMemBufferRef(), Err);
-    object::Archive *ArchivePtr = &Archive;
-    EC = errorToErrorCode(std::move(Err));
-    failIfError(EC,
-                "error loading '" + ArchiveName + "': " + EC.message() + "!");
-    for (auto &C : ArchivePtr->children(Err)) {
-      Expected<StringRef> ename = C.getName();
-      if (Error E = ename.takeError()) {
-        errs() << argv0 << ": ";
-        WithColor::error()
-            << " could not get member name of archive library failed'"
-            << ArchiveName << "'\n";
-        return nullptr;
-      };
-      std::string goodname = ename.get().str();
-      if (Verbose)
-        errs() << "Parsing member '" << goodname
-               << "' of archive library to module.\n";
-      SMDiagnostic ParseErr;
-      StringRef DataLayoutString;
-      bool UpgradeDebugInfo = false;
-      Expected<MemoryBufferRef> MemBuf = C.getMemoryBufferRef();
-      if (Error E = MemBuf.takeError()) {
-        errs() << argv0 << ": ";
-        WithColor::error() << " loading memory for member '" << goodname
-                           << "' of archive library failed'" << ArchiveName
-                           << "'\n";
-        return nullptr;
-      };
+  ExitOnErr(errorCodeToError(Buf.getError()));
+  Error Err = Error::success();
+  object::Archive Archive(Buf.get()->getMemBufferRef(), Err);
+  object::Archive *ArchivePtr = &Archive;
+  ExitOnErr(std::move(Err));
+  for (auto &C : ArchivePtr->children(Err)) {
+    Expected<StringRef> ename = C.getName();
+    if (Error E = ename.takeError()) {
+      errs() << argv0 << ": ";
+      WithColor::error()
+          << " could not get member name of archive library failed'"
+          << ArchiveName << "'\n";
+      return nullptr;
+    };
+    std::string goodname = ename.get().str();
+    if (Verbose)
+      errs() << "Parsing member '" << goodname
+             << "' of archive library to module.\n";
+    SMDiagnostic ParseErr;
+    StringRef DataLayoutString;
+    bool UpgradeDebugInfo = false;
+    Expected<MemoryBufferRef> MemBuf = C.getMemoryBufferRef();
+    if (Error E = MemBuf.takeError()) {
+      errs() << argv0 << ": ";
+      WithColor::error() << " loading memory for member '" << goodname
+                         << "' of archive library failed'" << ArchiveName
+                         << "'\n";
+      return nullptr;
+    };
 
-      std::unique_ptr<Module> M = parseIR(MemBuf.get(), ParseErr, Context,
-                                          UpgradeDebugInfo, DataLayoutString);
-      if (!M.get()) {
-        errs() << argv0 << ": ";
-        WithColor::error() << " parsing member '" << goodname
-                           << "' of archive library failed'" << ArchiveName
-                           << "'\n";
-        return nullptr;
-      }
-      if (Verbose)
-        errs() << "Linking member '" << goodname << "' of archive library.\n";
-      // bool Err = L.linkInModule(std::move(M), ApplicableFlags);
-      bool Err = L.linkModules(*Result, std::move(M), ApplicableFlags);
-      if (Err)
-        return nullptr;
-      ApplicableFlags = OrigFlags;
-    } // end for each child
-    failIfError(std::move(Err));
-  }
+    std::unique_ptr<Module> M = parseIR(MemBuf.get(), ParseErr, Context,
+                                        UpgradeDebugInfo, DataLayoutString);
+    if (!M.get()) {
+      errs() << argv0 << ": ";
+      WithColor::error() << " parsing member '" << goodname
+                         << "' of archive library failed'" << ArchiveName
+                         << "'\n";
+      return nullptr;
+    }
+    if (Verbose)
+      errs() << "Linking member '" << goodname << "' of archive library.\n";
+    // bool Err = L.linkInModule(std::move(M), ApplicableFlags);
+    bool Err = L.linkModules(*Result, std::move(M), ApplicableFlags);
+    if (Err)
+      return nullptr;
+    ApplicableFlags = OrigFlags;
+  } // end for each child
+  ExitOnErr(std::move(Err));
   return Result;
 }
 
