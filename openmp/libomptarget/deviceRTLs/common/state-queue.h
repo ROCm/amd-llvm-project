@@ -37,7 +37,7 @@ private:
   INLINE static uint32_t ID(uint32_t ticket);
   INLINE bool IsServing(uint32_t slot, uint32_t id);
   INLINE void PushElement(uint32_t slot, ElementType *element);
-  INLINE ElementType *PopElement(uint32_t slot);
+  INLINE ElementType *PopElement(uint32_t slot, uint64_t * zero);
   INLINE void DoneServing(uint32_t slot, uint32_t id);
 
 public:

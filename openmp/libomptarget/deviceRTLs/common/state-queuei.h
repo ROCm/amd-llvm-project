@@ -51,9 +51,16 @@ omptarget_nvptx_Queue<ElementType, SIZE>::PushElement(uint32_t slot,
 
 template <typename ElementType, uint32_t SIZE>
 INLINE ElementType *
-omptarget_nvptx_Queue<ElementType, SIZE>::PopElement(uint32_t slot) {
+omptarget_nvptx_Queue<ElementType, SIZE>::PopElement(uint32_t slot,
+  uint64_t * zero_ptr) {
+#if defined(__AMDGCN__) || ( defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 350 )
   return (ElementType *)__kmpc_atomic_add(
       (unsigned long long *)&elementQueue[slot], (unsigned long long)0);
+#else
+  // atomic add of constant zero creates invalid atom.or.b64 for old cuda_archs
+  return (ElementType *)__kmpc_atomic_add(
+      (unsigned long long *)&elementQueue[slot], (unsigned long long) *zero_ptr);
+#endif
 }
 
 template <typename ElementType, uint32_t SIZE>
@@ -81,7 +88,8 @@ INLINE ElementType *omptarget_nvptx_Queue<ElementType, SIZE>::Dequeue() {
   uint32_t id = ID(ticket);
   while (!IsServing(slot, id))
     ;
-  ElementType *element = PopElement(slot);
+  uint64_t zero = 0;
+  ElementType *element = PopElement(slot,&zero);
   // This is to populate the queue because of the lack of GPU constructors.
   if (element == 0)
     element = &elements[slot];
