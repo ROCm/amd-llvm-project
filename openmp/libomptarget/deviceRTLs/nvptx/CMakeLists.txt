@@ -93,7 +93,7 @@ if(LIBOMPTARGET_DEP_CUDA_FOUND)
   # yet supported by the CUDA toolchain on the device.
   set(BUILD_SHARED_LIBS OFF)
   set(CUDA_SEPARABLE_COMPILATION ON)
-  list(APPEND CUDA_NVCC_FLAGS -I${devicertl_base_directory}
+  list(APPEND CUDA_NVCC_FLAGS -std=c++14 -I${devicertl_base_directory}
                               -I${devicertl_nvptx_directory}/src)
   cuda_add_library(omptarget-nvptx STATIC ${cuda_src_files} ${omp_data_objects}
       OPTIONS ${CUDA_ARCH} ${CUDA_DEBUG})
@@ -129,6 +129,7 @@ if(LIBOMPTARGET_DEP_CUDA_FOUND)
 
     # Set flags for LLVM Bitcode compilation.
     set(bc_flags ${LIBOMPTARGET_NVPTX_SELECTED_CUDA_COMPILER_FLAGS}
+                 -std=c++14
                  -I${devicertl_base_directory}
                  -I${devicertl_nvptx_directory}/src)
 
