@@ -400,16 +400,18 @@ static bool convertExternsToLinkOnce(Module *MOUT, LLVMContext &Ctx) {
     if (F->hasName()) 
       printf("Function name : %s\n",F->getName().str().c_str());
 #endif
-    if (!i->isDeclaration() &&
-        //      i->getLinkage() == GlobalValue::ExternalLinkage &&
-        i->getCallingConv() != llvm::CallingConv::AMDGPU_KERNEL) {
+    if (!i->isDeclaration()) {
       if (Verbose)
-        errs() << "Converting function \'" << F->getName().str().c_str()
-               << "\' to LinkOnceODRLinkage.\n";
-      F->setLinkage(GlobalValue::LinkOnceODRLinkage);
-      F->setVisibility(GlobalValue::ProtectedVisibility);
-      F->removeFnAttr(llvm::Attribute::OptimizeNone);
-      F->addFnAttr(llvm::Attribute::AlwaysInline);
+        errs() << "Function attribute cleanup for\'"
+               << F->getName().str().c_str() << "\' \n";
+      if (i->getCallingConv() == llvm::CallingConv::AMDGPU_KERNEL) {
+        F->removeFnAttr(llvm::Attribute::OptimizeNone);
+      } else {
+        F->setLinkage(GlobalValue::LinkOnceODRLinkage);
+        F->setVisibility(GlobalValue::ProtectedVisibility);
+        F->removeFnAttr(llvm::Attribute::OptimizeNone);
+        F->addFnAttr(llvm::Attribute::AlwaysInline);
+      }
     }
   }
   return true;
