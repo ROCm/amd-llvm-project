@@ -7,7 +7,6 @@
 //===----------------------------------------------------------------------===//
 //
 // RTL for hsa machine
-// github: ashwinma (ashwinma@gmail.com)
 //
 //===----------------------------------------------------------------------===//
 
@@ -140,6 +139,8 @@ static std::vector<hsa_agent_t> find_gpu_agents() {
         // get_info fails iff HSA runtime not yet initialized
         hsa_status_t err =
             hsa_agent_get_info(agent, HSA_AGENT_INFO_DEVICE, &device_type);
+        if (print_kernel_trace > 0 && err != HSA_STATUS_SUCCESS)
+          printf("rtl.cpp: err %d\n",err);
         assert(err == HSA_STATUS_SUCCESS);
 
         if (device_type == HSA_DEVICE_TYPE_GPU) {
@@ -150,6 +151,8 @@ static std::vector<hsa_agent_t> find_gpu_agents() {
       &res);
 
   // iterate_agents fails iff HSA runtime not yet initialized
+  if (print_kernel_trace > 0 && err != HSA_STATUS_SUCCESS)
+    printf("rtl.cpp: err %d\n",err);
   assert(err == HSA_STATUS_SUCCESS);
   return res;
 }
@@ -359,9 +362,9 @@ public:
 static RTLDeviceInfoTy DeviceInfo;
 
 namespace {
+#ifdef FIXME
 typedef int CUstream;
 CUstream selectStream(int32_t Id, __tgt_async_info *AsyncInfo) {
-#ifdef FIXME
   if (!AsyncInfo)
     return DeviceInfo.getNextStream(Id);
 
@@ -369,9 +372,9 @@ CUstream selectStream(int32_t Id, __tgt_async_info *AsyncInfo) {
     AsyncInfo->Queue = DeviceInfo.getNextStream(Id);
 
   return reinterpret_cast<CUstream>(AsyncInfo->Queue);
-#endif
   return 0;
 }
+#endif
 
 int32_t dataRetrieve(int32_t DeviceId, void *HstPtr, void *TgtPtr, int64_t Size,
                      __tgt_async_info *AsyncInfoPtr) {
@@ -1189,7 +1192,7 @@ void retrieveDeviceEnv(int32_t device_id) {
 // Inputs: Max_Teams, Max_WG_Size, Warp_Size, ExecutionMode,
 //         EnvTeamLimit, EnvNumTeams, num_teams, thread_limit,
 //         loop_tripcount.
-void getLaunchVals(int &threadsPerGroup, unsigned &num_groups, int ConstWGSize,
+void getLaunchVals(int &threadsPerGroup, int &num_groups, int ConstWGSize,
                    int ExecutionMode, int EnvTeamLimit, int EnvNumTeams,
                    int num_teams, int thread_limit, uint64_t loop_tripcount) {
 
@@ -1384,7 +1387,7 @@ int32_t __tgt_rtl_run_target_team_region(int32_t device_id, void *tgt_entry_ptr,
   /*
    * Set limit based on ThreadsPerGroup and GroupsPerDevice
    */
-  unsigned num_groups = 0;
+  int num_groups = 0;
 
   int threadsPerGroup = RTLDeviceInfoTy::Default_WG_Size;
 
