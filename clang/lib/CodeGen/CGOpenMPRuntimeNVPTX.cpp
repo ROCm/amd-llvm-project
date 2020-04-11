@@ -5460,6 +5460,7 @@ void CGOpenMPRuntimeNVPTX::processRequiresDirective(
       case CudaArch::SM_70:
       case CudaArch::SM_72:
       case CudaArch::SM_75:
+      case CudaArch::SM_80:
       case CudaArch::GFX600:
       case CudaArch::GFX601:
       case CudaArch::GFX700:
@@ -5517,6 +5518,7 @@ static std::pair<unsigned, unsigned> getSMsBlocksPerSM(CodeGenModule &CGM) {
   case CudaArch::SM_70:
   case CudaArch::SM_72:
   case CudaArch::SM_75:
+  case CudaArch::SM_80:
     return {84, 32};
   case CudaArch::GFX600:
   case CudaArch::GFX601:
