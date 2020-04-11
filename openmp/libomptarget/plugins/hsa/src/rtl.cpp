@@ -801,6 +801,8 @@ __tgt_target_table *__tgt_rtl_load_binary(int32_t device_id,
 
       if (err != ATMI_STATUS_SUCCESS) {
         DP("Loading global '%s' (Failed)\n", e->name);
+	// Inform the user what symbol prevented offloading
+        fprintf(stderr, "Loading global '%s' (Failed)\n", e->name);
         return NULL;
       }
 
