@@ -387,7 +387,7 @@ void AMDGCN::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 HIPToolChain::HIPToolChain(const Driver &D, const llvm::Triple &Triple,
                            const ToolChain &HostTC, const ArgList &Args,
                            const Action::OffloadKind OK)
-    : AMDGPUToolChain(D, Triple, Args), HostTC(HostTC), OK(OK) {
+    : ROCMToolChain(D, Triple, Args), HostTC(HostTC), OK(OK) {
   // Lookup binaries into the driver directory, this is used to
   // discover the clang-offload-bundler executable.
   getProgramPaths().push_back(getDriver().Dir);
