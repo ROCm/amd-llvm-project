@@ -991,11 +991,17 @@ void *__tgt_rtl_data_alloc(int device_id, int64_t size, void *) {
 }
 
 int32_t __tgt_rtl_data_submit(int device_id, void *tgt_ptr, void *hst_ptr,
+	                      int64_t size) {
+  __tgt_async_info async_info;
+  int32_t rc = dataSubmit(device_id, tgt_ptr, hst_ptr, size, &async_info);
+  if (rc != OFFLOAD_SUCCESS)
+    return OFFLOAD_FAIL;
+
+  return __tgt_rtl_synchronize(device_id, &async_info);
+}
+
+int32_t __tgt_rtl_data_submit_async(int device_id, void *tgt_ptr, void *hst_ptr,
 	                      int64_t size, __tgt_async_info *async_info_ptr) {
-  // The function dataSubmit is always asynchronous. Considering some data
-  // transfer must be synchronous, we assume if async_info_ptr is nullptr, the
-  // transfer will be synchronous by creating a temporary async info and then
-  // synchronizing after call dataSubmit; otherwise, it is asynchronous.
   if (async_info_ptr)
     return dataSubmit(device_id, tgt_ptr, hst_ptr, size, async_info_ptr);
 
@@ -1008,12 +1014,20 @@ int32_t __tgt_rtl_data_submit(int device_id, void *tgt_ptr, void *hst_ptr,
 }
 
 int32_t __tgt_rtl_data_retrieve(int device_id, void *hst_ptr, void *tgt_ptr,
+                                int64_t size) {
+  assert(device_id < DeviceInfo.NumberOfDevices && "Device ID too large");
+
+  __tgt_async_info async_info;
+  int32_t rc = dataRetrieve(device_id, hst_ptr, tgt_ptr, size, &async_info);
+  if (rc != OFFLOAD_SUCCESS)
+    return OFFLOAD_FAIL;
+
+  return __tgt_rtl_synchronize(device_id, &async_info);
+}
+
+int32_t __tgt_rtl_data_retrieve_async(int device_id, void *hst_ptr, void *tgt_ptr,
                                 int64_t size,  __tgt_async_info *async_info_ptr) {
   assert(device_id < DeviceInfo.NumberOfDevices && "Device ID too large");
-  // The function dataRetrieve is always asynchronous. Considering some data
-  // transfer must be synchronous, we assume if async_info_ptr is nullptr, the
-  // transfer will be synchronous by creating a temporary async info and then
-  // synchronizing after call dataRetrieve; otherwise, it is asynchronous.
   if (async_info_ptr)
     return dataRetrieve(device_id, hst_ptr, tgt_ptr, size, async_info_ptr);
 
@@ -1055,7 +1069,7 @@ void retrieveDeviceEnv(int32_t device_id) {
     }
 
     err = __tgt_rtl_data_retrieve(device_id, &host_device_env, device_env_Ptr,
-                                  varsize, NULL);
+                                  varsize);
     if (err != 0) {
       DP("Error when copying data from device to host . Pointers: "
          "host = " DPxMOD ", device = " DPxMOD ", size = %u\n",
@@ -1246,10 +1260,7 @@ int32_t __tgt_rtl_run_target_team_region(int32_t device_id, void *tgt_entry_ptr,
                                          ptrdiff_t *tgt_offsets,
                                          int32_t arg_num, int32_t num_teams,
                                          int32_t thread_limit,
-                                         uint64_t loop_tripcount,
-                                         __tgt_async_info *async_info) {
-     
-
+                                         uint64_t loop_tripcount) {
   // Set the context we are using
   // update thread limit content in gpu memory if un-initialized or specified
   // from host
@@ -1322,6 +1333,18 @@ int32_t __tgt_rtl_run_target_team_region(int32_t device_id, void *tgt_entry_ptr,
 
 int32_t __tgt_rtl_run_target_region(int32_t device_id, void *tgt_entry_ptr,
                                     void **tgt_args, ptrdiff_t *tgt_offsets,
+                                    int32_t arg_num) {
+  // use one team and one thread
+  // fix thread num
+  int32_t team_num = 1;
+  int32_t thread_limit = 0; // use default
+  return __tgt_rtl_run_target_team_region(device_id, tgt_entry_ptr, tgt_args,
+                                          tgt_offsets, arg_num, team_num,
+                                          thread_limit, 0);
+}
+
+int32_t __tgt_rtl_run_target_region_async(int32_t device_id, void *tgt_entry_ptr,
+                                    void **tgt_args, ptrdiff_t *tgt_offsets,
                                     int32_t arg_num,
 				    __tgt_async_info *async_info) {
   // use one team and one thread
@@ -1330,7 +1353,7 @@ int32_t __tgt_rtl_run_target_region(int32_t device_id, void *tgt_entry_ptr,
   int32_t thread_limit = 0; // use default
   return __tgt_rtl_run_target_team_region(device_id, tgt_entry_ptr, tgt_args,
                                           tgt_offsets, arg_num, team_num,
-                                          thread_limit, 0, async_info);
+                                          thread_limit, 0);
 }
 
 int32_t __tgt_rtl_synchronize(int32_t device_id, __tgt_async_info *async_info) {
