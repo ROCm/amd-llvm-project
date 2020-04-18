@@ -33,9 +33,9 @@ TargetInfo::TargetInfo(const llvm::Triple &T) : TargetOpts(), Triple(T) {
   TLSSupported = true;
   VLASupported = true;
   NoAsmVariants = false;
-  HasLegalHalfType = true;
+  HasLegalHalfType = false;
   HasFloat128 = false;
-  HasFloat16 = true;
+  HasFloat16 = false;
   PointerWidth = PointerAlign = 32;
   BoolWidth = BoolAlign = 8;
   IntWidth = IntAlign = 32;
