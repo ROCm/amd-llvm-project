@@ -210,9 +210,13 @@ void CodeGenModule::createOpenMPRuntime() {
   switch (getTriple().getArch()) {
   case llvm::Triple::nvptx:
   case llvm::Triple::nvptx64:
-  case llvm::Triple::amdgcn:
     assert(getLangOpts().OpenMPIsDevice &&
            "OpenMP NVPTX is only prepared to deal with device code.");
+    OpenMPRuntime.reset(new CGOpenMPRuntimeNVPTX(*this));
+    break;
+  case llvm::Triple::amdgcn:
+    assert(getLangOpts().OpenMPIsDevice &&
+           "OpenMP AMDGCN is only prepared to deal with device code.");
     OpenMPRuntime.reset(new CGOpenMPRuntimeNVPTX(*this));
     break;
   default:
@@ -923,9 +927,7 @@ static bool shouldAssumeDSOLocal(const CodeGenModule &CGM,
 }
 
 void CodeGenModule::setDSOLocal(llvm::GlobalValue *GV) const {
-  bool assumelocal = shouldAssumeDSOLocal(*this, GV);
-  GV->setDSOLocal(assumelocal);
-  // GV->setDSOLocal(shouldAssumeDSOLocal(*this, GV));
+  GV->setDSOLocal(shouldAssumeDSOLocal(*this, GV));
 }
 
 void CodeGenModule::setDLLImportDLLExport(llvm::GlobalValue *GV,
