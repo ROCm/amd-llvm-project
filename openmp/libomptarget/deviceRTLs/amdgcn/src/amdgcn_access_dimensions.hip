@@ -1,4 +1,5 @@
-#include "amdgcn_access_dimensions.h"
+#include "amdgcn_interface.h"
+#include "target_impl.h"
 
 // Subset of AQL kernel dispatch package format
 // Bits         Field Name              Description
@@ -34,26 +35,26 @@ DEVICE uint32_t get_block_dim(uint32_t group_id, uint32_t grid_size,
 
 } // namespace
 
-DEVICE uint32_t __amdgcn_grid_dim_x() {
+EXTERN uint32_t __kmpc_amd_grid_dim_x() {
   return get_grid_dim(grid_size_x(), workgroup_size_x());
 }
-DEVICE uint32_t __amdgcn_grid_dim_y() {
+EXTERN uint32_t __kmpc_amd_grid_dim_y() {
   return get_grid_dim(grid_size_y(), workgroup_size_y());
 }
-DEVICE uint32_t __amdgcn_grid_dim_z() {
+EXTERN uint32_t __kmpc_amd_grid_dim_z() {
   return get_grid_dim(grid_size_z(), workgroup_size_z());
 }
 
-DEVICE uint32_t __amdgcn_block_dim_x() {
+EXTERN uint32_t __kmpc_amd_block_dim_x() {
   return get_block_dim(__builtin_amdgcn_workgroup_id_x(), grid_size_x(),
                        workgroup_size_x());
 }
 
-DEVICE uint32_t __amdgcn_block_dim_y() {
+EXTERN uint32_t __kmpc_amd_block_dim_y() {
   return get_block_dim(__builtin_amdgcn_workgroup_id_y(), grid_size_y(),
                        workgroup_size_y());
 }
-DEVICE uint32_t __amdgcn_block_dim_z() {
+EXTERN uint32_t __kmpc_amd_block_dim_z() {
   return get_block_dim(__builtin_amdgcn_workgroup_id_z(), grid_size_z(),
                        workgroup_size_z());
 }

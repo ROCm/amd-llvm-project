@@ -81,7 +81,6 @@ set(llvm_sources
   ${CMAKE_CURRENT_SOURCE_DIR}/src/atomic_inc.ll)
   
 set(h_files
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/amdgcn_access_dimensions.h
   ${CMAKE_CURRENT_SOURCE_DIR}/src/amdgcn_interface.h
   ${CMAKE_CURRENT_SOURCE_DIR}/src/hip_atomics.h
   ${CMAKE_CURRENT_SOURCE_DIR}/src/target_impl.h
