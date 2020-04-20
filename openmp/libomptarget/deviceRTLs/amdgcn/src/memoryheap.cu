@@ -11,7 +11,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "amdgcn_access_dimensions.h"
+#include "amdgcn_interface.h"
 #include "common/omptarget.h"
 #include <stdio.h>
 
@@ -29,15 +29,15 @@
 #define nullptr 0
 #endif
 
-#define hipBlockDim_x __amdgcn_block_dim_x()
-#define hipBlockDim_y __amdgcn_block_dim_y()
-#define hipBlockDim_z __amdgcn_block_dim_z()
+#define hipBlockDim_x __kmpc_amd_block_dim_x()
+#define hipBlockDim_y __kmpc_amd_block_dim_y()
+#define hipBlockDim_z __kmpc_amd_block_dim_z()
 
 #define hipBlockIdx_x __builtin_amdgcn_workgroup_id_x()
 
-#define hipGridDim_x __amdgcn_grid_dim_x()
-#define hipGridDim_y __amdgcn_grid_dim_y()
-#define hipGridDim_z __amdgcn_grid_dim_z()
+#define hipGridDim_x __kmpc_amd_grid_dim_x()
+#define hipGridDim_y __kmpc_amd_grid_dim_y()
+#define hipGridDim_z __kmpc_amd_grid_dim_z()
 
 #define hipThreadIdx_x __builtin_amdgcn_workitem_id_x()
 

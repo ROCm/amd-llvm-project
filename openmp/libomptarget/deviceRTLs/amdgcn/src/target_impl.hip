@@ -11,7 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "target_impl.h"
-#include "amdgcn_access_dimensions.h"
+#include "amdgcn_interface.h"
 
 // Implementations initially derived from hcc
 
@@ -67,8 +67,8 @@ DEVICE int32_t __kmpc_impl_shfl_down_sync(__kmpc_impl_lanemask_t, int32_t var,
   return __builtin_amdgcn_ds_bpermute(index << 2, var);
 }
 
-DEVICE int GetNumberOfBlocksInKernel() { return __amdgcn_grid_dim_x(); }
-DEVICE int GetNumberOfThreadsInBlock() { return __amdgcn_block_dim_x(); }
+DEVICE int GetNumberOfBlocksInKernel() { return __kmpc_amd_grid_dim_x(); }
+DEVICE int GetNumberOfThreadsInBlock() { return __kmpc_amd_block_dim_x(); }
 DEVICE unsigned GetWarpId() { return GetThreadIdInBlock() / WARPSIZE; }
 DEVICE unsigned GetLaneId() {
   return __builtin_amdgcn_mbcnt_hi(~0u, __builtin_amdgcn_mbcnt_lo(~0u, 0u));
