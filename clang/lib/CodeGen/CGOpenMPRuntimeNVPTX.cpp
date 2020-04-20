@@ -1670,14 +1670,8 @@ void CGOpenMPRuntimeNVPTX::emitWorkerLoop(CodeGenFunction &CGF,
       CGF.CreateDefaultAlignTempAlloca(CGF.Int8PtrTy, /*Name=*/"work_fn");
   Address ExecStatus =
       CGF.CreateDefaultAlignTempAlloca(CGF.Int8Ty, /*Name=*/"exec_status");
-
-  if (CGM.getTriple().getArch() == llvm::Triple::amdgcn) {
-    Bld.CreateStore(Bld.getInt8(0), ExecStatus);
-    Bld.CreateStore(llvm::Constant::getNullValue(CGF.Int8PtrTy), WorkFn);
-  } else {
-    CGF.InitTempAlloca(ExecStatus, Bld.getInt8(/*C=*/0));
-    CGF.InitTempAlloca(WorkFn, llvm::Constant::getNullValue(CGF.Int8PtrTy));
-  }
+  CGF.InitTempAlloca(ExecStatus, Bld.getInt8(/*C=*/0));
+  CGF.InitTempAlloca(WorkFn, llvm::Constant::getNullValue(CGF.Int8PtrTy));
 
   // TODO: Optimize runtime initialization and pass in correct value.
   llvm::Value *Args[] = {WorkFn.getPointer(),
@@ -2826,11 +2820,7 @@ void CGOpenMPRuntimeNVPTX::emitTeamsCall(CodeGenFunction &CGF,
 
   Address ZeroAddr = CGF.CreateDefaultAlignTempAlloca(CGF.Int32Ty,
                                                       /*Name=*/".zero.addr");
-  if (CGM.getTriple().getArch() == llvm::Triple::amdgcn) {
-    CGF.Builder.CreateStore(CGF.Builder.getInt32(0), ZeroAddr);
-  } else {
-    CGF.InitTempAlloca(ZeroAddr, CGF.Builder.getInt32(/*C*/ 0));
-  }
+  CGF.InitTempAlloca(ZeroAddr, CGF.Builder.getInt32(/*C*/ 0));
   llvm::SmallVector<llvm::Value *, 16> OutlinedFnArgs;
   OutlinedFnArgs.push_back(emitThreadIDAddress(CGF, Loc).getPointer());
   OutlinedFnArgs.push_back(ZeroAddr.getPointer());
@@ -2863,12 +2853,7 @@ void CGOpenMPRuntimeNVPTX::emitNonSPMDParallelCall(
 
   Address ZeroAddr = CGF.CreateDefaultAlignTempAlloca(CGF.Int32Ty,
                                                       /*Name=*/".zero.addr");
-  if (CGM.getTriple().getArch() == llvm::Triple::amdgcn) {
-    CGF.Builder.CreateStore(CGF.Builder.getInt32(0), ZeroAddr);
-  } else {
-    CGF.InitTempAlloca(ZeroAddr, CGF.Builder.getInt32(/*C*/ 0));
-  }
-
+  CGF.InitTempAlloca(ZeroAddr, CGF.Builder.getInt32(/*C*/ 0));
   // ThreadId for serialized parallels is 0.
   Address ThreadIDAddr = ZeroAddr;
   auto &&CodeGen = [this, Fn, CapturedVars, Loc, &ThreadIDAddr](
@@ -2878,11 +2863,7 @@ void CGOpenMPRuntimeNVPTX::emitNonSPMDParallelCall(
     Address ZeroAddr =
         CGF.CreateDefaultAlignTempAlloca(CGF.Int32Ty,
                                          /*Name=*/".bound.zero.addr");
-    if (CGM.getTriple().getArch() == llvm::Triple::amdgcn) {
-      CGF.Builder.CreateStore(CGF.Builder.getInt32(/*C*/ 0), ZeroAddr);
-    } else {
-      CGF.InitTempAlloca(ZeroAddr, CGF.Builder.getInt32(/*C*/ 0));
-    }
+    CGF.InitTempAlloca(ZeroAddr, CGF.Builder.getInt32(/*C*/ 0));
     llvm::SmallVector<llvm::Value *, 16> OutlinedFnArgs;
     OutlinedFnArgs.push_back(ThreadIDAddr.getPointer());
     OutlinedFnArgs.push_back(ZeroAddr.getPointer());
@@ -3052,12 +3033,7 @@ void CGOpenMPRuntimeNVPTX::emitSPMDParallelCall(
 
   Address ZeroAddr = CGF.CreateDefaultAlignTempAlloca(CGF.Int32Ty,
                                                       /*Name=*/".zero.addr");
-  if (CGM.getTriple().getArch() == llvm::Triple::amdgcn) {
-    CGF.Builder.CreateStore(CGF.Builder.getInt32(0), ZeroAddr);
-  } else {
-    CGF.InitTempAlloca(ZeroAddr, CGF.Builder.getInt32(/*C*/ 0));
-  }
-
+  CGF.InitTempAlloca(ZeroAddr, CGF.Builder.getInt32(/*C*/ 0));
   // ThreadId for serialized parallels is 0.
   Address ThreadIDAddr = ZeroAddr;
   auto &&CodeGen = [this, OutlinedFn, CapturedVars, Loc, &ThreadIDAddr](
@@ -3067,13 +3043,7 @@ void CGOpenMPRuntimeNVPTX::emitSPMDParallelCall(
     Address ZeroAddr =
         CGF.CreateDefaultAlignTempAlloca(CGF.Int32Ty,
                                          /*Name=*/".bound.zero.addr");
-
-    if (CGM.getTriple().getArch() == llvm::Triple::amdgcn) {
-      CGF.Builder.CreateStore(CGF.Builder.getInt32(/*C*/ 0), ZeroAddr);
-    } else {
-      CGF.InitTempAlloca(ZeroAddr, CGF.Builder.getInt32(/*C*/ 0));
-    }
-
+    CGF.InitTempAlloca(ZeroAddr, CGF.Builder.getInt32(/*C*/ 0));
     llvm::SmallVector<llvm::Value *, 16> OutlinedFnArgs;
     OutlinedFnArgs.push_back(ThreadIDAddr.getPointer());
     OutlinedFnArgs.push_back(ZeroAddr.getPointer());
@@ -5051,12 +5021,7 @@ llvm::Function *CGOpenMPRuntimeNVPTX::createParallelDataSharingWrapper(
 
   Address ZeroAddr = CGF.CreateDefaultAlignTempAlloca(CGF.Int32Ty,
                                                       /*Name=*/".zero.addr");
-  if (CGM.getTriple().getArch() == llvm::Triple::amdgcn) {
-    CGF.Builder.CreateStore(CGF.Builder.getInt32(0), ZeroAddr);
-  } else {
-    CGF.InitTempAlloca(ZeroAddr, CGF.Builder.getInt32(/*C*/ 0));
-  }
-
+  CGF.InitTempAlloca(ZeroAddr, CGF.Builder.getInt32(/*C*/ 0));
   // Get the array of arguments.
   SmallVector<llvm::Value *, 8> Args;
 

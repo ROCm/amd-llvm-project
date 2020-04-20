@@ -125,8 +125,12 @@ Address CodeGenFunction::CreateDefaultAlignTempAlloca(llvm::Type *Ty,
 }
 
 void CodeGenFunction::InitTempAlloca(Address Var, llvm::Value *Init) {
-  assert(isa<llvm::AllocaInst>(Var.getPointer()));
-  auto *Store = new llvm::StoreInst(Init, Var.getPointer());
+  auto * Alloca = Var.getPointer();
+  assert(isa<llvm::AllocaInst>(Alloca) ||
+         (isa<llvm::AddrSpaceCastInst>(Alloca) &&
+          isa<llvm::AllocaInst>(
+              cast<llvm::AddrSpaceCastInst>(Alloca)->getPointerOperand())));
+  auto *Store = new llvm::StoreInst(Init, Alloca);
   Store->setAlignment(Var.getAlignment().getAsAlign());
   llvm::BasicBlock *Block = AllocaInsertPt->getParent();
   Block->getInstList().insertAfter(AllocaInsertPt->getIterator(), Store);
