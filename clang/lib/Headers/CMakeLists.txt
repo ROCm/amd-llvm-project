@@ -150,8 +150,8 @@ set(openmp_wrapper_files
   openmp_wrappers/new
 )
 
+# No hip files to copy at this time.
 set(hip_files
-  hip/hip_host_runtime_api.h
 )
 
 set(output_dir ${LLVM_LIBRARY_OUTPUT_INTDIR}/clang/${CLANG_VERSION}/include)
