@@ -112,9 +112,9 @@ enum OpenMPRTLFunctionNVPTX {
   /// Call to void __kmpc_barrier_simple_spmd(ident_t *loc, kmp_int32
   /// global_tid);
   OMPRTL__kmpc_barrier_simple_spmd,
-  /// Call to int32_t __kmpc_warp_active_thread_mask(void);
+  /// Call to __kmpc_impl_lanemask_t __kmpc_warp_active_thread_mask(void);
   OMPRTL_NVPTX__kmpc_warp_active_thread_mask,
-  /// Call to void __kmpc_syncwarp(int32_t Mask);
+  /// Call to void __kmpc_syncwarp(__kmpc_impl_lanemask_t Mask);
   OMPRTL_NVPTX__kmpc_syncwarp,
   /// Call void __kmpc_amd_master_start(ident_t *loc, kmp_int32 global_tid)
   /// See openmp/libomptarget/deviceRTLS/amdgcn/src/sync.cu for more details
@@ -1818,6 +1818,11 @@ void CGOpenMPRuntimeNVPTX::emitWorkerLoop(CodeGenFunction &CGF,
 llvm::FunctionCallee
 CGOpenMPRuntimeNVPTX::createNVPTXRuntimeFunction(unsigned Function) {
   llvm::FunctionCallee RTLFn = nullptr;
+
+  llvm::Type *LanemaskTy = CGM.getTriple().getArch() == llvm::Triple::amdgcn
+                               ? CGM.Int64Ty
+                               : CGM.Int32Ty;
+
   switch (static_cast<OpenMPRTLFunctionNVPTX>(Function)) {
   case OMPRTL_NVPTX__kmpc_kernel_init: {
     // Build void __kmpc_kernel_init(kmp_int32 thread_limit, int16_t
@@ -2112,19 +2117,18 @@ CGOpenMPRuntimeNVPTX::createNVPTXRuntimeFunction(unsigned Function) {
     break;
   }
   case OMPRTL_NVPTX__kmpc_warp_active_thread_mask: {
-    // Build int[64|32]_t __kmpc_warp_active_thread_mask(void);
-    bool IsAMDGCN = CGM.getTriple().getArch() == llvm::Triple::amdgcn;
-    auto *FnTy = llvm::FunctionType::get(IsAMDGCN ? CGM.Int64Ty : CGM.Int32Ty,
-        llvm::None, /*isVarArg=*/false);
-    RTLFn = CGM.CreateConvergentRuntimeFunction(FnTy, "__kmpc_warp_active_thread_mask");
+    // Build __kmpc_impl_lanemask_t __kmpc_warp_active_thread_mask(void);
+    auto *FnTy =
+        llvm::FunctionType::get(LanemaskTy, llvm::None, /*isVarArg=*/false);
+    RTLFn = CGM.CreateConvergentRuntimeFunction(
+        FnTy, "__kmpc_warp_active_thread_mask");
     break;
   }
   case OMPRTL_NVPTX__kmpc_syncwarp: {
-    // Build void __kmpc_syncwarp(kmp_int[64|32] Mask);
-    bool IsAMDGCN = CGM.getTriple().getArch() == llvm::Triple::amdgcn;
+    // Build void __kmpc_syncwarp(__kmpc_impl_lanemask_t Mask);
     auto *FnTy =
         llvm::FunctionType::get(CGM.VoidTy,
-	  IsAMDGCN ? CGM.Int64Ty : CGM.Int32Ty,
+	  LanemaskTy,
           /*isVarArg=*/false);
     RTLFn = CGM.CreateConvergentRuntimeFunction(FnTy, "__kmpc_syncwarp");
     break;
