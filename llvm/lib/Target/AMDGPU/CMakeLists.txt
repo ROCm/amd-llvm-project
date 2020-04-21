@@ -56,7 +56,6 @@ add_llvm_target(AMDGPUCodeGen
   AMDGPULowerIntrinsics.cpp
   AMDGPULowerKernelArguments.cpp
   AMDGPULowerKernelAttributes.cpp
-  AMDGPULowerKernelCalls.cpp
   AMDGPUMachineCFGStructurizer.cpp
   AMDGPUMachineFunction.cpp
   AMDGPUMachineModuleInfo.cpp
@@ -66,7 +65,6 @@ add_llvm_target(AMDGPUCodeGen
   AMDGPUPostLegalizerCombiner.cpp
   AMDGPUPreLegalizerCombiner.cpp
   AMDGPUPromoteAlloca.cpp
-  AMDGPUPromotePointerKernArgsToGlobal.cpp
   AMDGPUPropagateAttributes.cpp
   AMDGPURegisterBankInfo.cpp
   AMDGPURewriteOutArguments.cpp
