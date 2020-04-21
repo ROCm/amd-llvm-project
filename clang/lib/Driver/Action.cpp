@@ -182,7 +182,6 @@ void OffloadAction::anchor() {}
 
 OffloadAction::OffloadAction(const HostDependence &HDep)
     : Action(OffloadClass, HDep.getAction()), HostTC(HDep.getToolChain()) {
-
   OffloadingArch = HDep.getBoundArch();
   ActiveOffloadKindMask = HDep.getOffloadKinds();
   HDep.getAction()->propagateHostOffloadInfo(HDep.getOffloadKinds(),
