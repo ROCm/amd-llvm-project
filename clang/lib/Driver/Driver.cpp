@@ -3274,6 +3274,7 @@ public:
         ++InactiveBuilders;
         continue;
       }
+
       auto RetCode =
           SB->getDeviceDependences(DDeps, CurPhase, FinalPhase, Phases);
 
@@ -3577,6 +3578,7 @@ void Driver::handleArguments(Compilation &C, DerivedArgList &Args,
 void Driver::BuildActions(Compilation &C, DerivedArgList &Args,
                           const InputList &Inputs, ActionList &Actions) const {
   llvm::PrettyStackTraceString CrashInfo("Building compilation actions");
+
   if (!SuppressMissingInputWarning && Inputs.empty()) {
     Diag(clang::diag::err_drv_no_input_files);
     return;
