@@ -2320,13 +2320,8 @@ void CompilerInvocation::setLangDefaults(LangOptions &Opts, InputKind IK,
     Opts.OpenCLCPlusPlus = Opts.CPlusPlus;
 
     // Include default header file for OpenCL.
-    if (Opts.IncludeDefaultHeader) {
-      if (Opts.DeclareOpenCLBuiltins) {
-        // Only include base header file for builtin types and constants.
-        PPOpts.Includes.push_back("opencl-c-base.h");
-      } else {
-        PPOpts.Includes.push_back("opencl-c.h");
-      }
+    if (Opts.IncludeDefaultHeader && !Opts.DeclareOpenCLBuiltins) {
+      PPOpts.Includes.push_back("opencl-c.h");
     }
   }
 
