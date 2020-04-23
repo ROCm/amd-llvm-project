@@ -247,7 +247,7 @@ int target_data_begin(DeviceTy &Device, int32_t arg_num, void **args_base,
 
     // Address of pointer on the host and device, respectively.
     void *Pointer_HstPtrBegin, *Pointer_TgtPtrBegin;
-    bool IsNew, Pointer_IsNew;
+    bool IsNew = false, Pointer_IsNew = false;
     bool IsHostPtr = false;
     bool IsImplicit = arg_types[i] & OMP_TGT_MAPTYPE_IMPLICIT;
     // Force the creation of a device side copy of the data when:
