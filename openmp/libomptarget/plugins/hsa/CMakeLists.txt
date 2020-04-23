@@ -64,14 +64,33 @@ endif()
 
 if(CMAKE_BUILD_TYPE MATCHES Debug)
   add_definitions(-DHSA_ERROR_REPORT)
+  add_definitions(-DDEBUG)
 endif()
 
 include_directories(
   ${LIBOMPTARGET_DEP_LIBHSA_INCLUDE_DIRS}
   ${CLANG_INCLUDE_DIRS}
+  ${CMAKE_CURRENT_SOURCE_DIR}/impl
 )
 
-add_library(omptarget.rtl.hsa SHARED src/rtl.cpp )
+add_library(omptarget.rtl.hsa SHARED
+      impl/atmi.cpp
+      impl/atmi_interop_hsa.cpp
+      impl/cputask.cpp
+      impl/data.cpp
+      impl/kernel.cpp
+      impl/machine.cpp
+      impl/queue.cpp
+      impl/system.cpp
+      impl/task.cpp
+      impl/taskgroup.cpp
+      impl/utils.cpp
+      impl/atmi_hostcall.c
+      impl/hostcall.cpp
+      impl/hostcall_handlers.c
+      impl/hostcall_printf.c
+      src/rtl.cpp 
+      )
 
 # Install plugin under the lib destination folder.
 # When we build for debug, OPENMP_LIBDIR_SUFFIX get set to -debug
@@ -81,7 +100,7 @@ install(TARGETS omptarget.rtl.hsa LIBRARY DESTINATION "lib${OPENMP_LIBDIR_SUFFIX
 # Also, the AOMP specific build of ATMI has seperate release and debug builds. 
 target_link_libraries(
   omptarget.rtl.hsa
-  -L${LLVM_LIBDIR}${OPENMP_LIBDIR_SUFFIX} -lamd_hostcall -latmi_runtime -Wl,-rpath,${LLVM_LIBDIR}${OPENMP_LIBDIR_SUFFIX}
+  -L${LLVM_LIBDIR}${OPENMP_LIBDIR_SUFFIX} -lamd_comgr -lpthread -ldl -Wl,-rpath,${LLVM_LIBDIR}${OPENMP_LIBDIR_SUFFIX}
   -L${LIBOMPTARGET_DEP_LIBHSA_LIBRARIES_DIRS} -L${LIBOMPTARGET_DEP_LIBHSAKMT_LIBRARIES_DIRS} -lhsa-runtime64 -lhsakmt  -Wl,-rpath,${LIBOMPTARGET_DEP_LIBHSA_LIBRARIES_DIRS},-rpath,${LIBOMPTARGET_DEP_LIBHSAKMT_LIBRARIES_DIRS}
   -L${LLVM_LIBDIR} -lLLVMAMDGPUDesc -lLLVMAMDGPUUtils -lLLVMMC -lLLVMCore -lLLVMSupport -Wl,-rpath,${LLVM_LIBDIR}
   -lelf
