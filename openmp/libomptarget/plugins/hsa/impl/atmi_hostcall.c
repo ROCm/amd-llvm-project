@@ -62,27 +62,6 @@ atl_hcq_element_t * atl_hcq_push(buffer_t * hcb, amd_hostcall_consumer_t * consu
   atl_hcq_count++;
   return atl_hcq_rear;
 }
-
-#if 0
-// we are not using hcq as a true queue so we do not need the pop operation
-static void atl_hcq_pop() {
-  if (atl_hcq_front  == NULL) {
-    printf("\n Error: Trying to pop an element from empty queue");
-    return;
-  } else {
-    if (atl_hcq_front->next_ptr != NULL) {
-      atl_hcq_element_t * new_front = atl_hcq_front->next_ptr;
-      free(atl_hcq_front);
-      atl_hcq_front = new_front;
-    } else {
-      free(atl_hcq_front);
-      atl_hcq_front = NULL;
-      atl_hcq_rear = NULL;
-    }
-    atl_hcq_count--;
-  }
-}
-#endif
  
 static atl_hcq_element_t  * atl_hcq_find_by_hsa_q(hsa_queue_t * hsa_q) {
   atl_hcq_element_t * this_front = atl_hcq_front;

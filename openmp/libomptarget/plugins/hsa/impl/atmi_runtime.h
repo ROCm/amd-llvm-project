@@ -418,114 +418,6 @@ atmi_status_t atmi_kernel_release(atmi_kernel_t kernel);
 atmi_task_handle_t atmi_task_launch(atmi_lparm_t *lparm, atmi_kernel_t kernel,
                                     void **args);
 
-/**
- * @brief Creating an ATMI task template for a future launch.
- *
- * @detail This function is used to create a placeholder ATMI task (CPU or GPU).
- * The @p kernel parameter specifies what has to be eventually launched. This
- * function is especially useful when the user wants a placeholder task to wait
- * on, but its predecessor task graph has not yet been determined and may be
- * generated dynamically at some point in the future. A typical use case would
- * be
- * to represent a fork-join model as a directed acyclic graph (DAG).
- *
- * @param[in] kernel The opaque kernel handle that denotes what has to be
- * launched in the future.
- *
- * @return A handle to the placeholder ATMI task. The task handle may be used to
- * setup
- * dependencies with other copy and compute tasks or for explicit
- * synchronization
- * by the host. Returns @ATMI_NULL_TASK_HANDLE on an error.
- */
-atmi_task_handle_t atmi_task_template_create(atmi_kernel_t kernel);
-
-/**
- * @brief The ATMI task template activator function.
- *
- * @detail This function is used to activate an ATMI task (CPU or GPU) that was
- * previously created using @p atmi_task_template_create. The @p
- * task parameter specifies what has to be activated. The @p
- * lparm structure defines the task's launch parameters, which will guide the
- * ATMI runtime how to activate and manage the task. A task that is created
- * using
- * @atmi_task_create can be activated only once. Activating an already active
- * task is an error.
- *
- * @param[in] lparm The structure desribing how the task has to be managed.
- *
- * @param[in] task The task handle, which was created previously using
- * atmi_task_create.
- *
- * @param[in] args The bag of arguments all passed by reference. Their sizes
- * should be consistent with the kernel's @p arg_sizes parameter.
- *
- * @return The handle to the activated ATMI task. It should be the same as the
- * input
- * @task handle, otherwise it is an error. The returned task handle may be used
- * to setup
- * dependencies with other copy and compute tasks or for explicit
- * synchronization
- * by the host. Returns @ATMI_NULL_TASK_HANDLE on an error.
- */
-atmi_task_handle_t atmi_task_template_activate(atmi_task_handle_t task,
-                                               atmi_lparm_t *lparm,
-                                               void **args);
-
-/**
- * @brief Creating an ATMI task for a future launch.
- *
- * @detail This function is used to create an ATMI task (CPU or GPU) without
- * actually launching it.
- * The @p kernel parameter specifies what has to be eventually launched. This
- * function is especially useful when the user wants a placeholder task to wait
- * on, but its predecessor task graph has not yet been determined and may be
- * generated dynamically at some point in the future. A typical use case would
- * be
- * to represent a fork-join model as a directed acyclic graph (DAG).
- *
- * @param[in] lparm The structure desribing how the task has to be managed.
- *
- * @param[in] kernel The opaque kernel handle that denotes what has to be
- * launched in the future.
- *
- * @param[in] args The bag of arguments all passed by reference. Their sizes
- * should be consistent with the kernel's @p arg_sizes parameter.
- *
- * @return A handle to the placeholder ATMI task. The task handle may be used to
- * setup
- * dependencies with other copy and compute tasks or for explicit
- * synchronization
- * by the host. The initial state of the task will be ATMI_UNINITIALIZED.
- * Returns @ATMI_NULL_TASK_HANDLE on an error.
- */
-atmi_task_handle_t atmi_task_create(atmi_lparm_t *lparm, atmi_kernel_t kernel,
-                                    void **args);
-
-/**
- * @brief The ATMI task activator function.
- *
- * @detail This function is used to activate an ATMI task (CPU or GPU) that was
- * previously created using @p atmi_task_create. The @p
- * task parameter specifies what has to be activated. The @p
- * lparm structure defines the task's launch parameters, which will guide the
- * ATMI runtime how to activate and manage the task. A task that is created
- * using
- * @atmi_task_create can be activated only once. Activating an already active
- * task is an error.
- *
- * @param[in] task The task handle, which was created previously using
- * atmi_task_create.
- *
- * @return The handle to the activated ATMI task. It should be the same as the
- * input
- * @task handle, otherwise it is an error. The returned task handle may be used
- * to setup
- * dependencies with other copy and compute tasks or for explicit
- * synchronization
- * by the host. Returns @ATMI_NULL_TASK_HANDLE on an error.
- */
-atmi_task_handle_t atmi_task_activate(atmi_task_handle_t task);
 
 /**
  * @brief Wait for a launched task or a data movement operation.
@@ -540,67 +432,6 @@ atmi_task_handle_t atmi_task_activate(atmi_task_handle_t task);
  * @retval ::ATMI_STATUS_UNKNOWN The function encountered errors.
  */
 atmi_status_t atmi_task_wait(atmi_task_handle_t task);
-
-/**
- * @brief Create a new task group structure, which could be a group of compute
- * tasks and data movement tasks.
- *
- * @param[out] group_handle Pointer to the opaque task group handle.
- *
- * @param[in] ordered Denotes if tasks in the task group have to be executed in
- * the
- * enqueue order (default = false).
- *
- * @param[in] place Denotes the default execution place of tasks belonging to
- * this
- * task group (default = ATMI_DEFAULT_PLACE).
- *
- * @retval ::ATMI_STATUS_SUCCESS The function has executed successfully.
- *
- * @retval ::ATMI_STATUS_ERROR The function encountered errors.
- *
- * @retval ::ATMI_STATUS_UNKNOWN The function encountered errors.
- */
-atmi_status_t atmi_taskgroup_create(atmi_taskgroup_handle_t *group_handle,
-#ifdef __cplusplus
-                                    bool ordered = false,
-                                    atmi_place_t place = ATMI_DEFAULT_PLACE
-#else
-                                    bool ordered, atmi_place_t place
-#endif
-                                    );
-
-/**
- * @brief Release the task group structure, which could be a group of compute
- * tasks and data movement tasks. If this is called when a task group is in
- * execution,
- * behavior is undefined.
- *
- * @param[out] group_handle Pointer to the opaque task group handle.
- *
- * @retval ::ATMI_STATUS_SUCCESS The function has executed successfully.
- *
- * @retval ::ATMI_STATUS_ERROR The function encountered errors.
- *
- * @retval ::ATMI_STATUS_UNKNOWN The function encountered errors.
- */
-atmi_status_t atmi_taskgroup_release(atmi_taskgroup_handle_t group_handle);
-
-/**
- * @brief Wait for the launched task group, which could be a group of compute
- * tasks and data movement tasks.
- *
- * @param[in] group The task group handle of already launched tasks or an
- * in-flight data
- * movement operations.
- *
- * @retval ::ATMI_STATUS_SUCCESS The function has executed successfully.
- *
- * @retval ::ATMI_STATUS_ERROR The function encountered errors.
- *
- * @retval ::ATMI_STATUS_UNKNOWN The function encountered errors.
- */
-atmi_status_t atmi_taskgroup_wait(atmi_taskgroup_handle_t group_handle);
 
 /** @} */
 
@@ -721,16 +552,6 @@ atmi_task_handle_t atmi_memcpy_async(atmi_cparm_t *cparm, void *dest,
  *
  */
 atmi_task_handle_t get_atmi_task_handle();
-
-/**
- * @brief Retrieve the handle to the taskgroup object
- * of the currently running task. This function is valid
- * only within the body of a CPU task.
- *
- * @return A handle to the taskgroup of the ATMI CPU task.
- *
- */
-atmi_taskgroup_handle_t get_atmi_taskgroup_handle();
 
 /**
  * @brief Retrieve the global thread ID of

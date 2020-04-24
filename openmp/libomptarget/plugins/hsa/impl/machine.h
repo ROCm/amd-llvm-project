@@ -73,13 +73,6 @@ class ATLGPUProcessor : public ATLProcessor {
   void createQueues(const int count);
 };
 
-class ATLDSPProcessor : public ATLProcessor {
- public:
-  explicit ATLDSPProcessor(hsa_agent_t agent)
-      : ATLProcessor(agent, ATMI_DEVTYPE_DSP) {}
-  void createQueues(const int count);
-};
-
 class ATLMemory {
  public:
   ATLMemory(hsa_amd_memory_pool_t pool, ATLProcessor p, atmi_memtype_t t)
@@ -104,7 +97,6 @@ class ATLMachine {
   ATLMachine() {
     cpu_processors_.clear();
     gpu_processors_.clear();
-    dsp_processors_.clear();
   }
   template <typename T>
   void addProcessor(const T &p);
@@ -118,7 +110,6 @@ class ATLMachine {
  private:
   std::vector<ATLCPUProcessor> cpu_processors_;
   std::vector<ATLGPUProcessor> gpu_processors_;
-  std::vector<ATLDSPProcessor> dsp_processors_;
 };
 
 hsa_amd_memory_pool_t get_memory_pool(const ATLProcessor &proc,

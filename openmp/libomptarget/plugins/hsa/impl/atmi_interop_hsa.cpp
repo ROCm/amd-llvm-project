@@ -8,7 +8,6 @@
 #include "internal.h"
 using core::atl_is_atmi_initialized;
 using core::get_compute_agent;
-using core::get_memory_pool_by_mem_place;
 
 atmi_status_t atmi_interop_hsa_get_agent(atmi_place_t proc,
                                          hsa_agent_t *agent) {
@@ -16,15 +15,6 @@ atmi_status_t atmi_interop_hsa_get_agent(atmi_place_t proc,
   if (!agent) return ATMI_STATUS_ERROR;
 
   *agent = get_compute_agent(proc);
-  return ATMI_STATUS_SUCCESS;
-}
-
-atmi_status_t atmi_interop_hsa_get_memory_pool(atmi_mem_place_t memory,
-                                               hsa_amd_memory_pool_t *pool) {
-  if (!atl_is_atmi_initialized()) return ATMI_STATUS_ERROR;
-  if (!pool) return ATMI_STATUS_ERROR;
-
-  *pool = get_memory_pool_by_mem_place(memory);
   return ATMI_STATUS_SUCCESS;
 }
 

@@ -3,7 +3,7 @@
  *
  * This file is distributed under the MIT License. See LICENSE.txt for details.
  *===------------------------------------------------------------------------*/
-#include <rt.h>
+#include "rt.h"
 /*
  * Initialize/Finalize
  */
@@ -94,9 +94,6 @@ atmi_status_t atmi_kernel_add_cpu_impl(atmi_kernel_t atmi_kernel,
 /*
  * Synchronize
  */
-atmi_status_t atmi_taskgroup_wait(atmi_taskgroup_handle_t group_handle) {
-  return core::Runtime::getInstance().TaskGroupSync(group_handle);
-}
 
 atmi_status_t atmi_task_wait(atmi_task_handle_t task) {
   return core::Runtime::getInstance().TaskWait(task);
@@ -113,42 +110,11 @@ atmi_status_t atmi_register_task_hostcall_handler(
 /*
  * Tasks
  */
-atmi_task_handle_t atmi_task_template_create(atmi_kernel_t atmi_kernel) {
-  return core::Runtime::getInstance().CreateTaskTemplate(atmi_kernel);
-}
-
-atmi_task_handle_t atmi_task_template_activate(atmi_task_handle_t task,
-                                               atmi_lparm_t *lparm,
-                                               void **args) {
-  return core::Runtime::getInstance().ActivateTaskTemplate(task, lparm, args);
-}
-
-atmi_task_handle_t atmi_task_create(atmi_lparm_t *lparm,
-                                    atmi_kernel_t atmi_kernel, void **args) {
-  return core::Runtime::getInstance().CreateTask(lparm, atmi_kernel, args);
-}
-
-atmi_task_handle_t atmi_task_activate(atmi_task_handle_t task) {
-  return core::Runtime::getInstance().ActivateTask(task);
-}
 
 atmi_task_handle_t atmi_task_launch(
     atmi_lparm_t *lparm, atmi_kernel_t atmi_kernel,
     void **args /*, more params for place info? */) {
   return core::Runtime::getInstance().LaunchTask(lparm, atmi_kernel, args);
-}
-
-/*
- * Task groups
- */
-atmi_status_t atmi_taskgroup_create(atmi_taskgroup_handle_t *group_handle,
-                                    bool ordered, atmi_place_t place) {
-  return core::Runtime::getInstance().TaskGroupCreate(group_handle, ordered,
-                                                      place);
-}
-
-atmi_status_t atmi_taskgroup_release(atmi_taskgroup_handle_t group_handle) {
-  return core::Runtime::getInstance().TaskGroupRelease(group_handle);
 }
 
 /*

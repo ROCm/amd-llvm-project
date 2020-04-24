@@ -57,17 +57,6 @@ atmi_status_t Runtime::TaskGroupRelease(atmi_taskgroup_handle_t group_handle) {
   return status;
 }
 
-atmi_status_t Runtime::TaskGroupSync(atmi_taskgroup_handle_t group_handle) {
-  TaskgroupImpl *taskgroup_obj = getTaskgroupImpl(group_handle);
-  TaskWaitTimer.start();
-  if (taskgroup_obj)
-    taskgroup_obj->sync();
-  else
-    DEBUG_PRINT("Waiting for invalid task group signal!\n");
-  TaskWaitTimer.stop();
-  return ATMI_STATUS_SUCCESS;
-}
-
 void TaskgroupImpl::sync() {
   DEBUG_PRINT("Waiting for %u group tasks to complete\n", task_count_.load());
   // if tasks are groupable

@@ -97,34 +97,6 @@ create_signal()
 #endif
 }
 
-#if 0
-// wait_on_signal replaced with single call to hsa_signal_wait_acquire 
-static uint64_t
-wait_on_signal(signal_t doorbell, uint64_t timeout, uint64_t old_value)
-{
-    WHEN_DEBUG(std::cout << std::endl
-                         << "old signal value: " << (int64_t)old_value
-                         << std::endl);
-
-#ifdef WITH_HSA
-    hsa_signal_t hs{doorbell.handle};
-    assert(my_hsa_signal_wait);
-    while (true) {
-        uint64_t new_value =
-            my_hsa_signal_wait(hs, HSA_SIGNAL_CONDITION_NE, old_value, timeout,
-                               HSA_WAIT_STATE_BLOCKED);
-        WHEN_DEBUG(std::cout << "\nnew signal value: " << new_value
-                             << std::endl);
-        if (new_value != old_value)
-            return new_value;
-    }
-#else
-    assert(0);
-    return old_value;
-#endif
-}
-#endif
-
 /** \brief Locked reference to critical data.
  *
  *         Simpler version of the LockedAccessor in HIP sources.

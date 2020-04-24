@@ -333,9 +333,6 @@ atmi_status_t Runtime::Finalize() {
   for (auto &p : g_atl_machine.processors<ATLGPUProcessor>()) {
     p.destroyQueues();
   }
-  for (auto &p : g_atl_machine.processors<ATLDSPProcessor>()) {
-    p.destroyQueues();
-  }
 
   for (int i = 0; i < SymbolInfoTable.size(); i++) {
     SymbolInfoTable[i].clear();
@@ -454,54 +451,9 @@ static hsa_status_t get_agent_info(hsa_agent_t agent, void *data) {
       ErrorCheck(Iterate all memory pools, err);
       g_atl_machine.addProcessor(new_proc);
     } break;
-    case HSA_DEVICE_TYPE_DSP: {
-      ;
-      ATLDSPProcessor new_proc(agent);
-      err = hsa_amd_agent_iterate_memory_pools(agent, get_memory_pool_info,
-                                               &new_proc);
-      ErrorCheck(Iterate all memory pools, err);
-      g_atl_machine.addProcessor(new_proc);
-    } break;
   }
 
   return err;
-}
-
-/* Determines if the given agent is of type HSA_DEVICE_TYPE_GPU
-   and sets the value of data to the agent handle if it is.
-   */
-static hsa_status_t get_gpu_agent(hsa_agent_t agent, void *data) {
-  hsa_status_t status;
-  hsa_device_type_t device_type;
-  status = hsa_agent_get_info(agent, HSA_AGENT_INFO_DEVICE, &device_type);
-  DEBUG_PRINT("Device Type = %d\n", device_type);
-  if (HSA_STATUS_SUCCESS == status && HSA_DEVICE_TYPE_GPU == device_type) {
-    uint32_t max_queues;
-    status = hsa_agent_get_info(agent, HSA_AGENT_INFO_QUEUES_MAX, &max_queues);
-    DEBUG_PRINT("GPU has max queues = %" PRIu32 "\n", max_queues);
-    hsa_agent_t *ret = reinterpret_cast<hsa_agent_t *>(data);
-    *ret = agent;
-    return HSA_STATUS_INFO_BREAK;
-  }
-  return HSA_STATUS_SUCCESS;
-}
-
-/* Determines if the given agent is of type HSA_DEVICE_TYPE_CPU
-   and sets the value of data to the agent handle if it is.
-   */
-static hsa_status_t get_cpu_agent(hsa_agent_t agent, void *data) {
-  hsa_status_t status;
-  hsa_device_type_t device_type;
-  status = hsa_agent_get_info(agent, HSA_AGENT_INFO_DEVICE, &device_type);
-  if (HSA_STATUS_SUCCESS == status && HSA_DEVICE_TYPE_CPU == device_type) {
-    uint32_t max_queues;
-    status = hsa_agent_get_info(agent, HSA_AGENT_INFO_QUEUES_MAX, &max_queues);
-    DEBUG_PRINT("CPU has max queues = %" PRIu32 "\n", max_queues);
-    hsa_agent_t *ret = reinterpret_cast<hsa_agent_t *>(data);
-    *ret = agent;
-    return HSA_STATUS_INFO_BREAK;
-  }
-  return HSA_STATUS_SUCCESS;
 }
 
 hsa_status_t get_fine_grained_region(hsa_region_t region, void *data) {
@@ -555,8 +507,6 @@ hsa_status_t init_comute_and_memory() {
       g_atl_machine.processors<ATLCPUProcessor>();
   std::vector<ATLGPUProcessor> &gpu_procs =
       g_atl_machine.processors<ATLGPUProcessor>();
-  std::vector<ATLDSPProcessor> &dsp_procs =
-      g_atl_machine.processors<ATLDSPProcessor>();
   /* For CPU memory pools, add other devices that can access them directly
    * or indirectly */
   for (auto &cpu_proc : cpu_procs) {
@@ -573,17 +523,6 @@ hsa_status_t init_comute_and_memory() {
           gpu_proc.addMemory(cpu_mem);
         }
       }
-      for (auto &dsp_proc : dsp_procs) {
-        hsa_agent_t agent = dsp_proc.agent();
-        hsa_amd_memory_pool_access_t access;
-        hsa_amd_agent_memory_pool_get_info(
-            agent, pool, HSA_AMD_AGENT_MEMORY_POOL_INFO_ACCESS, &access);
-        if (access != 0) {
-          // this means not NEVER, but could be YES or NO
-          // add this memory pool to the proc
-          dsp_proc.addMemory(cpu_mem);
-        }
-      }
     }
   }
 
@@ -593,18 +532,6 @@ hsa_status_t init_comute_and_memory() {
   for (auto &gpu_proc : gpu_procs) {
     for (auto &gpu_mem : gpu_proc.memories()) {
       hsa_amd_memory_pool_t pool = gpu_mem.memory();
-      for (auto &dsp_proc : dsp_procs) {
-        hsa_agent_t agent = dsp_proc.agent();
-        hsa_amd_memory_pool_access_t access;
-        hsa_amd_agent_memory_pool_get_info(
-            agent, pool, HSA_AMD_AGENT_MEMORY_POOL_INFO_ACCESS, &access);
-        if (access != 0) {
-          // this means not NEVER, but could be YES or NO
-          // add this memory pool to the proc
-          dsp_proc.addMemory(gpu_mem);
-        }
-      }
-
       for (auto &cpu_proc : cpu_procs) {
         hsa_agent_t agent = cpu_proc.agent();
         hsa_amd_memory_pool_access_t access;
@@ -619,39 +546,10 @@ hsa_status_t init_comute_and_memory() {
     }
   }
 
-  for (auto &dsp_proc : dsp_procs) {
-    for (auto &dsp_mem : dsp_proc.memories()) {
-      hsa_amd_memory_pool_t pool = dsp_mem.memory();
-      for (auto &gpu_proc : gpu_procs) {
-        hsa_agent_t agent = gpu_proc.agent();
-        hsa_amd_memory_pool_access_t access;
-        hsa_amd_agent_memory_pool_get_info(
-            agent, pool, HSA_AMD_AGENT_MEMORY_POOL_INFO_ACCESS, &access);
-        if (access != 0) {
-          // this means not NEVER, but could be YES or NO
-          // add this memory pool to the proc
-          gpu_proc.addMemory(dsp_mem);
-        }
-      }
-
-      for (auto &cpu_proc : cpu_procs) {
-        hsa_agent_t agent = cpu_proc.agent();
-        hsa_amd_memory_pool_access_t access;
-        hsa_amd_agent_memory_pool_get_info(
-            agent, pool, HSA_AMD_AGENT_MEMORY_POOL_INFO_ACCESS, &access);
-        if (access != 0) {
-          // this means not NEVER, but could be YES or NO
-          // add this memory pool to the proc
-          cpu_proc.addMemory(dsp_mem);
-        }
-      }
-    }
-  }
-
   g_atmi_machine.device_count_by_type[ATMI_DEVTYPE_CPU] = cpu_procs.size();
   g_atmi_machine.device_count_by_type[ATMI_DEVTYPE_GPU] = gpu_procs.size();
-  g_atmi_machine.device_count_by_type[ATMI_DEVTYPE_DSP] = dsp_procs.size();
-  size_t num_procs = cpu_procs.size() + gpu_procs.size() + dsp_procs.size();
+
+  size_t num_procs = cpu_procs.size() + gpu_procs.size();
   // g_atmi_machine.devices = (atmi_device_t *)malloc(num_procs *
   // sizeof(atmi_device_t));
   atmi_device_t *all_devices = reinterpret_cast<atmi_device_t *>(
@@ -670,7 +568,7 @@ hsa_status_t init_comute_and_memory() {
   DEBUG_PRINT("iGPU Agents: %d\n", num_iGPUs);
   DEBUG_PRINT("dGPU Agents: %d\n", num_dGPUs);
   DEBUG_PRINT("GPU Agents: %lu\n", gpu_procs.size());
-  DEBUG_PRINT("DSP Agents: %lu\n", dsp_procs.size());
+
   g_atmi_machine.device_count_by_type[ATMI_DEVTYPE_iGPU] = num_iGPUs;
   g_atmi_machine.device_count_by_type[ATMI_DEVTYPE_dGPU] = num_dGPUs;
 
@@ -1068,62 +966,6 @@ static amd_comgr_status_t populateArgs(const amd_comgr_metadata_node_t key,
       }
       lcArg->valueKind_ = itValueKind->second;
     } break;
-// TODO(ashwinma): If we are interested in parsing other fields, then uncomment
-// them from
-// below
-#if 0
-      case ArgField::ValueType:
-        {
-          auto itValueType = ArgValueType.find(buf);
-          if (itValueType == ArgValueType.end()) {
-            return AMD_COMGR_STATUS_ERROR;
-          }
-          lcArg->mValueType = itValueType->second;
-        }
-        break;
-      case ArgField::PointeeAlign:
-        lcArg->mPointeeAlign = atoi(buf.c_str());
-        break;
-      case ArgField::AddrSpaceQual:
-        {
-          auto itAddrSpaceQual = ArgAddrSpaceQual.find(buf);
-          if (itAddrSpaceQual == ArgAddrSpaceQual.end()) {
-            return AMD_COMGR_STATUS_ERROR;
-          }
-          lcArg->mAddrSpaceQual = itAddrSpaceQual->second;
-        }
-        break;
-      case ArgField::AccQual:
-        {
-          auto itAccQual = ArgAccQual.find(buf);
-          if (itAccQual == ArgAccQual.end()) {
-            return AMD_COMGR_STATUS_ERROR;
-          }
-          lcArg->mAccQual = itAccQual->second;
-        }
-        break;
-      case ArgField::ActualAccQual:
-        {
-          auto itAccQual = ArgAccQual.find(buf);
-          if (itAccQual == ArgAccQual.end()) {
-            return AMD_COMGR_STATUS_ERROR;
-          }
-          lcArg->mActualAccQual = itAccQual->second;
-        }
-        break;
-      case ArgField::IsConst:
-        lcArg->mIsConst = (buf.compare("true") == 0);
-        break;
-      case ArgField::IsRestrict:
-        lcArg->mIsRestrict = (buf.compare("true") == 0);
-        break;
-      case ArgField::IsVolatile:
-        lcArg->mIsVolatile = (buf.compare("true") == 0);
-        break;
-      case ArgField::IsPipe:
-        lcArg->mIsPipe = (buf.compare("true") == 0);
-        break;
-#endif
     default:
       return AMD_COMGR_STATUS_SUCCESS;
       // return AMD_COMGR_STATUS_ERROR;
@@ -1164,44 +1006,6 @@ static amd_comgr_status_t populateCodeProps(
     case CodePropField::KernargSegmentSize:
       kernelMD->kernargSegmentSize_ = atoi(buf.c_str());
       break;
-// TODO(ashwinma): If we are interested in parsing other fields, then uncomment
-// them from
-// below
-#if 0
-      case CodePropField::GroupSegmentFixedSize:
-        kernelMD->mCodeProps.mGroupSegmentFixedSize = atoi(buf.c_str());
-        break;
-      case CodePropField::PrivateSegmentFixedSize:
-        kernelMD->mCodeProps.mPrivateSegmentFixedSize = atoi(buf.c_str());
-        break;
-      case CodePropField::KernargSegmentAlign:
-        kernelMD->mCodeProps.mKernargSegmentAlign = atoi(buf.c_str());
-        break;
-      case CodePropField::WavefrontSize:
-        kernelMD->mCodeProps.mWavefrontSize = atoi(buf.c_str());
-        break;
-      case CodePropField::NumSGPRs:
-        kernelMD->mCodeProps.mNumSGPRs = atoi(buf.c_str());
-        break;
-      case CodePropField::NumVGPRs:
-        kernelMD->mCodeProps.mNumVGPRs = atoi(buf.c_str());
-        break;
-      case CodePropField::MaxFlatWorkGroupSize:
-        kernelMD->mCodeProps.mMaxFlatWorkGroupSize = atoi(buf.c_str());
-        break;
-      case CodePropField::IsDynamicCallStack:
-        kernelMD->mCodeProps.mIsDynamicCallStack = (buf.compare("true") == 0);
-        break;
-      case CodePropField::IsXNACKEnabled:
-        kernelMD->mCodeProps.mIsXNACKEnabled = (buf.compare("true") == 0);
-        break;
-      case CodePropField::NumSpilledSGPRs:
-        kernelMD->mCodeProps.mNumSpilledSGPRs = atoi(buf.c_str());
-        break;
-      case CodePropField::NumSpilledVGPRs:
-        kernelMD->mCodeProps.mNumSpilledVGPRs = atoi(buf.c_str());
-        break;
-#endif
     default:
       return AMD_COMGR_STATUS_SUCCESS;
   }

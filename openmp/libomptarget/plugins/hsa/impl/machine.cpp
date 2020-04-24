@@ -57,11 +57,6 @@ std::vector<ATLGPUProcessor> &ATLMachine::processors() {
   return gpu_processors_;
 }
 
-template <>
-std::vector<ATLDSPProcessor> &ATLMachine::processors() {
-  return dsp_processors_;
-}
-
 hsa_amd_memory_pool_t get_memory_pool(const ATLProcessor &proc,
                                       const int mem_id) {
   hsa_amd_memory_pool_t pool;
@@ -80,11 +75,6 @@ void ATLMachine::addProcessor(const ATLCPUProcessor &p) {
 template <>
 void ATLMachine::addProcessor(const ATLGPUProcessor &p) {
   gpu_processors_.push_back(p);
-}
-
-template <>
-void ATLMachine::addProcessor(const ATLDSPProcessor &p) {
-  dsp_processors_.push_back(p);
 }
 
 int cu_mask_parser(char *gpu_workers, uint64_t *cu_masks, int count) {
@@ -256,8 +246,6 @@ void ATLCPUProcessor::createQueues(const int count) {
                        reinterpret_cast<void *>(agent));
   }
 }
-
-void ATLDSPProcessor::createQueues(const int count) {}
 
 void ATLProcessor::destroyQueues() {
   for (auto queue : queues_) {
