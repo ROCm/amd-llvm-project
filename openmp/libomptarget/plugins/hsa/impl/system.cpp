@@ -21,6 +21,14 @@
 #include "rt.h"
 using core::RealTimer;
 
+#define comgrErrorCheck(msg, status)                         \
+  if (status != AMD_COMGR_STATUS_SUCCESS) {                  \
+    printf("[%s:%d] %s failed\n", __FILE__, __LINE__, #msg); \
+    return HSA_STATUS_ERROR_INVALID_CODE_OBJECT;             \
+  } else {                                                   \
+    /*  printf("%s succeeded.\n", #msg);*/                   \
+  }
+
 typedef unsigned char *address;
 /*
  * Note descriptors.

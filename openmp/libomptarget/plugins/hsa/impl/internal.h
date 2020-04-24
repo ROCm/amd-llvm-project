@@ -304,14 +304,6 @@ atmi_status_t set_thread_affinity(int id);
     /*  printf("%s succeeded.\n", #msg);*/                      \
   }
 
-#define comgrErrorCheck(msg, status)                         \
-  if (status != AMD_COMGR_STATUS_SUCCESS) {                  \
-    printf("[%s:%d] %s failed\n", __FILE__, __LINE__, #msg); \
-    return HSA_STATUS_ERROR_INVALID_CODE_OBJECT;             \
-  } else {                                                   \
-    /*  printf("%s succeeded.\n", #msg);*/                   \
-  }
-
 #define ELFErrorReturn(msg, status)                             \
   {                                                             \
     printf("[%s:%d] %s failed: %s\n", __FILE__, __LINE__, #msg, \
