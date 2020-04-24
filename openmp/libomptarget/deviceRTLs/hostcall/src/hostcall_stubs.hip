@@ -28,6 +28,13 @@ EXTERN char * printf_alloc(uint32_t bufsz) {
   return (char *) result.arg1;
 }
 
+EXTERN void hostrpc_fptr0(void* fptr) {
+  uint64_t arg0,arg1,arg2,arg3,arg4,arg5,arg6,arg7;
+  arg0 = (uint64_t) fptr;
+  hostcall_result_t result = hostcall_invoke(PACK_VERS(HOSTCALL_SERVICE_FUNCTIONCALL),
+    arg0,arg1,arg2,arg3,arg4,arg5,arg6,arg7);
+}
+
 EXTERN int printf_execute(char * print_buffer, uint32_t bufsz) { 
   uint64_t arg0,arg1,arg2,arg3,arg4,arg5,arg6,arg7;
   __builtin_amdgcn_wave_barrier();

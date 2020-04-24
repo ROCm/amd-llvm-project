@@ -62,6 +62,11 @@ void handler_HOSTCALL_SERVICE_FREE(void *cbdata, uint32_t service, uint64_t *pay
     atmi_free(device_buffer);
 }
 
+void handler_HOSTCALL_SERVICE_FUNCTIONCALL(void *cbdata, uint32_t service, uint64_t *payload) {
+  void (*fptr)() = (void*) payload[0];
+  (*fptr)();
+}
+
 int vector_product_zeros(int N, int*A, int*B, int*C) {
     int zeros = 0;
     for (int i =0 ; i<N; i++) {
@@ -97,4 +102,5 @@ void hostcall_register_all_handlers(amd_hostcall_consumer_t * c, void * cbdata) 
     amd_hostcall_register_service(c,HOSTCALL_SERVICE_MALLOC, handler_HOSTCALL_SERVICE_MALLOC, cbdata);
     amd_hostcall_register_service(c,HOSTCALL_SERVICE_FREE, handler_HOSTCALL_SERVICE_FREE, cbdata);
     amd_hostcall_register_service(c,HOSTCALL_SERVICE_DEMO, handler_HOSTCALL_SERVICE_DEMO, cbdata);
+    amd_hostcall_register_service(c,HOSTCALL_SERVICE_FUNCTIONCALL, handler_HOSTCALL_SERVICE_FUNCTIONCALL, cbdata);
 }

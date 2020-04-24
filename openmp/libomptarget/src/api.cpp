@@ -20,6 +20,13 @@
 #include <cstring>
 #include <cstdlib>
 
+// This is the host fallback version of hostrpc_fptr0
+EXTERN void hostrpc_fptr0(void* fnptr) {
+  void (*fptr)() = (void (*)()) fnptr;
+  DP("host fallback for device function hostrpc_fptr0 fptr:%p\n",fptr);
+  (*fptr)();
+}
+
 EXTERN int omp_get_num_devices(void) {
   RTLsMtx->lock();
   size_t Devices_size = Devices.size();
