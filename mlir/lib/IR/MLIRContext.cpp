@@ -24,7 +24,6 @@
 #include "mlir/IR/Location.h"
 #include "mlir/IR/Module.h"
 #include "mlir/IR/Types.h"
-#include "mlir/Support/STLExtras.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SetVector.h"
@@ -83,10 +82,11 @@ namespace {
 /// the IR.
 struct BuiltinDialect : public Dialect {
   BuiltinDialect(MLIRContext *context) : Dialect(/*name=*/"", context) {
-    addAttributes<AffineMapAttr, ArrayAttr, BoolAttr, DenseElementsAttr,
-                  DictionaryAttr, FloatAttr, SymbolRefAttr, IntegerAttr,
-                  IntegerSetAttr, OpaqueAttr, OpaqueElementsAttr,
-                  SparseElementsAttr, StringAttr, TypeAttr, UnitAttr>();
+    addAttributes<AffineMapAttr, ArrayAttr, BoolAttr, DenseIntOrFPElementsAttr,
+                  DenseStringElementsAttr, DictionaryAttr, FloatAttr,
+                  SymbolRefAttr, IntegerAttr, IntegerSetAttr, OpaqueAttr,
+                  OpaqueElementsAttr, SparseElementsAttr, StringAttr, TypeAttr,
+                  UnitAttr>();
     addAttributes<CallSiteLoc, FileLineColLoc, FusedLoc, NameLoc, OpaqueLoc,
                   UnknownLoc>();
 
@@ -718,10 +718,8 @@ AffineMap AffineMap::get(unsigned dimCount, unsigned symbolCount,
 }
 
 AffineMap AffineMap::get(unsigned dimCount, unsigned symbolCount,
-                         ArrayRef<AffineExpr> results) {
-  // The number of results can't be zero.
-  assert(!results.empty());
-  return getImpl(dimCount, symbolCount, results, results[0].getContext());
+                         AffineExpr result) {
+  return getImpl(dimCount, symbolCount, {result}, result.getContext());
 }
 
 AffineMap AffineMap::get(unsigned dimCount, unsigned symbolCount,

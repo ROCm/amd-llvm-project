@@ -467,14 +467,31 @@ private:
 } // end namespace detail
 
 //===----------------------------------------------------------------------===//
-// TrailingOpResult
+// ResultStorage
 //===----------------------------------------------------------------------===//
 
 namespace detail {
-/// This class provides the implementation for a trailing operation result.
-struct TrailingOpResult {
-  /// The only element is the trailing result number, or the offset from the
-  /// beginning of the trailing array.
+/// This class provides the implementation for an in-line operation result. This
+/// is an operation result whose number can be stored inline inside of the bits
+/// of an Operation*.
+struct InLineOpResult : public IRObjectWithUseList<OpOperand> {};
+/// This class provides the implementation for an out-of-line operation result.
+/// This is an operation result whose number cannot be stored inline inside of
+/// the bits of an Operation*.
+struct TrailingOpResult : public IRObjectWithUseList<OpOperand> {
+  TrailingOpResult(uint64_t trailingResultNumber)
+      : trailingResultNumber(trailingResultNumber) {}
+
+  /// Returns the parent operation of this trailing result.
+  Operation *getOwner();
+
+  /// Return the proper result number of this op result.
+  unsigned getResultNumber() {
+    return trailingResultNumber + OpResult::getMaxInlineResults();
+  }
+
+  /// The trailing result number, or the offset from the beginning of the
+  /// trailing array.
   uint64_t trailingResultNumber;
 };
 } // end namespace detail
@@ -558,7 +575,7 @@ private:
 /// suitable for a more derived type (e.g. ArrayRef) or a template range
 /// parameter.
 class TypeRange
-    : public detail::indexed_accessor_range_base<
+    : public llvm::detail::indexed_accessor_range_base<
           TypeRange,
           llvm::PointerUnion<const Value *, const Type *, OpOperand *>, Type,
           Type, Type> {
@@ -589,9 +606,9 @@ private:
   /// * A pointer to the first element of an array of operands.
   using OwnerT = llvm::PointerUnion<const Value *, const Type *, OpOperand *>;
 
-  /// See `detail::indexed_accessor_range_base` for details.
+  /// See `llvm::detail::indexed_accessor_range_base` for details.
   static OwnerT offset_base(OwnerT object, ptrdiff_t index);
-  /// See `detail::indexed_accessor_range_base` for details.
+  /// See `llvm::detail::indexed_accessor_range_base` for details.
   static Type dereference_iterator(OwnerT object, ptrdiff_t index);
 
   /// Allow access to `offset_base` and `dereference_iterator`.
@@ -640,9 +657,8 @@ inline bool operator==(ArrayRef<Type> lhs, const ValueTypeRange<RangeT> &rhs) {
 // OperandRange
 
 /// This class implements the operand iterators for the Operation class.
-class OperandRange final
-    : public detail::indexed_accessor_range_base<OperandRange, OpOperand *,
-                                                 Value, Value, Value> {
+class OperandRange final : public llvm::detail::indexed_accessor_range_base<
+                               OperandRange, OpOperand *, Value, Value, Value> {
 public:
   using RangeBaseT::RangeBaseT;
   OperandRange(Operation *op);
@@ -658,11 +674,11 @@ public:
   unsigned getBeginOperandIndex() const;
 
 private:
-  /// See `detail::indexed_accessor_range_base` for details.
+  /// See `llvm::detail::indexed_accessor_range_base` for details.
   static OpOperand *offset_base(OpOperand *object, ptrdiff_t index) {
     return object + index;
   }
-  /// See `detail::indexed_accessor_range_base` for details.
+  /// See `llvm::detail::indexed_accessor_range_base` for details.
   static Value dereference_iterator(OpOperand *object, ptrdiff_t index) {
     return object[index].get();
   }
@@ -676,8 +692,8 @@ private:
 
 /// This class implements the result iterators for the Operation class.
 class ResultRange final
-    : public indexed_accessor_range<ResultRange, Operation *, OpResult,
-                                    OpResult, OpResult> {
+    : public llvm::indexed_accessor_range<ResultRange, Operation *, OpResult,
+                                          OpResult, OpResult> {
 public:
   using indexed_accessor_range<ResultRange, Operation *, OpResult, OpResult,
                                OpResult>::indexed_accessor_range;
@@ -690,12 +706,12 @@ public:
   auto getType() const { return getTypes(); }
 
 private:
-  /// See `indexed_accessor_range` for details.
+  /// See `llvm::indexed_accessor_range` for details.
   static OpResult dereference(Operation *op, ptrdiff_t index);
 
   /// Allow access to `dereference_iterator`.
-  friend indexed_accessor_range<ResultRange, Operation *, OpResult, OpResult,
-                                OpResult>;
+  friend llvm::indexed_accessor_range<ResultRange, Operation *, OpResult,
+                                      OpResult, OpResult>;
 };
 
 //===----------------------------------------------------------------------===//
@@ -730,7 +746,7 @@ struct ValueRangeOwner {
 /// suitable for a more derived type (e.g. ArrayRef) or a template range
 /// parameter.
 class ValueRange final
-    : public detail::indexed_accessor_range_base<
+    : public llvm::detail::indexed_accessor_range_base<
           ValueRange, detail::ValueRangeOwner, Value, Value, Value> {
 public:
   using RangeBaseT::RangeBaseT;
@@ -762,9 +778,9 @@ public:
 private:
   using OwnerT = detail::ValueRangeOwner;
 
-  /// See `detail::indexed_accessor_range_base` for details.
+  /// See `llvm::detail::indexed_accessor_range_base` for details.
   static OwnerT offset_base(const OwnerT &owner, ptrdiff_t index);
-  /// See `detail::indexed_accessor_range_base` for details.
+  /// See `llvm::detail::indexed_accessor_range_base` for details.
   static Value dereference_iterator(const OwnerT &owner, ptrdiff_t index);
 
   /// Allow access to `offset_base` and `dereference_iterator`.

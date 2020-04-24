@@ -11,9 +11,11 @@ add_entrypoint_library(
     # signal.h entrypoints
     libc.src.signal.raise
     libc.src.signal.sigaction
+    libc.src.signal.sigdelset
     libc.src.signal.sigaddset
     libc.src.signal.sigemptyset
     libc.src.signal.sigprocmask
+    libc.src.signal.sigfillset
     libc.src.signal.signal
 
     # stdlib.h entrypoints
@@ -35,13 +37,19 @@ add_entrypoint_library(
     libc.src.threads.mtx_unlock
     libc.src.threads.thrd_create
     libc.src.threads.thrd_join
+
+    # unistd.h entrypoints
+    libc.src.unistd.write
 )
 
 add_entrypoint_library(
   llvmlibm
   DEPENDS
     # math.h entrypoints
+    libc.src.math.cosf
     libc.src.math.round
+    libc.src.math.sincosf
+    libc.src.math.sinf
 )
 
 add_redirector_library(

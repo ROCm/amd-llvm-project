@@ -45,7 +45,7 @@ bool HexagonTTIImpl::useHVX() const {
 
 bool HexagonTTIImpl::isTypeForHVX(Type *VecTy) const {
   assert(VecTy->isVectorTy());
-  if (cast<VectorType>(VecTy)->isScalable())
+  if (isa<ScalableVectorType>(VecTy))
     return false;
   // Avoid types like <2 x i32*>.
   if (!cast<VectorType>(VecTy)->getElementType()->isIntegerTy())
@@ -165,7 +165,7 @@ unsigned HexagonTTIImpl::getMemoryOpCost(unsigned Opcode, Type *Src,
 
   if (Src->isVectorTy()) {
     VectorType *VecTy = cast<VectorType>(Src);
-    unsigned VecWidth = VecTy->getBitWidth();
+    unsigned VecWidth = VecTy->getPrimitiveSizeInBits().getFixedSize();
     if (useHVX() && isTypeForHVX(VecTy)) {
       unsigned RegWidth = getRegisterBitWidth(true);
       assert(RegWidth && "Non-zero vector register width expected");
