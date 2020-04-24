@@ -6,8 +6,8 @@
 #ifndef SRC_RUNTIME_INCLUDE_RT_H_
 #define SRC_RUNTIME_INCLUDE_RT_H_
 
-#include <atmi_runtime.h>
-#include <hsa.h>
+#include "atmi_runtime.h"
+#include "hsa.h"
 #include <cstdarg>
 #include <string>
 
@@ -100,16 +100,11 @@ class Runtime {
   atmi_status_t AddCPUKernelImpl(atmi_kernel_t, atmi_generic_fp,
                                  const unsigned int);
   // sync
-  atmi_status_t TaskGroupSync(atmi_taskgroup_handle_t);
   atmi_status_t TaskWait(atmi_task_handle_t);
   // print buffers/pipes
   atmi_status_t RegisterTaskHostcallHandler(atmi_task_hostcall_handler_t fp);
   // tasks
-  atmi_task_handle_t CreateTaskTemplate(atmi_kernel_t);
-  atmi_task_handle_t ActivateTaskTemplate(atmi_task_handle_t, atmi_lparm_t *,
-                                          void **);
-  atmi_task_handle_t CreateTask(atmi_lparm_t *, atmi_kernel_t, void **);
-  atmi_task_handle_t ActivateTask(atmi_task_handle_t);
+
   atmi_task_handle_t LaunchTask(atmi_lparm_t *, atmi_kernel_t, void **);
   // taskgroups
   atmi_status_t TaskGroupCreate(atmi_taskgroup_handle_t *, bool ordered = false,
@@ -134,33 +129,12 @@ class Runtime {
   // TODO(ashwinma): int may change to enum if we have more profile modes
   int getProfileMode() const { return env_.getProfileMode(); }
 
-#if 0
-  bool initialized() const { return initialized_; }
-  void set_initialized(const bool val) { initialized_ = val; }
-
-  bool hsa_initialized() const { return hsa_initialized_; }
-  void set_hsa_initialized(const bool val) { hsa_initialized_ = val; }
-
-  bool cpu_initialized() const { return cpu_initialized_; }
-  void set_cpu_initialized(const bool val) { cpu_initialized_ = val; }
-
-  bool gpu_initialized() const { return gpu_initialized_; }
-  void set_gpu_initialized(const bool val) { gpu_initialized_ = val; }
-
-  bool tasks_initialized() const { return tasks_initialized_; }
-  void set_tasks_initialized(const bool val) { tasks_initialized_ = val; }
-#endif
 
  protected:
   Runtime() = default;
   ~Runtime() = default;
   Runtime(const Runtime &) = delete;
   Runtime &operator=(const Runtime &) = delete;
-  // bool initialized_;
-  // bool hsa_initialized_;
-  // bool cpu_initialized_;
-  // bool gpu_initialized_;
-  // bool tasks_initialized_;
 
  protected:
   // variable to track environment variables

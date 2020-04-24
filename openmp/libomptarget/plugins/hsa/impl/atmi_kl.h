@@ -6,16 +6,12 @@
 #ifndef INCLUDE_ATMI_KL_H_
 #define INCLUDE_ATMI_KL_H_
 
-#include <atmi.h>
+#include "atmi.h"
 #ifdef __OPENCL_C_VERSION__
 #include "ockl_hsa.h"
 #endif
 #define MAX_NUM_KERNELS (1024 * 16)
-/*typedef struct atmi_task_impl_s {
-    unsigned long int signal;
-    unsigned char reserved[376];
-} atmi_task_impl_t;
-*/
+
 typedef struct atmi_implicit_args_s {
   unsigned long offset_x;
   unsigned long offset_y;

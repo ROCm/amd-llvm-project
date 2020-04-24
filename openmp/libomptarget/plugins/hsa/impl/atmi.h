@@ -80,8 +80,7 @@ typedef enum atmi_devtype_s {
   ATMI_DEVTYPE_iGPU = 0x0010,                                // Integrated GPU
   ATMI_DEVTYPE_dGPU = 0x0100,                                // Discrete GPU
   ATMI_DEVTYPE_GPU = ATMI_DEVTYPE_iGPU | ATMI_DEVTYPE_dGPU,  // Any GPU
-  ATMI_DEVTYPE_DSP = 0x1000,
-  ATMI_DEVTYPE_ALL = 0x1111  // Union of all device types
+  ATMI_DEVTYPE_ALL = 0x111  // Union of all device types
 } atmi_devtype_t;
 
 /**
@@ -138,29 +137,6 @@ typedef enum atmi_task_fence_scope_s {
   ATMI_FENCE_SCOPE_SYSTEM = 2
 } atmi_task_fence_scope_t;
 
-#if 0
-// More investigation needed to include these enums
-typedef enum atmi_data_type_s {
-    ATMI_CHAR,
-    ATMI_UNSIGNED_CHAR,
-    ATMI_INT,
-    ATMI_UNSIGNED_INT,
-    ATMI_LONG,
-    ATMI_UNSIGNED_LONG,
-    ATMI_LONG_LONG,
-    ATMI_UNSIGNED_LONG_LONG,
-    ATMI_FLOAT,
-    ATMI_DOUBLE,
-    ATMI_SIZE,
-    ATMI_PTR = (1 << 31)
-} atmi_data_type_t;
-
-typedef enum atmi_full_policy_s {
-    ATMI_WAIT        = 0,
-    ATMI_FAIL        = 1,
-    ATMI_DISCARD     = 2
-} atmi_full_policy_t;
-#endif
 /** @} */
 typedef char boolean;
 
@@ -302,39 +278,12 @@ typedef struct atmi_task_s {
    */
   atmi_tprofile_t profile;
 } atmi_task_t;
-#if 0
-typedef struct atmi_task_info_s {
-  /**
-   * Previously consistent state of task
-   */
-  atmi_state_t state;
-  /**
-   * Previously consistent task profile
-   */
-  atmi_tprofile_t profile;
-} atmi_task_info_t;
-#endif
-#if 0
-/**
- * @brief The ATMI task handle.
- */
-typedef struct atmi_task_handle_s {
-    union {
-        struct {
-            unsigned node : 16;
-            unsigned hi : 16;
-            unsigned lo : 32;
-        };
-        unsigned long int all;
-    };
-} atmi_task_handle_t;
-// #define ATMI_TASK_HANDLE(low) (atmi_task_handle_t){.node=0,.hi=0,.lo=low}
-#else
+
 /**
  * @brief The ATMI task handle.
  */
 typedef unsigned long int atmi_task_handle_t;
-#endif
+
 /**
  * @brief The ATMI taskgroup handle.
  *
@@ -515,7 +464,7 @@ typedef struct atmi_data_s {
    * The data pointer
    */
   void* ptr;
-  // atmi_data_type_t type;
+
   /**
    * Data size
    */

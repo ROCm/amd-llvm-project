@@ -106,7 +106,6 @@ class TaskgroupImpl {
   std::atomic_flag callback_started_;
 
   // int                maxsize;      /**< Number of tasks allowed in group */
-  // atmi_full_policy_t full_policy;/**< What to do if maxsize reached */
 };  // class TaskgroupImpl
 }  // namespace core
 #endif  // SRC_RUNTIME_INCLUDE_TASKGROUP_H_

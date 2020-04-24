@@ -155,8 +155,6 @@ int process_packet(thread_agent_t *agent) {
                 ATMI_WAIT_STATE)) < (hsa_signal_value_t)read_index) {
     }
     if (doorbell_value == INT_MAX) break;
-    TaskImpl *this_task = NULL;  // will be assigned to collect metrics
-    char *kernel_name = NULL;
     hsa_agent_dispatch_packet_t *packets =
         reinterpret_cast<hsa_agent_dispatch_packet_t *>(queue->base_address);
     hsa_agent_dispatch_packet_t *packet = packets + read_index % queue->size;
@@ -222,8 +220,6 @@ int process_packet(thread_agent_t *agent) {
             dynamic_cast<CPUKernelImpl *>(kernel->impls()[kernel_id]);
         std::vector<void *> kernel_args;
         void *kernel_args_region = reinterpret_cast<void *>(packet->arg[1]);
-        kernel_name = const_cast<char *>(
-            reinterpret_cast<const char *>(kernel_impl->name().c_str()));
         uint64_t num_params = kernel->num_args();
         char *thisKernargAddress = reinterpret_cast<char *>(kernel_args_region);
         for (int i = 0; i < kernel->num_args(); i++) {
@@ -603,16 +599,6 @@ atmi_task_handle_t get_atmi_task_handle() {
     DEBUG_PRINT("Task ID: NULL\n");
     return ATMI_NULL_TASK_HANDLE;
   }
-}
-
-atmi_taskgroup_handle_t get_atmi_taskgroup() {
-  TaskImpl *task = get_cur_thread_task_impl();
-  atmi_taskgroup_handle_t ret;
-  if (task) {
-    DEBUG_PRINT("Returning task group with ID: %lu\n", task->taskgroup_);
-    ret = task->taskgroup_;
-  }
-  return ret;
 }
 
 unsigned long get_global_size(unsigned int dim) {
