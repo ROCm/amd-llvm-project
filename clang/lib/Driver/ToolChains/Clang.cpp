@@ -7086,14 +7086,12 @@ static bool isArchiveOfBundlesFileName(StringRef FilePath) {
   if (!FileName.endswith(".a"))
     return false;
 
-  if (!FileName.startswith("lib"))
-    return false;
-
-  if (FileName.contains("amdgcn") && FileName.contains("gfx"))
-    return false;
-
-  if (FileName.contains("nvptx") && FileName.contains("sm_"))
-    return false;
+  if (FileName.startswith("lib")) {
+    if (FileName.contains("amdgcn") && FileName.contains("gfx"))
+      return false;
+    if (FileName.contains("nvptx") && FileName.contains("sm_"))
+      return false;
+  }
 
   return true;
 }
