@@ -597,8 +597,8 @@ struct DenseStringElementsAttributeStorage
       return KeyTy(ty, data, llvm::hash_value(data), isKnownSplat);
 
     // Handle the simple case of only one element.
-    size_t numElements = ty.getNumElements();
-    assert(numElements != 1 && "splat of 1 element should already be detected");
+    assert(ty.getNumElements() != 1 &&
+           "splat of 1 element should already be detected");
 
     // Create the initial hash value with just the first element.
     const auto &firstElt = data.front();
@@ -610,8 +610,8 @@ struct DenseStringElementsAttributeStorage
       if (!firstElt.equals(data[i]))
         return KeyTy(ty, data, llvm::hash_combine(hashVal, data.drop_front(i)));
 
-    // Otherwise, this is a splat so just return the hash of the first element.
-    return KeyTy(ty, {firstElt}, hashVal, /*isSplat=*/true);
+    // Otherwise, this is a splat.
+    return KeyTy(ty, data, hashVal, /*isSplat=*/true);
   }
 
   /// Hash the key for the storage.
