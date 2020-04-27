@@ -28,6 +28,7 @@
 #include "clang/CodeGen/CGFunctionInfo.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Intrinsics.h"
@@ -7911,6 +7912,11 @@ Value *CodeGenFunction::EmitAArch64SVEBuiltinExpr(unsigned BuiltinID,
     if (TypeFlags.getMergeType() == SVETypeFlags::MergeAnyExp)
       InsertExplicitUndefOperand(Builder, Ty, Ops);
 
+    // Some ACLE builtins leave out the argument to specify the predicate
+    // pattern, which is expected to be expanded to an SV_ALL pattern.
+    if (TypeFlags.isAppendSVALL())
+      Ops.push_back(Builder.getInt32(/*SV_ALL*/ 31));
+
     // Predicates must match the main datatype.
     for (unsigned i = 0, e = Ops.size(); i != e; ++i)
       if (auto PredTy = dyn_cast<llvm::VectorType>(Ops[i]->getType()))
@@ -14128,6 +14134,43 @@ Value *CodeGenFunction::EmitAMDGPUBuiltinExpr(unsigned BuiltinID,
     llvm::Value *Src2 = EmitScalarExpr(E->getArg(2));
     Function *F = CGM.getIntrinsic(Intrinsic::fshr, Src0->getType());
     return Builder.CreateCall(F, { Src0, Src1, Src2 });
+  }
+
+  case AMDGPU::BI__builtin_amdgcn_fence: {
+    llvm::AtomicOrdering AO = llvm::AtomicOrdering::SequentiallyConsistent;
+    llvm::SyncScope::ID SSID;
+    Value *Order = EmitScalarExpr(E->getArg(0));
+    Value *Scope = EmitScalarExpr(E->getArg(1));
+
+    if (isa<llvm::ConstantInt>(Order)) {
+      int ord = cast<llvm::ConstantInt>(Order)->getZExtValue();
+
+      // Map C11/C++11 memory ordering to LLVM memory ordering
+      switch (static_cast<llvm::AtomicOrderingCABI>(ord)) {
+      case llvm::AtomicOrderingCABI::acquire:
+        AO = llvm::AtomicOrdering::Acquire;
+        break;
+      case llvm::AtomicOrderingCABI::release:
+        AO = llvm::AtomicOrdering::Release;
+        break;
+      case llvm::AtomicOrderingCABI::acq_rel:
+        AO = llvm::AtomicOrdering::AcquireRelease;
+        break;
+      case llvm::AtomicOrderingCABI::seq_cst:
+        AO = llvm::AtomicOrdering::SequentiallyConsistent;
+        break;
+      case llvm::AtomicOrderingCABI::consume: // not supported by LLVM fence
+      case llvm::AtomicOrderingCABI::relaxed: // not supported by LLVM fence
+        break;
+      }
+
+      StringRef scp;
+      llvm::getConstantStringInfo(Scope, scp);
+      SSID = getLLVMContext().getOrInsertSyncScopeID(scp);
+
+      return Builder.CreateFence(AO, SSID);
+    }
+    LLVM_FALLTHROUGH;
   }
   default:
     return nullptr;
