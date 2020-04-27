@@ -54,6 +54,7 @@ enum hostcall_service_id {
   HOSTCALL_SERVICE_MALLOC,
   HOSTCALL_SERVICE_FREE,
   HOSTCALL_SERVICE_DEMO,
+  HOSTCALL_SERVICE_FUNCTIONCALL,
 };
 typedef enum hostcall_service_id hostcall_service_id_t;
 

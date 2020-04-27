@@ -12,6 +12,7 @@ EXTERN char *  printf_alloc(uint32_t bufsz);
 EXTERN int     printf_execute(char * bufptr, uint32_t bufsz);
 EXTERN uint32_t __strlen_max(char*instr, uint32_t maxstrlen);
 EXTERN int     vector_product_zeros(int N, int*A, int*B, int*C);
+EXTERN void    hostrpc_fptr0(void* fptr);
 
 typedef struct hostcall_result_s{
   uint64_t arg0,arg1,arg2,arg3,arg4,arg5,arg6,arg7;
