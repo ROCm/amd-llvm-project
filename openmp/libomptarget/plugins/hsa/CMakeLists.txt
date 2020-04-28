@@ -76,6 +76,8 @@ include_directories(
 add_library(omptarget.rtl.hsa SHARED
       impl/atmi.cpp
       impl/atmi_interop_hsa.cpp
+      impl/comgr-metadata.cpp
+      impl/comgr.cpp
       impl/cputask.cpp
       impl/data.cpp
       impl/kernel.cpp
@@ -92,20 +94,38 @@ add_library(omptarget.rtl.hsa SHARED
       src/rtl.cpp 
       )
 
+# Macros
+target_compile_definitions(omptarget.rtl.hsa PUBLIC -DHSA_USE_EXTERNAL_COMGR=0)
+    
+# Parts of ATMI require rtti (e.g. cputask uses dynamic_cast)
+# and parts of comgr do not work with rtti
+# comgr also compiles with no-strict-aliasing
+set_source_files_properties(impl/comgr-metadata.cpp impl/comgr.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti -fno-strict-aliasing")
+
 # Install plugin under the lib destination folder.
 # When we build for debug, OPENMP_LIBDIR_SUFFIX get set to -debug
 install(TARGETS omptarget.rtl.hsa LIBRARY DESTINATION "lib${OPENMP_LIBDIR_SUFFIX}")
 
 # We need the AOMP specific build of ATMI that has HSA_INTEROP turned on. 
-# Also, the AOMP specific build of ATMI has seperate release and debug builds. 
+# Also, the AOMP specific build of ATMI has seperate release and debug builds.
+
+
+# Statically link in the (many) LLVM libraries used by comgr
+llvm_map_components_to_libnames(LLVM_LIBS
+  ${LLVM_TARGETS_TO_BUILD})
+
 target_link_libraries(
   omptarget.rtl.hsa
-  -L${LLVM_LIBDIR}${OPENMP_LIBDIR_SUFFIX} -lamd_comgr -lpthread -ldl -Wl,-rpath,${LLVM_LIBDIR}${OPENMP_LIBDIR_SUFFIX}
+  PUBLIC
+  -L${LLVM_LIBDIR}${OPENMP_LIBDIR_SUFFIX} -lpthread -ldl -Wl,-rpath,${LLVM_LIBDIR}${OPENMP_LIBDIR_SUFFIX}
   -L${LIBOMPTARGET_DEP_LIBHSA_LIBRARIES_DIRS} -L${LIBOMPTARGET_DEP_LIBHSAKMT_LIBRARIES_DIRS} -lhsa-runtime64 -lhsakmt  -Wl,-rpath,${LIBOMPTARGET_DEP_LIBHSA_LIBRARIES_DIRS},-rpath,${LIBOMPTARGET_DEP_LIBHSAKMT_LIBRARIES_DIRS}
-  -L${LLVM_LIBDIR} -lLLVMAMDGPUDesc -lLLVMAMDGPUUtils -lLLVMMC -lLLVMCore -lLLVMSupport -Wl,-rpath,${LLVM_LIBDIR}
+  -Wl,-rpath,${LLVM_LIBDIR}
   -lelf
+  -ltinfo
   "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/../exports"
   "-Wl,-z,defs"
+  PRIVATE
+  ${LLVM_LIBS}
   )
 
 # Report to the parent scope that we are building a plugin for hsa

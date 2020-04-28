@@ -14,7 +14,7 @@
 #include <set>
 #include <string>
 
-#include "amd_comgr.h"
+#include "openmp_amd_comgr.h"
 #include "internal.h"
 #include "machine.h"
 #include "realtimer.h"
