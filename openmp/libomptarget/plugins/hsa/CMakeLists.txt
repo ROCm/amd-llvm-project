@@ -71,6 +71,7 @@ include_directories(
   ${LIBOMPTARGET_DEP_LIBHSA_INCLUDE_DIRS}
   ${CLANG_INCLUDE_DIRS}
   ${CMAKE_CURRENT_SOURCE_DIR}/impl
+  ${ROCM_DIR}/include
 )
 
 add_library(omptarget.rtl.hsa SHARED
