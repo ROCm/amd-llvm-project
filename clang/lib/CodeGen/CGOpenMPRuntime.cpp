@@ -4361,13 +4361,15 @@ void CGOpenMPRuntime::emitKmpRoutineEntryT(QualType KmpInt32Ty) {
 void CGOpenMPRuntime::emitStructureKernelDesc(CodeGenModule &CGM,
                                               StringRef Name, int16_t WG_Size,
                                               int8_t Mode, int8_t HostServices,
-                                              int8_t MaxParallelLevel) {
+                                              int8_t MaxParallelLevel,
+                                              int16_t num_args) {
 
   // Create all device images
   llvm::Constant *AttrData[] = {
-      llvm::ConstantInt::get(CGM.Int16Ty, 2), // Version
-      llvm::ConstantInt::get(CGM.Int16Ty, 9), // Size in bytes
+      llvm::ConstantInt::get(CGM.Int16Ty, 3),  // Version
+      llvm::ConstantInt::get(CGM.Int16Ty, 12), // Size in bytes
       llvm::ConstantInt::get(CGM.Int16Ty, WG_Size),
+      llvm::ConstantInt::get(CGM.Int16Ty, num_args),
       llvm::ConstantInt::get(CGM.Int8Ty, Mode), // 0 => SPMD, 1 => GENERIC
       llvm::ConstantInt::get(CGM.Int8Ty, HostServices), // 1 => use HostServices
       llvm::ConstantInt::get(CGM.Int8Ty, MaxParallelLevel)}; // number of nests
@@ -4389,6 +4391,7 @@ QualType CGOpenMPRuntime::getTgtAttributeStructQTy() {
     addFieldToRecordDecl(C, RD, KmpInt16Ty); // Version
     addFieldToRecordDecl(C, RD, KmpInt16Ty); // Struct Size in bytes.
     addFieldToRecordDecl(C, RD, KmpInt16Ty); // WG_size
+    addFieldToRecordDecl(C, RD, KmpInt16Ty); // num_args
     addFieldToRecordDecl(C, RD, KmpInt8Ty);  // Mode
     addFieldToRecordDecl(C, RD, KmpInt8Ty);  // HostServices
     addFieldToRecordDecl(C, RD, KmpInt8Ty);  // MaxParallelLevel

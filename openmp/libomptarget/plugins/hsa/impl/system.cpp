@@ -15,6 +15,8 @@
 #include <string>
 
 #include "amd_comgr.h"
+#include "atmi_interop_hsa.h"
+#include "atmi_runtime.h"
 #include "internal.h"
 #include "machine.h"
 #include "realtimer.h"
@@ -1516,6 +1518,41 @@ hsa_status_t populate_InfoTables(hsa_executable_t executable,
     register_allocation(reinterpret_cast<void *>(info.addr), (size_t)info.size,
                         place);
     SymbolInfoTable[gpu][std::string(name)] = info;
+
+    // Check if symbol is the kernel descriptor symbol, ends in "_kern_desc"
+    std::string sym_name(name);
+    std::size_t found = sym_name.rfind("_kern_desc");
+    if (found != std::string::npos) {
+      std::string kernelName = sym_name.substr(0, found);
+      if (KernelInfoTable[gpu].find(kernelName) == KernelInfoTable[gpu].end()) {
+        ErrorCheck(Finding expected kernel name in KernelInfoTable,
+                   HSA_STATUS_ERROR_INVALID_CODE_OBJECT);
+      }
+      atl_kernel_info_t kinfo = KernelInfoTable[gpu][kernelName];
+      atmi_kern_desc_t kdv;
+      atmi_status_t err = atmi_memcpy(&kdv, (void *)info.addr, sizeof(kdv));
+      if (err != ATMI_STATUS_SUCCESS) {
+        DEBUG_PRINT("Copying device to host. hostptr:%p device:%p size:%u\n",
+                    (void *)&kdv, info.addr, KernDescSize);
+        ErrorCheck(Copying data for kernel descriptor symbol,
+                 HSA_STATUS_ERROR_INVALID_CODE_OBJECT);
+      }
+      // Check structure size against recorded size.
+      if (sizeof(kdv) != kdv.TSize) {
+        DEBUG_PRINT("atmi_kern_desc_t size %lu not internal size %d for %s\n",
+                    sizeof(kdv), kdv.TSize, name);
+        ErrorCheck(Invalid kernel descriptor size,
+                   HSA_STATUS_ERROR_INVALID_CODE_OBJECT);
+      }
+      // printf("Old kss is %d .",kinfo.kernel_segment_size);
+      // args for OpenMP target region kernels are always pointers
+      kinfo.kernel_segment_size =
+          (kdv.num_args * sizeof(void *)) + sizeof(atmi_implicit_args_t);
+      // printf("New kss is %d\n",kinfo.kernel_segment_size);
+      KernelInfoTable[gpu][kernelName] = kinfo;
+    }
+
+    // Check if symbol exists to force creation of hostcall buffer
     if (strcmp(name, "needs_hostcall_buffer") == 0)
       g_atmi_hostcall_required = true;
     free(name);

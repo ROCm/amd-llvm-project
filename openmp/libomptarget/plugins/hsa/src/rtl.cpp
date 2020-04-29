@@ -751,16 +751,7 @@ __tgt_target_table *__tgt_rtl_load_binary(int32_t device_id,
     int16_t MaxParLevVal = 0;
 
     // get Kernel Descriptor if present.
-    // Keep struct in sync wih getTgtAttributeStructQTy in CGOpenMPRuntime.cpp
-    struct KernDescValType {
-      uint16_t Version;
-      uint16_t TSize;
-      uint16_t WG_Size;
-      uint8_t Mode;
-      uint8_t HostServices;
-      uint8_t MaxParallelLevel;
-    };
-    struct KernDescValType KernDescVal;
+    atmi_kern_desc_t KernDescVal;
     std::string KernDescNameStr(e->name);
     KernDescNameStr += "_kern_desc";
     const char *KernDescName = KernDescNameStr.c_str();
@@ -792,6 +783,7 @@ __tgt_target_table *__tgt_rtl_load_binary(int32_t device_id,
       DP("KernDesc: Version: %d\n", KernDescVal.Version);
       DP("KernDesc: TSize: %d\n", KernDescVal.TSize);
       DP("KernDesc: WG_Size: %d\n", KernDescVal.WG_Size);
+      DP("KernDesc: num_args: %d\n", KernDescVal.num_args);
       DP("KernDesc: Mode: %d\n", KernDescVal.Mode);
       DP("KernDesc: HostServices: %x\n", KernDescVal.HostServices);
       DP("KernDesc: MaxParallelLevel: %x\n", KernDescVal.MaxParallelLevel);

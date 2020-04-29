@@ -244,6 +244,22 @@ typedef struct atmi_kernel_s {
 } atmi_kernel_t;
 
 /**
+ * @brief Kernel Descriptor Structure
+ *
+ * @detail Keep this struct in sync wih getTgtAttributeStructQTy in
+ *         CGOpenMPRuntime.cpp.
+ * */
+typedef struct atmi_kern_desc_s {
+  uint16_t Version;
+  uint16_t TSize;
+  uint16_t WG_Size;
+  uint16_t num_args;
+  uint8_t Mode;
+  uint8_t HostServices;
+  uint8_t MaxParallelLevel;
+} atmi_kern_desc_t;
+
+/**
  * @brief Create an kernel opaque structure with all its architecture
  * specific implementations.
  *

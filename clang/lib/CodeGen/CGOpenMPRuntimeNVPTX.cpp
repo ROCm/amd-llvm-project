@@ -1329,10 +1329,10 @@ void CGOpenMPRuntimeNVPTX::GenerateMetaData(CodeGenModule &CGM,
   }
   // Emit a kernel descriptor for runtime.
   StringRef KernDescName = OutlinedFn->getName();
-  CGOpenMPRuntime::emitStructureKernelDesc(CGM, KernDescName, FlatAttr,
-                                           IsGeneric,
-                                           1, // Uses HostServices
-                                           MaxParallelLevel);
+  CGOpenMPRuntime::emitStructureKernelDesc(
+      CGM, KernDescName, FlatAttr, IsGeneric,
+      1, // Uses HostServices
+      MaxParallelLevel, (int16_t)OutlinedFn->arg_size());
   // Reset it to zero for any subsequent kernel
   MaxParallelLevel = 0;
 }
