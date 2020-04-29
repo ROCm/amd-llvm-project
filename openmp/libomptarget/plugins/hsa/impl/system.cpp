@@ -1533,7 +1533,7 @@ hsa_status_t populate_InfoTables(hsa_executable_t executable,
       atmi_status_t err = atmi_memcpy(&kdv, (void *)info.addr, sizeof(kdv));
       if (err != ATMI_STATUS_SUCCESS) {
         DEBUG_PRINT("Copying device to host. hostptr:%p device:%p size:%u\n",
-                    (void *)&kdv, info.addr, KernDescSize);
+                    (void *)&kdv, info.addr, sizeof(kdv));
         ErrorCheck(Copying data for kernel descriptor symbol,
                  HSA_STATUS_ERROR_INVALID_CODE_OBJECT);
       }
