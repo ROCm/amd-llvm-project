@@ -4360,19 +4360,22 @@ void CGOpenMPRuntime::emitKmpRoutineEntryT(QualType KmpInt32Ty) {
 /// Emit structure descriptor for a kernel
 void CGOpenMPRuntime::emitStructureKernelDesc(CodeGenModule &CGM,
                                               StringRef Name, int16_t WG_Size,
-                                              int8_t Mode, int8_t HostServices,
-                                              int8_t MaxParallelLevel,
-                                              int16_t num_args) {
+                                              int16_t NumArgs, int8_t Mode,
+                                              int8_t HostServices,
+                                              int8_t MaxParallelLevel) {
 
   // Create all device images
+  int8_t byte_reserve = 0;
   llvm::Constant *AttrData[] = {
       llvm::ConstantInt::get(CGM.Int16Ty, 3),  // Version
       llvm::ConstantInt::get(CGM.Int16Ty, 12), // Size in bytes
       llvm::ConstantInt::get(CGM.Int16Ty, WG_Size),
-      llvm::ConstantInt::get(CGM.Int16Ty, num_args),
+      llvm::ConstantInt::get(CGM.Int16Ty, NumArgs),
       llvm::ConstantInt::get(CGM.Int8Ty, Mode), // 0 => SPMD, 1 => GENERIC
       llvm::ConstantInt::get(CGM.Int8Ty, HostServices), // 1 => use HostServices
-      llvm::ConstantInt::get(CGM.Int8Ty, MaxParallelLevel)}; // number of nests
+      llvm::ConstantInt::get(CGM.Int8Ty, MaxParallelLevel), // number of nests
+      llvm::ConstantInt::get(CGM.Int8Ty,
+                             byte_reserve)}; // reserved for fuuture use
 
   llvm::GlobalVariable *AttrImages = createGlobalStruct(
       CGM, getTgtAttributeStructQTy(), isDefaultLocationConstant(), AttrData,
@@ -4391,10 +4394,11 @@ QualType CGOpenMPRuntime::getTgtAttributeStructQTy() {
     addFieldToRecordDecl(C, RD, KmpInt16Ty); // Version
     addFieldToRecordDecl(C, RD, KmpInt16Ty); // Struct Size in bytes.
     addFieldToRecordDecl(C, RD, KmpInt16Ty); // WG_size
-    addFieldToRecordDecl(C, RD, KmpInt16Ty); // num_args
+    addFieldToRecordDecl(C, RD, KmpInt16Ty); // NumArgs
     addFieldToRecordDecl(C, RD, KmpInt8Ty);  // Mode
     addFieldToRecordDecl(C, RD, KmpInt8Ty);  // HostServices
     addFieldToRecordDecl(C, RD, KmpInt8Ty);  // MaxParallelLevel
+    addFieldToRecordDecl(C, RD, KmpInt8Ty);  // reserved
     RD->completeDefinition();
     TgtAttributeStructQTy = C.getRecordType(RD);
   }

@@ -1695,9 +1695,8 @@ public:
 
   /// Emit structure descriptor for a kernel
   void emitStructureKernelDesc(CodeGenModule &CGM, StringRef Name,
-                               int16_t WG_Size, int8_t Mode,
-                               int8_t HostServices, int8_t MaxParallelLevel,
-                               int16_t num_args);
+                               int16_t WG_Size, int16_t NumArgs, int8_t Mode,
+                               int8_t HostServices, int8_t MaxParallelLevel);
 
   /// Emits OpenMP-specific function prolog.
   /// Required for device constructs.
