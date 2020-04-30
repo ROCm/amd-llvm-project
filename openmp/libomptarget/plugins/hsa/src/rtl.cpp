@@ -28,9 +28,6 @@
 // Header from ATMI interface
 #include "atmi_interop_hsa.h"
 #include "atmi_runtime.h"
-// Header from hostcall
-#include "amd_hostcall.h"
-
 #include "omptargetplugin.h"
 
 // Get static gpu grid values from clang target-specific constants managed
@@ -291,8 +288,6 @@ public:
       DP("Error when initializing HSA-ATMI\n");
       return;
     }
-    // Init hostcall soon after initializing ATMI
-    atmi_hostcall_init();
 
     HSAAgents = find_gpu_agents();
     NumberOfDevices = (int)HSAAgents.size();   
@@ -353,8 +348,6 @@ public:
 
   ~RTLDeviceInfoTy() {
     DP("Finalizing the HSA-ATMI DeviceInfo.\n");
-    // Terminate hostcall before finalizing ATMI
-    atmi_hostcall_terminate();
     atmi_finalize();
   }
 };

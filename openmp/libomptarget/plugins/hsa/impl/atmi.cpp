@@ -3,15 +3,18 @@
  *
  * This file is distributed under the MIT License. See LICENSE.txt for details.
  *===------------------------------------------------------------------------*/
+#include "amd_hostcall.h"
 #include "rt.h"
 /*
  * Initialize/Finalize
  */
 atmi_status_t atmi_init(atmi_devtype_t devtype) {
+  atmi_hostcall_init();
   return core::Runtime::getInstance().Initialize(devtype);
 }
 
 atmi_status_t atmi_finalize() {
+  atmi_hostcall_terminate();
   return core::Runtime::getInstance().Finalize();
 }
 
