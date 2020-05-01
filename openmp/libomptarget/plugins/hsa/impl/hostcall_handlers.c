@@ -28,15 +28,13 @@ SOFTWARE.
 
 */
 
-#include <stdlib.h>
-#include <stdio.h>
-#include "hsa/hsa_ext_amd.h"
+#include "../../../src/hostrpc_service_id.h"
 #include "amd_hostcall.h"
-#include "hostcall_impl.h"
-#include "hostcall_service_id.h"
-#include "hostcall_internal.h"
 #include "atmi_runtime.h"
- 
+#include "hsa/hsa_ext_amd.h"
+#include <stdio.h>
+#include <stdlib.h>
+
 void handler_HOSTCALL_SERVICE_PRINTF(void *cbdata, uint32_t service, uint64_t *payload) {
     size_t bufsz          = (size_t) payload[0];
     char* device_buffer   = (char*) payload[1];
