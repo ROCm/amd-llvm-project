@@ -1200,16 +1200,6 @@ int populate_kernelArgMD(byte_range args_element, KernelArgMD *kernelarg) {
   return error;
 }
 
-// Force errors early while checking this patch
-#undef assert
-#define assert(X) hard_assert(X, __LINE__)
-static void hard_assert(bool x, int L) {
-  if (!x) {
-    printf("L%u: Assert! \n", L);
-    exit(1);
-  }
-}
-
 static hsa_status_t get_code_object_custom_metadata(void *binary,
                                                     size_t binSize, int gpu) {
   // parse code object with different keys from v2
