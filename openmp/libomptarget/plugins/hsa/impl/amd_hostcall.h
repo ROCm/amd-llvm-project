@@ -274,6 +274,10 @@ AMD_HOSTCALL_API
 hsa_status_t
 atmi_hostcall_version_check(unsigned int device_vrm);
 
+/// This is called by the registered printf callback handler.
+//  The source code for hostcall_printf is in hostcall_printf.c
+amd_hostcall_error_t hostcall_printf(char *buf, size_t bufsz);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif

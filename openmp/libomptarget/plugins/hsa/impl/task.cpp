@@ -5,22 +5,7 @@
  *===------------------------------------------------------------------------*/
 
 #include "task.h"
-#include <errno.h>
-#include <malloc.h>
-#include <pthread.h>
-#include <stdarg.h>
-#include <sys/syscall.h>
-#include <time.h>
-#include <unistd.h>
-#include <algorithm>
-#include <atomic>
-#include <cassert>
-#include <deque>
-#include <fstream>
-#include <iostream>
-#include <map>
-#include <set>
-#include <vector>
+#include "amd_hostcall.h"
 #include "data.h"
 #include "internal.h"
 #include "kernel.h"
@@ -29,6 +14,22 @@
 #include "realtimer.h"
 #include "rt.h"
 #include "taskgroup.h"
+#include <algorithm>
+#include <atomic>
+#include <cassert>
+#include <deque>
+#include <errno.h>
+#include <fstream>
+#include <iostream>
+#include <malloc.h>
+#include <map>
+#include <pthread.h>
+#include <set>
+#include <stdarg.h>
+#include <sys/syscall.h>
+#include <time.h>
+#include <unistd.h>
+#include <vector>
 using core::Kernel;
 using core::KernelImpl;
 using core::RealTimer;
@@ -408,24 +409,6 @@ void TaskImpl::updateMetrics() {
        * worker pthread itself. No special function call */
     }
   }
-}
-// function pointers
-atmi_task_hostcall_handler_t task_process_hostcall_handler = NULL;
-
-atmi_status_t Runtime::RegisterTaskHostcallHandler(
-    atmi_task_hostcall_handler_t fp) {
-  atmi_status_t status;
-  if (!task_process_hostcall_handler) {
-    task_process_hostcall_handler = fp;
-    status = ATMI_STATUS_SUCCESS;
-  } else {
-    // Task handler already set. Currently, we support
-    // only single hostcall handlers.
-    DEBUG_PRINT("Task handler already set\n");
-    status = ATMI_STATUS_ERROR;
-  }
-
-  return status;
 }
 
 pthread_mutex_t sort_mutex_2(pthread_mutex_t *addr1, pthread_mutex_t *addr2,
@@ -993,7 +976,7 @@ atmi_status_t ComputeTaskImpl::dispatch() {
     // assign a hostcall buffer for the selected Q
     {
       KernelImpl *kernel_impl = NULL;
-      if (g_atmi_hostcall_required && task_process_hostcall_handler) {
+      if (g_atmi_hostcall_required) {
         if (kernel_) {
           kernel_impl = kernel_->getKernelImpl(kernel_id_);
           // printf("Task Id: %lu, kernel name: %s\n", id_,
@@ -1005,9 +988,8 @@ atmi_status_t ComputeTaskImpl::dispatch() {
                 reinterpret_cast<atmi_implicit_args_t *>(
                     kargs +
                     (kernarg_region_size_ - sizeof(atmi_implicit_args_t)));
-
             impl_args->hostcall_ptr =
-                (*task_process_hostcall_handler)(this_Q, proc_id);
+                atmi_hostcall_assign_buffer(this_Q, proc_id);
           }
         }
       }
