@@ -19,6 +19,9 @@
 #include "machine.h"
 #include "realtimer.h"
 #include "rt.h"
+
+#include "msgpack.h"
+
 using core::RealTimer;
 
 #define comgrErrorCheck(msg, status)                         \
@@ -37,6 +40,9 @@ typedef struct {
   uint32_t n_namesz; /* Length of note's name. */
   uint32_t n_descsz; /* Length of note's value. */
   uint32_t n_type;   /* Type of note. */
+  // then name
+  // then padding, optional
+  // then desc, at 4 byte alignment (not 8, despite being elf64)
 } Elf_Note;
 
 // The following include file and following structs/enums
@@ -130,6 +136,12 @@ class KernelArgMD {
   uint32_t align_;
   ValueKind valueKind_;
 };
+
+static bool operator==(KernelArgMD const &lhs, KernelArgMD const &rhs) {
+  return (lhs.name_ == rhs.name_) && (lhs.typeName_ == rhs.typeName_) &&
+         (lhs.size_ == rhs.size_) && (lhs.offset_ == rhs.offset_) &&
+         (lhs.align_ == rhs.align_) && (lhs.valueKind_ == rhs.valueKind_);
+}
 
 class KernelMD {
  public:
@@ -1187,6 +1199,187 @@ hsa_status_t get_code_object_custom_metadata_v2(atmi_platform_type_t platform,
   return HSA_STATUS_SUCCESS;
 }
 
+// This is closely related to get_code_object_version and can
+// be merged with it in a later patch
+static std::pair<unsigned char *, unsigned char *>
+find_metadata(void *binary, size_t binSize) {
+  std::pair<unsigned char *, unsigned char *> failure = {nullptr, nullptr};
+
+  Elf *e = elf_memory(static_cast<char *>(binary), binSize);
+  if (elf_kind(e) != ELF_K_ELF) {
+    return failure;
+  }
+
+  size_t numpHdrs;
+  if (elf_getphdrnum(e, &numpHdrs) != 0) {
+    return failure;
+  }
+
+  for (size_t i = 0; i < numpHdrs; ++i) {
+    GElf_Phdr pHdr;
+    if (gelf_getphdr(e, i, &pHdr) != &pHdr) {
+      continue;
+    }
+    // Look for the runtime metadata note
+    if (pHdr.p_type == PT_NOTE && pHdr.p_align >= sizeof(int)) {
+      // Iterate over the notes in this segment
+      address ptr = (address)binary + pHdr.p_offset;
+      address segmentEnd = ptr + pHdr.p_filesz;
+
+      while (ptr < segmentEnd) {
+        Elf_Note *note = reinterpret_cast<Elf_Note *>(ptr);
+        address name = (address)&note[1];
+        address desc = name + core::alignUp(note->n_namesz, sizeof(int));
+
+        if (note->n_type == 7 || note->n_type == 8) {
+          return failure;
+        } else if (note->n_type == 10 /* NT_AMD_AMDGPU_HSA_METADATA */ &&
+                   note->n_namesz == sizeof "AMD" &&
+                   !memcmp(name, "AMD", note->n_namesz)) {
+          // code object v2
+          return failure;
+        } else if (note->n_type == 32 /* NT_AMDGPU_METADATA */ &&
+                   note->n_namesz == sizeof "AMDGPU" &&
+                   !memcmp(name, "AMDGPU", note->n_namesz)) {
+
+          // n_descsz = 485
+          // value is padded to 4 byte alignment, may want to move end up to
+          // match
+          size_t offset = sizeof(uint32_t) * 3 /* fields */
+                          + sizeof("AMDGPU")   /* name */
+                          + 1 /* padding to 4 byte alignment */;
+
+          // Including the trailing padding means both pointers are 4 bytes
+          // aligned, which may be useful later.
+          unsigned char *metadata_start = (unsigned char *)ptr + offset;
+          unsigned char *metadata_end =
+              metadata_start + core::alignUp(note->n_descsz, 4);
+          return {metadata_start, metadata_end};
+        }
+        ptr += sizeof(*note) + core::alignUp(note->n_namesz, sizeof(int)) +
+               core::alignUp(note->n_descsz, sizeof(int));
+      }
+    }
+  }
+
+  return failure;
+}
+
+int map_lookup_array(byte_range message, const char *needle, byte_range *res,
+                     uint64_t *size) {
+  unsigned count = 0;
+
+  foreach_map(message, [&](byte_range key, byte_range value) {
+    if (message_is_string(key, needle)) {
+
+      functors f;
+      // Check the message is an array and get the number of elements in it
+      f.cb_array = [&](uint64_t N, byte_range bytes) -> const unsigned char * {        
+        count++;
+        *size = N;
+        return bytes.end;
+      };
+
+      // return the whole array
+      *res = value;
+      handle_msgpack(value, f);
+    }
+  });
+  return count != 1;
+}
+
+int map_lookup_string(byte_range message, const char *needle,
+                      std::string *res) {
+  unsigned count = 0;
+  foreach_map(message, [&](byte_range key, byte_range value) {
+    if (message_is_string(key, needle)) {
+      functors f;
+      f.cb_string = [&](size_t N, const unsigned char *str) {
+        count++;
+        *res = std::string(str, str + N);
+      };
+      handle_msgpack(value, f);
+    }
+  });
+  return count != 1;
+}
+
+ int map_lookup_uint64_t(byte_range message, const char *needle, uint64_t *res) {
+  unsigned count = 0;
+  foreach_map(message, [&](byte_range key, byte_range value) {
+    if (message_is_string(key, needle)) {
+      functors f;
+      f.cb_unsigned = [&](uint64_t x) {
+        count++;
+        *res = x;
+      };
+      handle_msgpack(value, f);
+    }
+  });
+  return count != 1;
+}
+
+int array_lookup_element(byte_range message, uint64_t elt, byte_range *res) {
+  int rc = 1;
+  uint64_t i = 0;
+  foreach_array(message, [&](byte_range value) {
+    if (i == elt) {
+      *res = value;
+      rc = 0;
+    }
+    i++;
+  });
+  return rc;
+}
+
+int populate_kernelArgMD(byte_range args_element, KernelArgMD *kernelarg) {
+  int error = 0;
+  foreach_map(args_element, [&](byte_range key, byte_range value) -> void {
+    functors f;
+    if (message_is_string(key, ".name")) {
+      f.cb_string = [&](size_t N, const unsigned char *str) {
+        kernelarg->name_ = std::string(str, str + N);
+      };
+    } else if (message_is_string(key, ".type_name")) {
+      f.cb_string = [&](size_t N, const unsigned char *str) {
+        kernelarg->typeName_ = std::string(str, str + N);
+      };
+    } else if (message_is_string(key, ".size")) {
+      f.cb_unsigned = [&](uint64_t x) { kernelarg->size_ = x; };
+    } else if (message_is_string(key, ".offset")) {
+      f.cb_unsigned = [&](uint64_t x) { kernelarg->offset_ = x; };
+    } else if (message_is_string(key, ".value_kind")) {
+      f.cb_string = [&](size_t N, const unsigned char *str) {
+        std::string s = std::string(str, str + N);
+        //  printf("value_kind string %s\n", s.c_str());
+        auto itValueKind = ArgValueKind.find(s);
+        if (itValueKind == ArgValueKind.end()) {
+          // error++;
+          // comgr looks like it raises an error here, but there
+          // are fields in value_kind (like "global_buffer") which
+          // aren't in the argvaluekind map
+        } else {
+          kernelarg->valueKind_ = itValueKind->second;
+        }
+      };
+    }
+
+    handle_msgpack(value, f);
+  });
+
+  return error;
+}
+
+// Force errors early while checking this patch
+#undef assert
+#define assert(X) hard_assert(X, __LINE__)
+static void hard_assert(bool x, int L) {
+  if (!x) {
+    printf("L%u: Assert! \n", L);
+    exit(1);
+  }
+}
+
 hsa_status_t get_code_object_custom_metadata_v3(atmi_platform_type_t platform,
                                                 void *binary, size_t binSize,
                                                 int gpu) {
@@ -1209,6 +1402,14 @@ hsa_status_t get_code_object_custom_metadata_v3(atmi_platform_type_t platform,
 
   amd_comgr_release_data(binaryData);
 
+
+  std::pair<unsigned char *, unsigned char *> metadata =
+      find_metadata(binary, binSize);
+  if (!metadata.first) {
+    return HSA_STATUS_ERROR_INVALID_CODE_OBJECT;
+  }
+
+
   amd_comgr_metadata_node_t kernelsMD;
   size_t kernelsSize = 0;
 
@@ -1218,7 +1419,19 @@ hsa_status_t get_code_object_custom_metadata_v3(atmi_platform_type_t platform,
   status = amd_comgr_get_metadata_list_size(kernelsMD, &kernelsSize);
   comgrErrorCheck(COMGR kernels size lookup in kernels metadata, status);
 
+  int msgpack_errors = 0;
+  byte_range kernel_array;
+  {
+    uint64_t kernel_array_size;
+    msgpack_errors = map_lookup_array( {metadata.first, metadata.second}, "amdhsa.kernels", &kernel_array, &kernel_array_size);
+    
+    assert(kernel_array_size == kernelsSize);
+    kernelsSize = kernel_array_size;
+  }
+  assert(msgpack_errors == 0);
+  
   for (size_t i = 0; i < kernelsSize; i++) {
+    assert(msgpack_errors == 0);
     std::string kernelName;
     std::string languageName;
     std::string symbolName;
@@ -1264,6 +1477,34 @@ hsa_status_t get_code_object_custom_metadata_v3(atmi_platform_type_t platform,
     comgrErrorCheck(
         COMGR kernarg segment size lookup in kernarg seg size metadata, status);
 
+    assert(msgpack_errors == 0);
+    byte_range element;
+    msgpack_errors += array_lookup_element(kernel_array, i, &element);
+    assert(msgpack_errors == 0);
+    
+    {
+      std::string msgpack_kernelName;
+      std::string msgpack_languageName;
+      std::string msgpack_symbolName;
+
+      assert(msgpack_errors == 0);
+
+      msgpack_errors +=
+          map_lookup_string(element, ".name", &msgpack_kernelName);
+      msgpack_errors +=
+          map_lookup_string(element, ".language", &msgpack_languageName);
+      msgpack_errors +=
+          map_lookup_string(element, ".symbol", &msgpack_symbolName);
+      assert(msgpack_errors == 0);
+
+      assert(msgpack_kernelName == kernelName);
+      kernelName = msgpack_kernelName;
+      assert(msgpack_languageName == languageName);
+      languageName = msgpack_languageName;
+      assert(msgpack_symbolName == symbolName);
+      symbolName = msgpack_symbolName;
+    }
+  
     // create a map from symbol to name
     DEBUG_PRINT("Kernel symbol %s; Name: %s; Size: %s\n", symbolName.c_str(),
                 kernelName.c_str(), kernargSegSize.c_str());
@@ -1272,6 +1513,15 @@ hsa_status_t get_code_object_custom_metadata_v3(atmi_platform_type_t platform,
     atl_kernel_info_t info;
     size_t kernel_explicit_args_size = 0;
     size_t kernel_segment_size = std::stoi(kernargSegSize);
+
+    {
+      uint64_t msgpack_kernargSegSize;
+      msgpack_errors += map_lookup_uint64_t(element, ".kernarg_segment_size",
+                                            &msgpack_kernargSegSize);
+      assert(kernel_segment_size == msgpack_kernargSegSize);
+      kernel_segment_size = msgpack_kernargSegSize;
+      assert(msgpack_errors == 0);
+    }
 
     bool hasHiddenArgs = false;
     if (kernel_segment_size > 0) {
@@ -1285,6 +1535,16 @@ hsa_status_t get_code_object_custom_metadata_v3(atmi_platform_type_t platform,
       status = amd_comgr_get_metadata_list_size(argsMeta, &argsSize);
       comgrErrorCheck(COMGR kernel args size lookup in kernel args metadata,
                       status);
+
+      byte_range args_array;
+      {
+        uint64_t msgpack_argsSize;
+        msgpack_errors +=
+          map_lookup_array(element, ".args", &args_array, &msgpack_argsSize);
+        assert(argsSize == msgpack_argsSize);
+        argsSize = msgpack_argsSize;
+        assert(msgpack_errors == 0);
+      }
 
       info.num_args = argsSize;
 
@@ -1300,6 +1560,10 @@ hsa_status_t get_code_object_custom_metadata_v3(atmi_platform_type_t platform,
         status = amd_comgr_get_metadata_kind(argsNode, &kind);
         comgrErrorCheck(COMGR args kind in kernel args metadata, status);
 
+        byte_range args_element;
+        msgpack_errors += array_lookup_element(args_array, i, &args_element);
+        assert(msgpack_errors == 0);
+        
         if (kind != AMD_COMGR_METADATA_KIND_MAP) {
           status = AMD_COMGR_STATUS_ERROR;
         }
@@ -1316,6 +1580,14 @@ hsa_status_t get_code_object_custom_metadata_v3(atmi_platform_type_t platform,
           return HSA_STATUS_ERROR_INVALID_CODE_OBJECT;
         }
 
+        {
+          KernelArgMD msgpack_kernelarg;
+          msgpack_errors += populate_kernelArgMD(args_element, &msgpack_kernelarg);
+          assert(msgpack_errors == 0);
+          assert(msgpack_kernelarg == lcArg);
+          lcArg = msgpack_kernelarg;
+        }
+        
         // TODO(ashwinma): should the below population actions be done only for
         // non-implicit args?
         // populate info with sizes and offsets
