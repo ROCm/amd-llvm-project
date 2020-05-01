@@ -1,5 +1,5 @@
 /*
- *   hostcall_service_id.h:  This header contains the enum for all the
+ *    hostrpc_service_id.h:  This header contains the enum for all the
  *                           implemented services in hostcall.  This header is
  *                           included by both device stubs and host routines.
  *                           It also includes the version, release, and patch
@@ -40,12 +40,14 @@ SOFTWARE.
 #define HOSTCALL_VERSION 0
 #define HOSTCALL_RELEASE 6
 #define HOSTCALL_PATCH 3
-// HOSTCALL_VRM fits in two bytes allowing for 64 patches, 64 releases, and 15 versions
-#define HOSTCALL_VRM ((HOSTCALL_VERSION * 4096) + (HOSTCALL_RELEASE * 64) + HOSTCALL_PATCH)
+// HOSTCALL_VRM fits in two bytes allowing for 64 patches, 64 releases, and 15
+// versions
+#define HOSTCALL_VRM                                                           \
+  ((HOSTCALL_VERSION * 4096) + (HOSTCALL_RELEASE * 64) + HOSTCALL_PATCH)
 #define HOSTCALL_VERSION_RELEASE ((HOSTCALL_VERSION * 64) + HOSTCALL_RELEASE)
 typedef short hostcall_version_t;
 
-#define PACK_VERS(x) ((uint32_t) HOSTCALL_VRM << 16) | ((uint32_t) x)
+#define PACK_VERS(x) ((uint32_t)HOSTCALL_VRM << 16) | ((uint32_t)x)
 
 enum hostcall_service_id {
   HOSTCALL_SERVICE_UNUSED,

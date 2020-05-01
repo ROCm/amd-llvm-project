@@ -31,15 +31,28 @@ SOFTWARE.
 
 */
 
-#include <stdio.h>
-#include <stdlib.h>
-#include "hsa/hsa_ext_amd.h"
+#include "../../../src/hostrpc_service_id.h"
 #include "amd_hostcall.h"
-#include "hostcall_impl.h"
-#include "hostcall_service_id.h"
-#include "hostcall_internal.h"
 #include "atmi_interop_hsa.h"
 #include "atmi_runtime.h"
+#include "hostcall_impl.h"
+#include "hsa/hsa_ext_amd.h"
+#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct atl_hcq_element_s atl_hcq_element_t;
+struct atl_hcq_element_s {
+  buffer_t *hcb;
+  amd_hostcall_consumer_t *consumer;
+  hsa_queue_t *hsa_q;
+  atl_hcq_element_t *next_ptr;
+  uint32_t device_id;
+};
+
+//  Persistent static values for the hcq linked list
+atl_hcq_element_t *atl_hcq_front;
+atl_hcq_element_t *atl_hcq_rear;
+int atl_hcq_count;
 
 static int atl_hcq_size() { return atl_hcq_count ;}
 
@@ -170,14 +183,7 @@ unsigned long atmi_hostcall_assign_buffer(
 hsa_status_t atmi_hostcall_init() {
    atl_hcq_count = 0;
    atl_hcq_front = atl_hcq_rear = NULL;
-   // Register atmi_hostcall_assign_buffer with ATMI so that it is
-   // called by ATMI during every task launch.
-   atmi_status_t status = atmi_register_task_hostcall_handler(
-      (atmi_task_hostcall_handler_t)&atmi_hostcall_assign_buffer);
-   if(status == ATMI_STATUS_SUCCESS)
-    return HSA_STATUS_SUCCESS;
-   else
-    return HSA_STATUS_ERROR;
+   return HSA_STATUS_SUCCESS;
 }
 
 hsa_status_t atmi_hostcall_terminate() {

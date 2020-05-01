@@ -27,13 +27,6 @@ extern "C" {
  */
 typedef void (*atmi_generic_fp)(void);
 
-typedef unsigned long (*atmi_task_hostcall_handler_t)(void *, uint32_t);
-/**
- * @brief Register a callback that performs hostcall buffer processing
- * functions with a task.
- */
-atmi_status_t atmi_register_task_hostcall_handler(
-    atmi_task_hostcall_handler_t fp);
 /** @} */
 
 /** \defgroup context_functions ATMI Context Setup and Finalize

@@ -210,7 +210,7 @@ foreach(mcpu ${mcpus})
 endforeach()
 
 install(FILES
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/hostcall_service_id.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../src/hostrpc_service_id.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/hostcall_stubs.h"
     DESTINATION include)
 

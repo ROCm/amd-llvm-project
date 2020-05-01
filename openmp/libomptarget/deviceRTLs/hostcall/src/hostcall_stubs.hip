@@ -2,7 +2,7 @@
 ///  hostcall_stubs.hip
 ///
 
-#include "hostcall_service_id.h"
+#include "../../../src/hostrpc_service_id.h"
 #include "hostcall_stubs.h"
 // -----------------------------------------------------------------------------
 //
