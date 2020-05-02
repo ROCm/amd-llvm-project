@@ -510,6 +510,18 @@ void SVEType::applyModifier(char Mod) {
     Bitwidth = ElementBitwidth;
     NumVectors = 0;
     break;
+  case 'K':
+    Signed = true;
+    Float = false;
+    Bitwidth = ElementBitwidth;
+    NumVectors = 0;
+    break;
+  case 'L':
+    Signed = false;
+    Float = false;
+    Bitwidth = ElementBitwidth;
+    NumVectors = 0;
+    break;
   case 'u':
     Predicate = false;
     Signed = false;
@@ -581,6 +593,16 @@ void SVEType::applyModifier(char Mod) {
     ElementBitwidth = Bitwidth = 64;
     NumVectors = 0;
     break;
+  case 'f':
+    Signed = false;
+    ElementBitwidth = Bitwidth = 64;
+    NumVectors = 0;
+    break;
+  case 'g':
+    Signed = false;
+    Float = false;
+    ElementBitwidth = 64;
+    break;
   case 't':
     Signed = true;
     Float = false;
@@ -605,6 +627,12 @@ void SVEType::applyModifier(char Mod) {
     Predicate = false;
     Float = true;
     ElementBitwidth = 64;
+    break;
+  case 'Q':
+    Constant = true;
+    Pointer = true;
+    Void = true;
+    NumVectors = 0;
     break;
   case 'S':
     Constant = true;

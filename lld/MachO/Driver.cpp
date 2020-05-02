@@ -9,6 +9,7 @@
 #include "Driver.h"
 #include "Config.h"
 #include "InputFiles.h"
+#include "OutputSection.h"
 #include "OutputSegment.h"
 #include "SymbolTable.h"
 #include "Symbols.h"
@@ -118,6 +119,9 @@ bool macho::link(llvm::ArrayRef<const char *> argsArr, bool canExitEarly,
                  raw_ostream &stdoutOS, raw_ostream &stderrOS) {
   lld::stdoutOS = &stdoutOS;
   lld::stderrOS = &stderrOS;
+
+  stderrOS.enable_colors(stderrOS.has_colors());
+  // TODO: Set up error handler properly, e.g. the errorLimitExceededMsg
 
   MachOOptTable parser;
   opt::InputArgList args = parser.parse(argsArr.slice(1));

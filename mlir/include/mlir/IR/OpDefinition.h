@@ -178,7 +178,7 @@ public:
   void setAttrs(ArrayRef<NamedAttribute> attributes) {
     state->setAttrs(attributes);
   }
-  void setAttrs(NamedAttributeList newAttrs) { state->setAttrs(newAttrs); }
+  void setAttrs(MutableDictionaryAttr newAttrs) { state->setAttrs(newAttrs); }
 
   /// Set the dialect attributes for this operation, and preserve all dependent.
   template <typename DialectAttrs> void setDialectAttrs(DialectAttrs &&attrs) {
@@ -187,10 +187,10 @@ public:
 
   /// Remove the attribute with the specified name if it exists.  The return
   /// value indicates whether the attribute was present or not.
-  NamedAttributeList::RemoveResult removeAttr(Identifier name) {
+  MutableDictionaryAttr::RemoveResult removeAttr(Identifier name) {
     return state->removeAttr(name);
   }
-  NamedAttributeList::RemoveResult removeAttr(StringRef name) {
+  MutableDictionaryAttr::RemoveResult removeAttr(StringRef name) {
     return state->removeAttr(Identifier::get(name, getContext()));
   }
 
@@ -1030,6 +1030,21 @@ public:
     for (auto &region : op->getRegions())
       if (!region.isIsolatedFromAbove(op->getLoc()))
         return failure();
+    return success();
+  }
+};
+
+/// A trait of region holding operations that defines a new scope for polyhedral
+/// optimization purposes. Any SSA values of 'index' type that either dominate
+/// such an operation or are used at the top-level of such an operation
+/// automatically become valid symbols for the polyhedral scope defined by that
+/// operation. For more details, see `Traits.md#PolyhedralScope`.
+template <typename ConcreteType>
+class PolyhedralScope : public TraitBase<ConcreteType, PolyhedralScope> {
+public:
+  static LogicalResult verifyTrait(Operation *op) {
+    static_assert(!ConcreteType::template hasTrait<ZeroRegion>(),
+                  "expected operation to have one or more regions");
     return success();
   }
 };

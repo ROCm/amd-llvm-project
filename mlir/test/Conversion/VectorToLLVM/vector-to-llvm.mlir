@@ -418,6 +418,15 @@ func @vector_type_cast(%arg0: memref<8x8x8xf32>) -> memref<vector<8x8x8xf32>> {
 //       CHECK:   llvm.mlir.constant(0 : index
 //       CHECK:   llvm.insertvalue {{.*}}[2] : !llvm<"{ [8 x [8 x <8 x float>]]*, [8 x [8 x <8 x float>]]*, i64 }">
 
+func @vector_print_scalar_i1(%arg0: i1) {
+  vector.print %arg0 : i1
+  return
+}
+// CHECK-LABEL: llvm.func @vector_print_scalar_i1(
+// CHECK-SAME: %[[A:.*]]: !llvm.i1)
+//       CHECK:    llvm.call @print_i1(%[[A]]) : (!llvm.i1) -> ()
+//       CHECK:    llvm.call @print_newline() : () -> ()
+
 func @vector_print_scalar_i32(%arg0: i32) {
   vector.print %arg0 : i32
   return
@@ -864,3 +873,32 @@ func @transfer_read_2d_to_1d(%A : memref<?x?xf32>, %base0: index, %base1: index)
 //  CHECK-SAME:  0 : i32, 0 : i32, 0 : i32, 0 : i32, 0 : i32, 0 : i32, 0 : i32,
 //  CHECK-SAME:  0 : i32, 0 : i32, 0 : i32] :
 //  CHECK-SAME: !llvm<"<17 x i64>">, !llvm<"<17 x i64>">
+
+func @transfer_read_1d_non_zero_addrspace(%A : memref<?xf32, 3>, %base: index) -> vector<17xf32> {
+  %f7 = constant 7.0: f32
+  %f = vector.transfer_read %A[%base], %f7
+      {permutation_map = affine_map<(d0) -> (d0)>} :
+    memref<?xf32, 3>, vector<17xf32>
+  vector.transfer_write %f, %A[%base]
+      {permutation_map = affine_map<(d0) -> (d0)>} :
+    vector<17xf32>, memref<?xf32, 3>
+  return %f: vector<17xf32>
+}
+// CHECK-LABEL: func @transfer_read_1d_non_zero_addrspace
+//  CHECK-SAME: %[[BASE:[a-zA-Z0-9]*]]: !llvm.i64) -> !llvm<"<17 x float>">
+//
+// 1. Check address space for GEP is correct.
+//       CHECK: %[[gep:.*]] = llvm.getelementptr {{.*}} :
+//  CHECK-SAME: (!llvm<"float addrspace(3)*">, !llvm.i64) -> !llvm<"float addrspace(3)*">
+//       CHECK: %[[vecPtr:.*]] = llvm.addrspacecast %[[gep]] :
+//  CHECK-SAME: !llvm<"float addrspace(3)*"> to !llvm<"<17 x float>*">
+//
+// 2. Check address space of the memref is correct.
+//       CHECK: %[[DIM:.*]] = llvm.extractvalue %{{.*}}[3, 0] :
+//  CHECK-SAME: !llvm<"{ float addrspace(3)*, float addrspace(3)*, i64, [1 x i64], [1 x i64] }">
+//
+// 3. Check address apce for GEP is correct.
+//       CHECK: %[[gep_b:.*]] = llvm.getelementptr {{.*}} :
+//  CHECK-SAME: (!llvm<"float addrspace(3)*">, !llvm.i64) -> !llvm<"float addrspace(3)*">
+//       CHECK: %[[vecPtr_b:.*]] = llvm.addrspacecast %[[gep_b]] :
+//  CHECK-SAME: !llvm<"float addrspace(3)*"> to !llvm<"<17 x float>*">

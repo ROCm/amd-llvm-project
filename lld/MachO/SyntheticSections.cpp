@@ -8,6 +8,7 @@
 
 #include "SyntheticSections.h"
 #include "Config.h"
+#include "ExportTrie.h"
 #include "InputFiles.h"
 #include "OutputSegment.h"
 #include "SymbolTable.h"
@@ -25,12 +26,17 @@ using namespace llvm::support;
 namespace lld {
 namespace macho {
 
-MachHeaderSection::MachHeaderSection() {
-  // dyld3's MachOLoaded::getSlide() assumes that the __TEXT segment starts
-  // from the beginning of the file (i.e. the header).
-  segname = segment_names::text;
-  name = section_names::header;
+SyntheticSection::SyntheticSection(const char *segname, const char *name)
+    : OutputSection(name) {
+  // Synthetic sections always know which segment they belong to so hook
+  // them up when they're made
+  getOrCreateOutputSegment(segname)->addOutputSection(this);
 }
+
+// dyld3's MachOLoaded::getSlide() assumes that the __TEXT segment starts
+// from the beginning of the file (i.e. the header).
+MachHeaderSection::MachHeaderSection()
+    : SyntheticSection(segment_names::text, section_names::header) {}
 
 void MachHeaderSection::addLoadCommand(LoadCommand *lc) {
   loadCommands.push_back(lc);
@@ -41,7 +47,7 @@ size_t MachHeaderSection::getSize() const {
   return sizeof(mach_header_64) + sizeOfCmds;
 }
 
-void MachHeaderSection::writeTo(uint8_t *buf) {
+void MachHeaderSection::writeTo(uint8_t *buf) const {
   auto *hdr = reinterpret_cast<mach_header_64 *>(buf);
   hdr->magic = MH_MAGIC_64;
   hdr->cputype = CPU_TYPE_X86_64;
@@ -58,14 +64,11 @@ void MachHeaderSection::writeTo(uint8_t *buf) {
   }
 }
 
-PageZeroSection::PageZeroSection() {
-  segname = segment_names::pageZero;
-  name = section_names::pageZero;
-}
+PageZeroSection::PageZeroSection()
+    : SyntheticSection(segment_names::pageZero, section_names::pageZero) {}
 
-GotSection::GotSection() {
-  segname = "__DATA_CONST";
-  name = "__got";
+GotSection::GotSection()
+    : SyntheticSection(segment_names::dataConst, section_names::got) {
   align = 8;
   flags = S_NON_LAZY_SYMBOL_POINTERS;
 
@@ -79,10 +82,8 @@ void GotSection::addEntry(DylibSymbol &sym) {
   }
 }
 
-BindingSection::BindingSection() {
-  segname = segment_names::linkEdit;
-  name = section_names::binding;
-}
+BindingSection::BindingSection()
+    : SyntheticSection(segment_names::linkEdit, section_names::binding) {}
 
 bool BindingSection::isNeeded() const { return in.got->isNeeded(); }
 
@@ -106,7 +107,7 @@ void BindingSection::finalizeContents() {
   raw_svector_ostream os{contents};
   os << static_cast<uint8_t>(BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB |
                              in.got->parent->index);
-  encodeULEB128(in.got->addr - in.got->parent->firstSection()->addr, os);
+  encodeULEB128(in.got->getSegmentOffset(), os);
   for (const DylibSymbol *sym : in.got->getEntries()) {
     // TODO: Implement compact encoding -- we only need to encode the
     // differences between consecutive symbol entries.
@@ -126,53 +127,29 @@ void BindingSection::finalizeContents() {
   os << static_cast<uint8_t>(BIND_OPCODE_DONE);
 }
 
-void BindingSection::writeTo(uint8_t *buf) {
+void BindingSection::writeTo(uint8_t *buf) const {
   memcpy(buf, contents.data(), contents.size());
 }
 
-ExportSection::ExportSection() {
-  segname = segment_names::linkEdit;
-  name = section_names::export_;
-}
+ExportSection::ExportSection()
+    : SyntheticSection(segment_names::linkEdit, section_names::export_) {}
 
 void ExportSection::finalizeContents() {
-  raw_svector_ostream os{contents};
-  std::vector<const Defined *> exported;
   // TODO: We should check symbol visibility.
   for (const Symbol *sym : symtab->getSymbols())
     if (auto *defined = dyn_cast<Defined>(sym))
-      exported.push_back(defined);
-
-  if (exported.empty())
-    return;
-
-  if (exported.size() > 1) {
-    error("TODO: Unable to export more than 1 symbol");
-    return;
-  }
-
-  const Defined *sym = exported.front();
-  os << (char)0; // Indicates non-leaf node
-  os << (char)1; // # of children
-  os << sym->getName() << '\0';
-  encodeULEB128(sym->getName().size() + 4, os); // Leaf offset
-
-  // Leaf node
-  uint64_t addr = sym->getVA() + ImageBase;
-  os << (char)(1 + getULEB128Size(addr));
-  os << (char)0; // Flags
-  encodeULEB128(addr, os);
-  os << (char)0; // Terminator
+      trieBuilder.addSymbol(*defined);
+  size = trieBuilder.build();
 }
 
-void ExportSection::writeTo(uint8_t *buf) {
-  memcpy(buf, contents.data(), contents.size());
-}
+void ExportSection::writeTo(uint8_t *buf) const { trieBuilder.writeTo(buf); }
 
 SymtabSection::SymtabSection(StringTableSection &stringTableSection)
-    : stringTableSection(stringTableSection) {
-  segname = segment_names::linkEdit;
-  name = section_names::symbolTable;
+    : SyntheticSection(segment_names::linkEdit, section_names::symbolTable),
+      stringTableSection(stringTableSection) {
+  // TODO: When we introduce the SyntheticSections superclass, we should make
+  // all synthetic sections aligned to WordSize by default.
+  align = WordSize;
 }
 
 size_t SymtabSection::getSize() const {
@@ -186,7 +163,7 @@ void SymtabSection::finalizeContents() {
       symbols.push_back({sym, stringTableSection.addString(sym->getName())});
 }
 
-void SymtabSection::writeTo(uint8_t *buf) {
+void SymtabSection::writeTo(uint8_t *buf) const {
   auto *nList = reinterpret_cast<nlist_64 *>(buf);
   for (const SymtabEntry &entry : symbols) {
     nList->n_strx = entry.strx;
@@ -194,18 +171,16 @@ void SymtabSection::writeTo(uint8_t *buf) {
     // TODO populate n_desc
     if (auto defined = dyn_cast<Defined>(entry.sym)) {
       nList->n_type = N_EXT | N_SECT;
-      nList->n_sect = defined->isec->sectionIndex;
+      nList->n_sect = defined->isec->parent->index;
       // For the N_SECT symbol type, n_value is the address of the symbol
-      nList->n_value = defined->value + defined->isec->addr;
+      nList->n_value = defined->value + defined->isec->getVA();
     }
     ++nList;
   }
 }
 
-StringTableSection::StringTableSection() {
-  segname = segment_names::linkEdit;
-  name = section_names::stringTable;
-}
+StringTableSection::StringTableSection()
+    : SyntheticSection(segment_names::linkEdit, section_names::stringTable) {}
 
 uint32_t StringTableSection::addString(StringRef str) {
   uint32_t strx = size;
@@ -214,7 +189,7 @@ uint32_t StringTableSection::addString(StringRef str) {
   return strx;
 }
 
-void StringTableSection::writeTo(uint8_t *buf) {
+void StringTableSection::writeTo(uint8_t *buf) const {
   uint32_t off = 0;
   for (StringRef str : strings) {
     memcpy(buf + off, str.data(), str.size());

@@ -73,7 +73,11 @@
 //
 // w: vector of element type promoted to 64bits, vector maintains
 //    signedness of its element type.
+// f: element type promoted to uint64_t (splat to vector type)
 // j: element type promoted to 64bits (splat to vector type)
+// K: element type bitcast to a signed integer (splat to vector type)
+// L: element type bitcast to an unsigned integer (splat to vector type)
+//
 // i: constant uint64_t
 // k: int32_t
 // l: int64_t
@@ -97,6 +101,8 @@
 // F: pointer to uint16_t
 // G: pointer to uint32_t
 // H: pointer to uint64_t
+
+// Q: const pointer to void
 
 // S: const pointer to int8_t
 // T: const pointer to int16_t
@@ -185,6 +191,7 @@ def IsByteIndexed             : FlagType<0x01000000>;
 def IsAppendSVALL             : FlagType<0x02000000>; // Appends SV_ALL as the last operand.
 def IsInsertOp1SVALL          : FlagType<0x04000000>; // Inserts SV_ALL as the second operand.
 def IsPrefetch                : FlagType<0x08000000>; // Contiguous prefetches.
+def IsGatherPrefetch          : FlagType<0x10000000>;
 def ReverseCompare            : FlagType<0x20000000>; // Compare operands must be swapped.
 
 // These must be kept in sync with the flags in include/clang/Basic/TargetBuiltins.h
@@ -569,6 +576,39 @@ def SVPRFH_VNUM : MInst<"svprfh_vnum", "vPclJ", "s", [IsPrefetch], MemEltTyInt16
 def SVPRFW_VNUM : MInst<"svprfw_vnum", "vPclJ", "i", [IsPrefetch], MemEltTyInt32, "aarch64_sve_prf">;
 def SVPRFD_VNUM : MInst<"svprfd_vnum", "vPclJ", "l", [IsPrefetch], MemEltTyInt64, "aarch64_sve_prf">;
 
+// Prefetch (Vector bases)
+def SVPRFB_GATHER_BASES : MInst<"svprfb_gather[_{2}base]", "vPdJ", "UiUl", [IsGatherPrefetch], MemEltTyInt8,  "aarch64_sve_prfb_gather_scalar_offset">;
+def SVPRFH_GATHER_BASES : MInst<"svprfh_gather[_{2}base]", "vPdJ", "UiUl", [IsGatherPrefetch], MemEltTyInt16, "aarch64_sve_prfh_gather_scalar_offset">;
+def SVPRFW_GATHER_BASES : MInst<"svprfw_gather[_{2}base]", "vPdJ", "UiUl", [IsGatherPrefetch], MemEltTyInt32, "aarch64_sve_prfw_gather_scalar_offset">;
+def SVPRFD_GATHER_BASES : MInst<"svprfd_gather[_{2}base]", "vPdJ", "UiUl", [IsGatherPrefetch], MemEltTyInt64, "aarch64_sve_prfd_gather_scalar_offset">;
+
+// Prefetch (Scalar base, Vector offsets)
+def SVPRFB_GATHER_32B_OFFSETS_S : MInst<"svprfb_gather_[{3}]offset", "vPQdJ", "i",  [IsGatherPrefetch], MemEltTyInt8,  "aarch64_sve_prfb_gather_sxtw_index">;
+def SVPRFH_GATHER_32B_OFFSETS_S : MInst<"svprfh_gather_[{3}]index",  "vPQdJ", "i",  [IsGatherPrefetch], MemEltTyInt16, "aarch64_sve_prfh_gather_sxtw_index">;
+def SVPRFW_GATHER_32B_OFFSETS_S : MInst<"svprfw_gather_[{3}]index",  "vPQdJ", "i",  [IsGatherPrefetch], MemEltTyInt32, "aarch64_sve_prfw_gather_sxtw_index">;
+def SVPRFD_GATHER_32B_OFFSETS_S : MInst<"svprfd_gather_[{3}]index",  "vPQdJ", "i",  [IsGatherPrefetch], MemEltTyInt64, "aarch64_sve_prfd_gather_sxtw_index">;
+
+def SVPRFB_GATHER_64B_OFFSETS_S : MInst<"svprfb_gather_[{3}]offset", "vPQdJ", "l",  [IsGatherPrefetch], MemEltTyInt8,  "aarch64_sve_prfb_gather_index">;
+def SVPRFH_GATHER_64B_OFFSETS_S : MInst<"svprfh_gather_[{3}]index",  "vPQdJ", "l",  [IsGatherPrefetch], MemEltTyInt16, "aarch64_sve_prfh_gather_index">;
+def SVPRFW_GATHER_64B_OFFSETS_S : MInst<"svprfw_gather_[{3}]index",  "vPQdJ", "l",  [IsGatherPrefetch], MemEltTyInt32, "aarch64_sve_prfw_gather_index">;
+def SVPRFD_GATHER_64B_OFFSETS_S : MInst<"svprfd_gather_[{3}]index",  "vPQdJ", "l",  [IsGatherPrefetch], MemEltTyInt64, "aarch64_sve_prfd_gather_index">;
+
+def SVPRFB_GATHER_32B_OFFSETS_U : MInst<"svprfb_gather_[{3}]offset", "vPQdJ", "Ui", [IsGatherPrefetch], MemEltTyInt8,  "aarch64_sve_prfb_gather_uxtw_index">;
+def SVPRFH_GATHER_32B_OFFSETS_U : MInst<"svprfh_gather_[{3}]index",  "vPQdJ", "Ui", [IsGatherPrefetch], MemEltTyInt16, "aarch64_sve_prfh_gather_uxtw_index">;
+def SVPRFW_GATHER_32B_OFFSETS_U : MInst<"svprfw_gather_[{3}]index",  "vPQdJ", "Ui", [IsGatherPrefetch], MemEltTyInt32, "aarch64_sve_prfw_gather_uxtw_index">;
+def SVPRFD_GATHER_32B_OFFSETS_U : MInst<"svprfd_gather_[{3}]index",  "vPQdJ", "Ui", [IsGatherPrefetch], MemEltTyInt64, "aarch64_sve_prfd_gather_uxtw_index">;
+
+def SVPRFB_GATHER_64B_OFFSETS_U : MInst<"svprfb_gather_[{3}]offset", "vPQdJ", "Ul", [IsGatherPrefetch], MemEltTyInt8,  "aarch64_sve_prfb_gather_index">;
+def SVPRFH_GATHER_64B_OFFSETS_U : MInst<"svprfh_gather_[{3}]index",  "vPQdJ", "Ul", [IsGatherPrefetch], MemEltTyInt16, "aarch64_sve_prfh_gather_index">;
+def SVPRFW_GATHER_64B_OFFSETS_U : MInst<"svprfw_gather_[{3}]index",  "vPQdJ", "Ul", [IsGatherPrefetch], MemEltTyInt32, "aarch64_sve_prfw_gather_index">;
+def SVPRFD_GATHER_64B_OFFSETS_U : MInst<"svprfd_gather_[{3}]index",  "vPQdJ", "Ul", [IsGatherPrefetch], MemEltTyInt64, "aarch64_sve_prfd_gather_index">;
+
+// Prefetch (Vector bases, scalar offset)
+def SVPRFB_GATHER_BASES_OFFSET : MInst<"svprfb_gather[_{2}base]_offset", "vPdlJ", "UiUl", [IsGatherPrefetch], MemEltTyInt8,  "aarch64_sve_prfb_gather_scalar_offset">;
+def SVPRFH_GATHER_BASES_OFFSET : MInst<"svprfh_gather[_{2}base]_index",  "vPdlJ", "UiUl", [IsGatherPrefetch], MemEltTyInt16, "aarch64_sve_prfh_gather_scalar_offset">;
+def SVPRFW_GATHER_BASES_OFFSET : MInst<"svprfw_gather[_{2}base]_index",  "vPdlJ", "UiUl", [IsGatherPrefetch], MemEltTyInt32, "aarch64_sve_prfw_gather_scalar_offset">;
+def SVPRFD_GATHER_BASES_OFFSET : MInst<"svprfd_gather[_{2}base]_index",  "vPdlJ", "UiUl", [IsGatherPrefetch], MemEltTyInt64, "aarch64_sve_prfd_gather_scalar_offset">;
+
 ////////////////////////////////////////////////////////////////////////////////
 // Integer arithmetic
 
@@ -640,6 +680,29 @@ defm SVNOT  : SInstZPZ<"svnot",  "csilUcUsUiUl", "aarch64_sve_not">;
 
 ////////////////////////////////////////////////////////////////////////////////
 // Shifts
+
+multiclass SInst_SHIFT<string name, string intrinsic, string ts, string wide_ts> {
+  def _M : SInst<name # "[_{d}]", "dPdu", ts, MergeOp1,  intrinsic>;
+  def _X : SInst<name # "[_{d}]", "dPdu", ts, MergeAny,  intrinsic>;
+  def _Z : SInst<name # "[_{d}]", "dPdu", ts, MergeZero, intrinsic>;
+
+  def _N_M : SInst<name # "[_n_{d}]", "dPdL", ts, MergeOp1,  intrinsic>;
+  def _N_X : SInst<name # "[_n_{d}]", "dPdL", ts, MergeAny,  intrinsic>;
+  def _N_Z : SInst<name # "[_n_{d}]", "dPdL", ts, MergeZero, intrinsic>;
+
+  def _WIDE_M : SInst<name # _wide # "[_{d}]", "dPdg", wide_ts, MergeOp1,  intrinsic # _wide>;
+  def _WIDE_X : SInst<name # _wide # "[_{d}]", "dPdg", wide_ts, MergeAny,  intrinsic # _wide>;
+  def _WIDE_Z : SInst<name # _wide # "[_{d}]", "dPdg", wide_ts, MergeZero, intrinsic # _wide>;
+
+  def _WIDE_N_M : SInst<name # _wide # "[_n_{d}]", "dPdf", wide_ts, MergeOp1,  intrinsic # _wide>;
+  def _WIDE_N_X : SInst<name # _wide # "[_n_{d}]", "dPdf", wide_ts, MergeAny,  intrinsic # _wide>;
+  def _WIDE_N_Z : SInst<name # _wide # "[_n_{d}]", "dPdf", wide_ts, MergeZero, intrinsic # _wide>;
+}
+
+defm SVASR : SInst_SHIFT<"svasr", "aarch64_sve_asr", "csil", "csi">;
+defm SVLSL : SInst_SHIFT<"svlsl", "aarch64_sve_lsl", "csilUcUsUiUl", "csiUcUsUi">;
+defm SVLSR : SInst_SHIFT<"svlsr", "aarch64_sve_lsr", "UcUsUiUl", "UcUsUi">;
+
 def SVASRD_M : SInst<"svasrd[_n_{d}]", "dPdi", "csil",            MergeOp1,  "aarch64_sve_asrd", [], [ImmCheck<2, ImmCheckShiftRight, 1>]>;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -750,7 +813,41 @@ defm SVREVW : SInstZPZ<"svrevw", "lUl",          "aarch64_sve_revw">;
 defm SVABS_F : SInstZPZ<"svabs", "hfd", "aarch64_sve_fabs">;
 defm SVNEG_F : SInstZPZ<"svneg", "hfd", "aarch64_sve_fneg">;
 
+defm SVABD_F  : SInstZPZZ<"svabd",  "hfd", "aarch64_sve_fabd">;
+defm SVADD_F  : SInstZPZZ<"svadd",  "hfd", "aarch64_sve_fadd">;
+defm SVDIV_F  : SInstZPZZ<"svdiv",  "hfd", "aarch64_sve_fdiv">;
+defm SVDIVR_F : SInstZPZZ<"svdivr", "hfd", "aarch64_sve_fdivr">;
+defm SVMAX_F  : SInstZPZZ<"svmax",  "hfd", "aarch64_sve_fmax">;
+defm SVMAXNM  : SInstZPZZ<"svmaxnm","hfd", "aarch64_sve_fmaxnm">;
+defm SVMIN_F  : SInstZPZZ<"svmin",  "hfd", "aarch64_sve_fmin">;
+defm SVMINNM  : SInstZPZZ<"svminnm","hfd", "aarch64_sve_fminnm">;
+defm SVMUL_F  : SInstZPZZ<"svmul",  "hfd", "aarch64_sve_fmul">;
+defm SVMULX   : SInstZPZZ<"svmulx", "hfd", "aarch64_sve_fmulx">;
+defm SVSUB_F  : SInstZPZZ<"svsub",  "hfd", "aarch64_sve_fsub">;
+defm SVSUBR_F : SInstZPZZ<"svsubr", "hfd", "aarch64_sve_fsubr">;
+
+defm SVRECPX : SInstZPZ<"svrecpx", "hfd", "aarch64_sve_frecpx">;
+defm SVRINTA : SInstZPZ<"svrinta", "hfd", "aarch64_sve_frinta">;
+defm SVRINTI : SInstZPZ<"svrinti", "hfd", "aarch64_sve_frinti">;
+defm SVRINTM : SInstZPZ<"svrintm", "hfd", "aarch64_sve_frintm">;
+defm SVRINTN : SInstZPZ<"svrintn", "hfd", "aarch64_sve_frintn">;
+defm SVRINTP : SInstZPZ<"svrintp", "hfd", "aarch64_sve_frintp">;
+defm SVRINTX : SInstZPZ<"svrintx", "hfd", "aarch64_sve_frintx">;
+defm SVRINTZ : SInstZPZ<"svrintz", "hfd", "aarch64_sve_frintz">;
+defm SVSQRT  : SInstZPZ<"svsqrt",  "hfd", "aarch64_sve_fsqrt">;
+
+def SVEXPA  : SInst<"svexpa[_{d}]",  "du",   "hfd", MergeNone, "aarch64_sve_fexpa_x">;
 def SVTMAD  : SInst<"svtmad[_{d}]",  "dddi", "hfd", MergeNone, "aarch64_sve_ftmad_x", [], [ImmCheck<2, ImmCheck0_7>]>;
+def SVTSMUL : SInst<"svtsmul[_{d}]", "ddu",  "hfd", MergeNone, "aarch64_sve_ftsmul_x">;
+def SVTSSEL : SInst<"svtssel[_{d}]", "ddu",  "hfd", MergeNone, "aarch64_sve_ftssel_x">;
+
+def SVSCALE_M   : SInst<"svscale[_{d}]",   "dPdx", "hfd", MergeOp1,  "aarch64_sve_fscale">;
+def SVSCALE_X   : SInst<"svscale[_{d}]",   "dPdx", "hfd", MergeAny,  "aarch64_sve_fscale">;
+def SVSCALE_Z   : SInst<"svscale[_{d}]",   "dPdx", "hfd", MergeZero, "aarch64_sve_fscale">;
+
+def SVSCALE_N_M : SInst<"svscale[_n_{d}]", "dPdK", "hfd", MergeOp1,  "aarch64_sve_fscale">;
+def SVSCALE_N_X : SInst<"svscale[_n_{d}]", "dPdK", "hfd", MergeAny,  "aarch64_sve_fscale">;
+def SVSCALE_N_Z : SInst<"svscale[_n_{d}]", "dPdK", "hfd", MergeZero, "aarch64_sve_fscale">;
 
 defm SVMAD_F  : SInstZPZZZ<"svmad",  "hfd", "aarch64_sve_fmad">;
 defm SVMLA_F  : SInstZPZZZ<"svmla",  "hfd", "aarch64_sve_fmla">;
@@ -761,10 +858,24 @@ defm SVNMLA_F : SInstZPZZZ<"svnmla", "hfd", "aarch64_sve_fnmla">;
 defm SVNMLS_F : SInstZPZZZ<"svnmls", "hfd", "aarch64_sve_fnmls">;
 defm SVNMSB_F : SInstZPZZZ<"svnmsb", "hfd", "aarch64_sve_fnmsb">;
 
+def SVCADD_M : SInst<"svcadd[_{d}]", "dPddi",  "hfd", MergeOp1,  "aarch64_sve_fcadd", [], [ImmCheck<3, ImmCheckComplexRot90_270>]>;
+def SVCADD_X : SInst<"svcadd[_{d}]", "dPddi",  "hfd", MergeAny,  "aarch64_sve_fcadd", [], [ImmCheck<3, ImmCheckComplexRot90_270>]>;
+def SVCADD_Z : SInst<"svcadd[_{d}]", "dPddi",  "hfd", MergeZero, "aarch64_sve_fcadd", [], [ImmCheck<3, ImmCheckComplexRot90_270>]>;
+def SVCMLA_M : SInst<"svcmla[_{d}]", "dPdddi", "hfd", MergeOp1,  "aarch64_sve_fcmla", [], [ImmCheck<4, ImmCheckComplexRotAll90>]>;
+def SVCMLA_X : SInst<"svcmla[_{d}]", "dPdddi", "hfd", MergeAny,  "aarch64_sve_fcmla", [], [ImmCheck<4, ImmCheckComplexRotAll90>]>;
+def SVCMLA_Z : SInst<"svcmla[_{d}]", "dPdddi", "hfd", MergeZero, "aarch64_sve_fcmla", [], [ImmCheck<4, ImmCheckComplexRotAll90>]>;
+
 def SVCMLA_LANE : SInst<"svcmla_lane[_{d}]", "ddddii", "hf",  MergeNone, "aarch64_sve_fcmla_lane", [], [ImmCheck<3, ImmCheckLaneIndexCompRotate, 2>,
                                                                                                         ImmCheck<4, ImmCheckComplexRotAll90>]>;
 def SVMLA_LANE  : SInst<"svmla_lane[_{d}]",  "ddddi",  "hfd", MergeNone, "aarch64_sve_fmla_lane", [], [ImmCheck<3, ImmCheckLaneIndex, 2>]>;
 def SVMLS_LANE  : SInst<"svmls_lane[_{d}]",  "ddddi",  "hfd", MergeNone, "aarch64_sve_fmls_lane", [], [ImmCheck<3, ImmCheckLaneIndex, 2>]>;
+def SVMUL_LANE  : SInst<"svmul_lane[_{d}]",  "dddi",   "hfd", MergeNone, "aarch64_sve_fmul_lane", [], [ImmCheck<2, ImmCheckLaneIndex, 1>]>;
+
+def SVRECPE  : SInst<"svrecpe[_{d}]",  "dd",  "hfd", MergeNone, "aarch64_sve_frecpe_x">;
+def SVRECPS  : SInst<"svrecps[_{d}]",  "ddd", "hfd", MergeNone, "aarch64_sve_frecps_x">;
+def SVRSQRTE : SInst<"svrsqrte[_{d}]", "dd",  "hfd", MergeNone, "aarch64_sve_frsqrte_x">;
+def SVRSQRTS : SInst<"svrsqrts[_{d}]", "ddd", "hfd", MergeNone, "aarch64_sve_frsqrts_x">;
+
 
 ////////////////////////////////////////////////////////////////////////////////
 // Floating-point comparisons
@@ -892,9 +1003,6 @@ def SVCVTXNT_F32    : SInst<"svcvtxnt_f32[_f64]", "MMPd", "d", MergeOp1, "aarch6
 
 }
 
-def SVCADD_M : SInst<"svcadd[_{d}]", "dPddi",  "hfd", MergeOp1,  "aarch64_sve_fcadd", [], [ImmCheck<3, ImmCheckComplexRot90_270>]>;
-def SVCMLA_M : SInst<"svcmla[_{d}]", "dPdddi", "hfd", MergeOp1,  "aarch64_sve_fcmla", [], [ImmCheck<4, ImmCheckComplexRotAll90>]>;
-
 ////////////////////////////////////////////////////////////////////////////////
 // Permutations and selection
 
@@ -948,8 +1056,10 @@ def SVPTRUE     : SInst<"svptrue_{d}",     "P",  "PcPsPiPl", MergeNone, "aarch64
 def SVAND_B_Z  : SInst<"svand[_b]_z",  "PPPP", "Pc", MergeNone, "aarch64_sve_and_z">;
 def SVBIC_B_Z  : SInst<"svbic[_b]_z",  "PPPP", "Pc", MergeNone, "aarch64_sve_bic_z">;
 def SVEOR_B_Z  : SInst<"sveor[_b]_z",  "PPPP", "Pc", MergeNone, "aarch64_sve_eor_z">;
+def SVMOV_B_Z  : SInst<"svmov[_b]_z",  "PPP",  "Pc", MergeNone>; // Uses custom expansion
 def SVNAND_B_Z : SInst<"svnand[_b]_z", "PPPP", "Pc", MergeNone, "aarch64_sve_nand_z">;
 def SVNOR_B_Z  : SInst<"svnor[_b]_z",  "PPPP", "Pc", MergeNone, "aarch64_sve_nor_z">;
+def SVNOT_B_Z  : SInst<"svnot[_b]_z",  "PPP",  "Pc", MergeNone>; // Uses custom expansion
 def SVORN_B_Z  : SInst<"svorn[_b]_z",  "PPPP", "Pc", MergeNone, "aarch64_sve_orn_z">;
 def SVORR_B_Z  : SInst<"svorr[_b]_z",  "PPPP", "Pc", MergeNone, "aarch64_sve_orr_z">;
 

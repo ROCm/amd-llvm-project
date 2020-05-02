@@ -803,7 +803,7 @@ bool isMinorIdentity(AffineMap map, unsigned rank) {
 
 /// Conversion pattern that converts a 1-D vector transfer read/write op in a
 /// sequence of:
-/// 1. Bitcast to vector form.
+/// 1. Bitcast or addrspacecast to vector form.
 /// 2. Create an offsetVector = [ offset + 0 .. offset + vector_length - 1 ].
 /// 3. Create a mask where offsetVector is compared against memref upper bound.
 /// 4. Rewrite op as a masked read or write.
@@ -835,13 +835,21 @@ public:
     MemRefType memRefType = xferOp.getMemRefType();
 
     // 1. Get the source/dst address as an LLVM vector pointer.
+    //    The vector pointer would always be on address space 0, therefore
+    //    addrspacecast shall be used when source/dst memrefs are not on
+    //    address space 0.
     // TODO: support alignment when possible.
     Value dataPtr = getDataPtr(loc, memRefType, adaptor.memref(),
                                adaptor.indices(), rewriter, getModule());
     auto vecTy =
         toLLVMTy(xferOp.getVectorType()).template cast<LLVM::LLVMType>();
-    auto vectorDataPtr =
-        rewriter.create<LLVM::BitcastOp>(loc, vecTy.getPointerTo(), dataPtr);
+    Value vectorDataPtr;
+    if (memRefType.getMemorySpace() == 0)
+      vectorDataPtr =
+          rewriter.create<LLVM::BitcastOp>(loc, vecTy.getPointerTo(), dataPtr);
+    else
+      vectorDataPtr = rewriter.create<LLVM::AddrSpaceCastOp>(
+          loc, vecTy.getPointerTo(), dataPtr);
 
     // 2. Create a vector with linear indices [ 0 .. vector_length - 1 ].
     unsigned vecWidth = vecTy.getVectorNumElements();
@@ -917,7 +925,9 @@ public:
     Type eltType = vectorType ? vectorType.getElementType() : printType;
     int64_t rank = vectorType ? vectorType.getRank() : 0;
     Operation *printer;
-    if (eltType.isSignlessInteger(32))
+    if (eltType.isSignlessInteger(1))
+      printer = getPrintI1(op);
+    else if (eltType.isSignlessInteger(32))
       printer = getPrintI32(op);
     else if (eltType.isSignlessInteger(64))
       printer = getPrintI64(op);
@@ -984,6 +994,11 @@ private:
   }
 
   // Helpers for method names.
+  Operation *getPrintI1(Operation *op) const {
+    LLVM::LLVMDialect *dialect = typeConverter.getDialect();
+    return getPrint(op, dialect, "print_i1",
+                    LLVM::LLVMType::getInt1Ty(dialect));
+  }
   Operation *getPrintI32(Operation *op) const {
     LLVM::LLVMDialect *dialect = typeConverter.getDialect();
     return getPrint(op, dialect, "print_i32",

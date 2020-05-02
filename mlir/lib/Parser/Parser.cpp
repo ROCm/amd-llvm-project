@@ -12,7 +12,6 @@
 
 #include "mlir/Parser.h"
 #include "Lexer.h"
-#include "mlir/Analysis/Verifier.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/Attributes.h"
@@ -25,6 +24,7 @@
 #include "mlir/IR/Module.h"
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/IR/StandardTypes.h"
+#include "mlir/IR/Verifier.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringExtras.h"
@@ -5030,7 +5030,7 @@ ParseResult ModuleParser::parseModule(ModuleOp module) {
       if (nested && std::next(operations.begin(), 2) == operations.end()) {
         // Merge the data of the nested module operation into 'module'.
         module.setLoc(nested.getLoc());
-        module.setAttrs(nested.getOperation()->getAttrList());
+        module.setAttrs(nested.getOperation()->getMutableAttrDict());
         bodyBlocks.splice(bodyBlocks.end(), nested.getBodyRegion().getBlocks());
 
         // Erase the original module body.

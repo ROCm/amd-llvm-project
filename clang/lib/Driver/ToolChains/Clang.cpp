@@ -812,8 +812,8 @@ static void addPGOAndCoverageFlags(const ToolChain &TC, Compilation &C,
     CmdArgs.push_back("-fprofile-instrument=clang");
     if (TC.getTriple().isWindowsMSVCEnvironment()) {
       // Add dependent lib for clang_rt.profile
-      CmdArgs.push_back(Args.MakeArgString("--dependent-lib=" +
-                                           TC.getCompilerRT(Args, "profile")));
+      CmdArgs.push_back(Args.MakeArgString(
+          "--dependent-lib=" + TC.getCompilerRTBasename(Args, "profile")));
     }
   }
 
@@ -830,8 +830,9 @@ static void addPGOAndCoverageFlags(const ToolChain &TC, Compilation &C,
   }
   if (PGOGenArg) {
     if (TC.getTriple().isWindowsMSVCEnvironment()) {
-      CmdArgs.push_back(Args.MakeArgString("--dependent-lib=" +
-                                           TC.getCompilerRT(Args, "profile")));
+      // Add dependent lib for clang_rt.profile
+      CmdArgs.push_back(Args.MakeArgString(
+          "--dependent-lib=" + TC.getCompilerRTBasename(Args, "profile")));
     }
     if (PGOGenArg->getOption().matches(
             PGOGenerateArg ? options::OPT_fprofile_generate_EQ
@@ -3731,6 +3732,8 @@ static void RenderDebugOptions(const ToolChain &TC, const Driver &D,
         if (T.getArch() == llvm::Triple::amdgcn) {
           CmdArgs.push_back("-disable-O0-optnone");
           CmdArgs.push_back("-disable-O0-noinline");
+          CmdArgs.push_back("-mllvm");
+          CmdArgs.push_back("-amdgpu-spill-cfi-saved-regs");
           // -ggdb with AMDGCN does not currently compose with options that
           // affect the debug info kind. The behavior of commands like `-ggdb
           // -g` may be surprising (the -g is effectively ignored).
