@@ -939,7 +939,6 @@ static amd_comgr_status_t populateArgs(const amd_comgr_metadata_node_t key,
   std::string buf;
 
   // get the key of the argument field
-  size_t size = 0;
   status = amd_comgr_get_metadata_kind(key, &kind);
   if (kind == AMD_COMGR_METADATA_KIND_STRING &&
       status == AMD_COMGR_STATUS_SUCCESS) {
@@ -992,45 +991,6 @@ static amd_comgr_status_t populateArgs(const amd_comgr_metadata_node_t key,
   return AMD_COMGR_STATUS_SUCCESS;
 }
 
-static amd_comgr_status_t populateCodeProps(
-    const amd_comgr_metadata_node_t key, const amd_comgr_metadata_node_t value,
-    void *data) {
-  amd_comgr_status_t status;
-  amd_comgr_metadata_kind_t kind;
-  std::string buf;
-
-  // get the key of the argument field
-  status = amd_comgr_get_metadata_kind(key, &kind);
-  if (kind == AMD_COMGR_METADATA_KIND_STRING &&
-      status == AMD_COMGR_STATUS_SUCCESS) {
-    status = getMetaBuf(key, &buf);
-  }
-
-  if (status != AMD_COMGR_STATUS_SUCCESS) {
-    return AMD_COMGR_STATUS_ERROR;
-  }
-
-  auto itCodePropField = CodePropFieldMap.find(buf);
-  if (itCodePropField == CodePropFieldMap.end()) {
-    return AMD_COMGR_STATUS_ERROR;
-  }
-
-  // get the value of the argument field
-  if (status == AMD_COMGR_STATUS_SUCCESS) {
-    status = getMetaBuf(value, &buf);
-  }
-
-  KernelMD *kernelMD = static_cast<KernelMD *>(data);
-  switch (itCodePropField->second) {
-    case CodePropField::KernargSegmentSize:
-      kernelMD->kernargSegmentSize_ = atoi(buf.c_str());
-      break;
-    default:
-      return AMD_COMGR_STATUS_SUCCESS;
-  }
-  return AMD_COMGR_STATUS_SUCCESS;
-}
-
 static std::pair<unsigned char *, unsigned char *>
 find_metadata(void *binary, size_t binSize) {
   std::pair<unsigned char *, unsigned char *> failure = {nullptr, nullptr};
@@ -1059,7 +1019,6 @@ find_metadata(void *binary, size_t binSize) {
       while (ptr < segmentEnd) {
         Elf_Note *note = reinterpret_cast<Elf_Note *>(ptr);
         address name = (address)&note[1];
-        address desc = name + core::alignUp(note->n_namesz, sizeof(int));
 
         if (note->n_type == 7 || note->n_type == 8) {
           return failure;
