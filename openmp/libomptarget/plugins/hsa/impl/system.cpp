@@ -1054,64 +1054,71 @@ find_metadata(void *binary, size_t binSize) {
   return failure;
 }
 
-int map_lookup_array(byte_range message, const char *needle, byte_range *res,
-                     uint64_t *size) {
+namespace {
+int map_lookup_array(msgpack::byte_range message, const char *needle,
+                     msgpack::byte_range *res, uint64_t *size) {
   unsigned count = 0;
 
-  foreach_map(message, [&](byte_range key, byte_range value) {
-    if (message_is_string(key, needle)) {
+  msgpack::foreach_map(
+      message, [&](msgpack::byte_range key, msgpack::byte_range value) {
+        if (msgpack::message_is_string(key, needle)) {
 
-      functors f;
-      // Check the message is an array and get the number of elements in it
-      f.cb_array = [&](uint64_t N, byte_range bytes) -> const unsigned char * {        
-        count++;
-        *size = N;
-        return bytes.end;
-      };
+          msgpack::functors f;
+          // Check the message is an array and get the number of elements in it
+          f.cb_array = [&](uint64_t N,
+                           msgpack::byte_range bytes) -> const unsigned char * {
+            count++;
+            *size = N;
+            return bytes.end;
+          };
 
-      // return the whole array
-      *res = value;
-      handle_msgpack(value, f);
-    }
-  });
+          // return the whole array
+          *res = value;
+          msgpack::handle_msgpack(value, f);
+        }
+      });
   return count != 1;
 }
 
-int map_lookup_string(byte_range message, const char *needle,
+int map_lookup_string(msgpack::byte_range message, const char *needle,
                       std::string *res) {
   unsigned count = 0;
-  foreach_map(message, [&](byte_range key, byte_range value) {
-    if (message_is_string(key, needle)) {
-      functors f;
-      f.cb_string = [&](size_t N, const unsigned char *str) {
-        count++;
-        *res = std::string(str, str + N);
-      };
-      handle_msgpack(value, f);
-    }
-  });
+  msgpack::foreach_map(
+      message, [&](msgpack::byte_range key, msgpack::byte_range value) {
+        if (msgpack::message_is_string(key, needle)) {
+          msgpack::functors f;
+          f.cb_string = [&](size_t N, const unsigned char *str) {
+            count++;
+            *res = std::string(str, str + N);
+          };
+          msgpack::handle_msgpack(value, f);
+        }
+      });
   return count != 1;
 }
 
- int map_lookup_uint64_t(byte_range message, const char *needle, uint64_t *res) {
+int map_lookup_uint64_t(msgpack::byte_range message, const char *needle,
+                        uint64_t *res) {
   unsigned count = 0;
-  foreach_map(message, [&](byte_range key, byte_range value) {
-    if (message_is_string(key, needle)) {
-      functors f;
-      f.cb_unsigned = [&](uint64_t x) {
-        count++;
-        *res = x;
-      };
-      handle_msgpack(value, f);
-    }
-  });
+  msgpack::foreach_map(message,
+                       [&](msgpack::byte_range key, msgpack::byte_range value) {
+                         if (msgpack::message_is_string(key, needle)) {
+                           msgpack::functors f;
+                           f.cb_unsigned = [&](uint64_t x) {
+                             count++;
+                             *res = x;
+                           };
+                           msgpack::handle_msgpack(value, f);
+                         }
+                       });
   return count != 1;
 }
 
-int array_lookup_element(byte_range message, uint64_t elt, byte_range *res) {
+int array_lookup_element(msgpack::byte_range message, uint64_t elt,
+                         msgpack::byte_range *res) {
   int rc = 1;
   uint64_t i = 0;
-  foreach_array(message, [&](byte_range value) {
+  msgpack::foreach_array(message, [&](msgpack::byte_range value) {
     if (i == elt) {
       *res = value;
       rc = 0;
@@ -1121,43 +1128,47 @@ int array_lookup_element(byte_range message, uint64_t elt, byte_range *res) {
   return rc;
 }
 
-int populate_kernelArgMD(byte_range args_element, KernelArgMD *kernelarg) {
+int populate_kernelArgMD(msgpack::byte_range args_element,
+                         KernelArgMD *kernelarg) {
   int error = 0;
-  foreach_map(args_element, [&](byte_range key, byte_range value) -> void {
-    functors f;
-    if (message_is_string(key, ".name")) {
-      f.cb_string = [&](size_t N, const unsigned char *str) {
-        kernelarg->name_ = std::string(str, str + N);
-      };
-    } else if (message_is_string(key, ".type_name")) {
-      f.cb_string = [&](size_t N, const unsigned char *str) {
-        kernelarg->typeName_ = std::string(str, str + N);
-      };
-    } else if (message_is_string(key, ".size")) {
-      f.cb_unsigned = [&](uint64_t x) { kernelarg->size_ = x; };
-    } else if (message_is_string(key, ".offset")) {
-      f.cb_unsigned = [&](uint64_t x) { kernelarg->offset_ = x; };
-    } else if (message_is_string(key, ".value_kind")) {
-      f.cb_string = [&](size_t N, const unsigned char *str) {
-        std::string s = std::string(str, str + N);
-        //  printf("value_kind string %s\n", s.c_str());
-        auto itValueKind = ArgValueKind.find(s);
-        if (itValueKind == ArgValueKind.end()) {
-          // error++;
-          // comgr looks like it raises an error here, but there
-          // are fields in value_kind (like "global_buffer") which
-          // aren't in the argvaluekind map
-        } else {
-          kernelarg->valueKind_ = itValueKind->second;
+  msgpack::foreach_map(
+      args_element,
+      [&](msgpack::byte_range key, msgpack::byte_range value) -> void {
+        msgpack::functors f;
+        if (msgpack::message_is_string(key, ".name")) {
+          f.cb_string = [&](size_t N, const unsigned char *str) {
+            kernelarg->name_ = std::string(str, str + N);
+          };
+        } else if (msgpack::message_is_string(key, ".type_name")) {
+          f.cb_string = [&](size_t N, const unsigned char *str) {
+            kernelarg->typeName_ = std::string(str, str + N);
+          };
+        } else if (msgpack::message_is_string(key, ".size")) {
+          f.cb_unsigned = [&](uint64_t x) { kernelarg->size_ = x; };
+        } else if (msgpack::message_is_string(key, ".offset")) {
+          f.cb_unsigned = [&](uint64_t x) { kernelarg->offset_ = x; };
+        } else if (msgpack::message_is_string(key, ".value_kind")) {
+          f.cb_string = [&](size_t N, const unsigned char *str) {
+            std::string s = std::string(str, str + N);
+            //  printf("value_kind string %s\n", s.c_str());
+            auto itValueKind = ArgValueKind.find(s);
+            if (itValueKind == ArgValueKind.end()) {
+              // error++;
+              // comgr looks like it raises an error here, but there
+              // are fields in value_kind (like "global_buffer") which
+              // aren't in the argvaluekind map
+            } else {
+              kernelarg->valueKind_ = itValueKind->second;
+            }
+          };
         }
-      };
-    }
 
-    handle_msgpack(value, f);
-  });
+        msgpack::handle_msgpack(value, f);
+      });
 
   return error;
 }
+} // namespace
 
 static hsa_status_t get_code_object_custom_metadata(void *binary,
                                                     size_t binSize, int gpu) {
@@ -1187,9 +1198,6 @@ static hsa_status_t get_code_object_custom_metadata(void *binary,
 
   amd_comgr_release_data(binaryData);
 
-
-
-
   amd_comgr_metadata_node_t kernelsMD;
   size_t kernelsSize = 0;
 
@@ -1200,7 +1208,7 @@ static hsa_status_t get_code_object_custom_metadata(void *binary,
   comgrErrorCheck(COMGR kernels size lookup in kernels metadata, status);
 
   int msgpack_errors = 0;
-  byte_range kernel_array;
+  msgpack::byte_range kernel_array;
   {
     uint64_t kernel_array_size;
     msgpack_errors = map_lookup_array( {metadata.first, metadata.second}, "amdhsa.kernels", &kernel_array, &kernel_array_size);
@@ -1258,7 +1266,7 @@ static hsa_status_t get_code_object_custom_metadata(void *binary,
         COMGR kernarg segment size lookup in kernarg seg size metadata, status);
 
     assert(msgpack_errors == 0);
-    byte_range element;
+    msgpack::byte_range element;
     msgpack_errors += array_lookup_element(kernel_array, i, &element);
     assert(msgpack_errors == 0);
     
@@ -1316,7 +1324,7 @@ static hsa_status_t get_code_object_custom_metadata(void *binary,
       comgrErrorCheck(COMGR kernel args size lookup in kernel args metadata,
                       status);
 
-      byte_range args_array;
+      msgpack::byte_range args_array;
       {
         uint64_t msgpack_argsSize;
         msgpack_errors +=
@@ -1340,7 +1348,7 @@ static hsa_status_t get_code_object_custom_metadata(void *binary,
         status = amd_comgr_get_metadata_kind(argsNode, &kind);
         comgrErrorCheck(COMGR args kind in kernel args metadata, status);
 
-        byte_range args_element;
+        msgpack::byte_range args_element;
         msgpack_errors += array_lookup_element(args_array, i, &args_element);
         assert(msgpack_errors == 0);
         

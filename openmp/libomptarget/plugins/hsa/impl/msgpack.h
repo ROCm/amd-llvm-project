@@ -3,6 +3,8 @@
 
 #include <functional>
 
+namespace msgpack {
+
 struct byte_range {
   const unsigned char *start;
   const unsigned char *end;
@@ -67,10 +69,9 @@ void foreach_map(byte_range,
 
 void foreach_array(byte_range, std::function<void(byte_range)> callback);
 
-namespace msgpack
-{
-  // Crude approximation to json
-  void dump(byte_range);
-}
+// Crude approximation to json
+void dump(byte_range);
+
+} // namespace msgpack
 
 #endif
