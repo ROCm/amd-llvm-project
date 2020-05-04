@@ -57,6 +57,7 @@ msgpack::type parse_type(unsigned char x) {
 
 } // namespace msgpack
 
+namespace {
 template <typename T, typename R> R bitcast(T x) {
   static_assert(sizeof(T) == sizeof(R), "");
   R tmp;
@@ -71,7 +72,6 @@ template <typename T, typename R> R bitcast(T x) {
 
 typedef uint64_t (*payload_info_t)(const unsigned char *);
 
-namespace {
 namespace payload {
 uint64_t read_zero(const unsigned char *) { return 0; }
 
@@ -156,7 +156,6 @@ uint64_t read_size_field_s64(const unsigned char *from) {
   return bitcast<int64_t, uint64_t>(res);
 }
 } // namespace payload
-} // namespace
 
 payload_info_t payload_info(msgpack::type ty) {
   using namespace msgpack;
@@ -169,10 +168,12 @@ payload_info_t payload_info(msgpack::type ty) {
   }
   internal_error();
 }
+} // namespace
 
 // Only failure mode is going to be out of bounds
 // Return NULL on out of bounds, otherwise start of the next entry
 
+namespace msgpack {
 namespace fallback {
 
 void nop_string(size_t, const unsigned char *) {}
@@ -230,13 +231,16 @@ const unsigned char *nop_array(uint64_t N, byte_range bytes) {
 }
 
 } // namespace fallback
+} // namespace msgpack
 
-const unsigned char *fallback::skip_next_message(const unsigned char *start,
-                                                 const unsigned char *end) {
+const unsigned char *
+msgpack::fallback::skip_next_message(const unsigned char *start,
+                                     const unsigned char *end) {
   return handle_msgpack({start, end}, {});
 }
 
-const unsigned char *handle_msgpack(byte_range bytes, functors f) {
+const unsigned char *msgpack::handle_msgpack(msgpack::byte_range bytes,
+                                             msgpack::functors f) {
   const unsigned char *start = bytes.start;
   const unsigned char *end = bytes.end;
   const uint64_t available = end - start;
@@ -294,7 +298,7 @@ const unsigned char *handle_msgpack(byte_range bytes, functors f) {
   case msgpack::fixarray:
   case msgpack::array16:
   case msgpack::array32: {
-    return f.cb_array(N, byte_range{start + bytes_used, end});
+    return f.cb_array(N, {start + bytes_used, end});
   }
 
   case msgpack::fixmap:
@@ -327,6 +331,7 @@ const unsigned char *handle_msgpack(byte_range bytes, functors f) {
   internal_error();
 }
 
+namespace msgpack {
 bool message_is_string(byte_range bytes, const char *needle) {
   bool matched = false;
   functors f;
@@ -357,7 +362,7 @@ void foreach_array(byte_range bytes, std::function<void(byte_range)> callback) {
   handle_msgpack(bytes, f);
 }
 
-void msgpack::dump(byte_range bytes) {
+void dump(byte_range bytes) {
   functors f;
   unsigned indent = 0;
   const unsigned by = 2;
@@ -430,3 +435,4 @@ void msgpack::dump(byte_range bytes) {
   handle_msgpack(bytes, f);
   printf("\n");
 }
+} // namespace msgpack
