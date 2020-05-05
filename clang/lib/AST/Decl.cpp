@@ -3211,11 +3211,8 @@ unsigned FunctionDecl::getBuiltinID(bool ConsiderWrapperFunctions) const {
 
   // OpenCL v1.2 s6.9.f - The library functions defined in
   // the C99 standard headers are not available.
-  if ((Context.getLangOpts().OpenCL ||
-       (Context.getTargetInfo().getTriple().getArch() ==
-        llvm::Triple::amdgcn)) &&
-      Context.BuiltinInfo.isPredefinedLibFunction(BuiltinID) &&
-      !(BuiltinID == Builtin::BIprintf || BuiltinID == Builtin::BImalloc))
+  if (Context.getLangOpts().OpenCL &&
+      Context.BuiltinInfo.isPredefinedLibFunction(BuiltinID))
     return 0;
 
   // CUDA does not have device-side standard library. printf and malloc are the
@@ -3224,7 +3221,6 @@ unsigned FunctionDecl::getBuiltinID(bool ConsiderWrapperFunctions) const {
       !hasAttr<CUDAHostAttr>() &&
       !(BuiltinID == Builtin::BIprintf || BuiltinID == Builtin::BImalloc))
     return 0;
-
   return BuiltinID;
 }
 
