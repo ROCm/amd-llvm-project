@@ -14,7 +14,6 @@
 #include <set>
 #include <string>
 
-#include "amd_comgr.h"
 #include "internal.h"
 #include "machine.h"
 #include "realtimer.h"
@@ -24,12 +23,11 @@
 
 using core::RealTimer;
 
-#define comgrErrorCheck(msg, status)                         \
-  if (status != AMD_COMGR_STATUS_SUCCESS) {                  \
-    printf("[%s:%d] %s failed\n", __FILE__, __LINE__, #msg); \
-    return HSA_STATUS_ERROR_INVALID_CODE_OBJECT;             \
-  } else {                                                   \
-    /*  printf("%s succeeded.\n", #msg);*/                   \
+#define msgpackErrorCheck(msg, status)                                         \
+  if (status != 0) {                                                           \
+    printf("[%s:%d] %s failed\n", __FILE__, __LINE__, #msg);                   \
+    return HSA_STATUS_ERROR_INVALID_CODE_OBJECT;                               \
+  } else {                                                                     \
   }
 
 typedef unsigned char *address;
@@ -136,12 +134,6 @@ class KernelArgMD {
   uint32_t align_;
   ValueKind valueKind_;
 };
-
-static bool operator==(KernelArgMD const &lhs, KernelArgMD const &rhs) {
-  return (lhs.name_ == rhs.name_) && (lhs.typeName_ == rhs.typeName_) &&
-         (lhs.size_ == rhs.size_) && (lhs.offset_ == rhs.offset_) &&
-         (lhs.align_ == rhs.align_) && (lhs.valueKind_ == rhs.valueKind_);
-}
 
 class KernelMD {
  public:
@@ -918,79 +910,6 @@ hsa_status_t validate_code_object(hsa_code_object_t code_object,
   return retVal;
 }
 
-static amd_comgr_status_t getMetaBuf(const amd_comgr_metadata_node_t meta,
-                                     std::string *str) {
-  size_t size = 0;
-  amd_comgr_status_t status = amd_comgr_get_metadata_string(meta, &size, NULL);
-
-  if (status == AMD_COMGR_STATUS_SUCCESS) {
-    str->resize(size - 1);  // minus one to discount the null character
-    status = amd_comgr_get_metadata_string(meta, &size, &((*str)[0]));
-  }
-
-  return status;
-}
-
-static amd_comgr_status_t populateArgs(const amd_comgr_metadata_node_t key,
-                                       const amd_comgr_metadata_node_t value,
-                                       void *data) {
-  amd_comgr_status_t status;
-  amd_comgr_metadata_kind_t kind;
-  std::string buf;
-
-  // get the key of the argument field
-  status = amd_comgr_get_metadata_kind(key, &kind);
-  if (kind == AMD_COMGR_METADATA_KIND_STRING &&
-      status == AMD_COMGR_STATUS_SUCCESS) {
-    status = getMetaBuf(key, &buf);
-  }
-  // std::cout << "Trying to get argField: " << buf << std::endl;
-  if (status != AMD_COMGR_STATUS_SUCCESS) {
-    return AMD_COMGR_STATUS_ERROR;
-  }
-
-  auto itArgField = ArgFieldMap.find(buf);
-  if (itArgField == ArgFieldMap.end()) {
-    return AMD_COMGR_STATUS_ERROR;
-  }
-
-  // get the value of the argument field
-  status = getMetaBuf(value, &buf);
-
-  KernelArgMD *lcArg = static_cast<KernelArgMD *>(data);
-
-  switch (itArgField->second) {
-    case ArgField::Name:
-      lcArg->name_ = buf;
-      break;
-    case ArgField::TypeName:
-      lcArg->typeName_ = buf;
-      break;
-    case ArgField::Size:
-      lcArg->size_ = atoi(buf.c_str());
-      break;
-    case ArgField::Align:
-      // v2 has align field and not offset field
-      lcArg->align_ = atoi(buf.c_str());
-      break;
-    case ArgField::Offset:
-      // v3 has offset field and not align field
-      lcArg->offset_ = atoi(buf.c_str());
-      break;
-    case ArgField::ValueKind: {
-      auto itValueKind = ArgValueKind.find(buf);
-      if (itValueKind == ArgValueKind.end()) {
-        return AMD_COMGR_STATUS_ERROR;
-      }
-      lcArg->valueKind_ = itValueKind->second;
-    } break;
-    default:
-      return AMD_COMGR_STATUS_SUCCESS;
-      // return AMD_COMGR_STATUS_ERROR;
-  }
-  return AMD_COMGR_STATUS_SUCCESS;
-}
-
 static std::pair<unsigned char *, unsigned char *>
 find_metadata(void *binary, size_t binSize) {
   std::pair<unsigned char *, unsigned char *> failure = {nullptr, nullptr};
@@ -1150,14 +1069,8 @@ int populate_kernelArgMD(msgpack::byte_range args_element,
         } else if (msgpack::message_is_string(key, ".value_kind")) {
           f.cb_string = [&](size_t N, const unsigned char *str) {
             std::string s = std::string(str, str + N);
-            //  printf("value_kind string %s\n", s.c_str());
             auto itValueKind = ArgValueKind.find(s);
-            if (itValueKind == ArgValueKind.end()) {
-              // error++;
-              // comgr looks like it raises an error here, but there
-              // are fields in value_kind (like "global_buffer") which
-              // aren't in the argvaluekind map
-            } else {
+            if (itValueKind != ArgValueKind.end()) {
               kernelarg->valueKind_ = itValueKind->second;
             }
           };
@@ -1182,200 +1095,67 @@ static hsa_status_t get_code_object_custom_metadata(void *binary,
     return HSA_STATUS_ERROR_INVALID_CODE_OBJECT;
   }
 
-  amd_comgr_metadata_node_t programMD;
-  amd_comgr_status_t status;
-  amd_comgr_data_t binaryData;
-
-  status = amd_comgr_create_data(AMD_COMGR_DATA_KIND_EXECUTABLE, &binaryData);
-  comgrErrorCheck(COMGR create binary data, status);
-
-  status = amd_comgr_set_data(binaryData, binSize,
-                              reinterpret_cast<const char *>(binary));
-  comgrErrorCheck(COMGR set binary data, status);
-
-  status = amd_comgr_get_data_metadata(binaryData, &programMD);
-  comgrErrorCheck(COMGR get program metadata, status);
-
-  amd_comgr_release_data(binaryData);
-
-  amd_comgr_metadata_node_t kernelsMD;
-  size_t kernelsSize = 0;
-
-  status = amd_comgr_metadata_lookup(programMD, "amdhsa.kernels", &kernelsMD);
-  comgrErrorCheck(COMGR kernels lookup in program metadata, status);
-
-  status = amd_comgr_get_metadata_list_size(kernelsMD, &kernelsSize);
-  comgrErrorCheck(COMGR kernels size lookup in kernels metadata, status);
-
+  uint64_t kernelsSize = 0;
   int msgpack_errors = 0;
   msgpack::byte_range kernel_array;
-  {
-    uint64_t kernel_array_size;
-    msgpack_errors = map_lookup_array( {metadata.first, metadata.second}, "amdhsa.kernels", &kernel_array, &kernel_array_size);
-    
-    assert(kernel_array_size == kernelsSize);
-    kernelsSize = kernel_array_size;
-  }
-  assert(msgpack_errors == 0);
-  
+  msgpack_errors =
+      map_lookup_array({metadata.first, metadata.second}, "amdhsa.kernels",
+                       &kernel_array, &kernelsSize);
+  msgpackErrorCheck(kernels lookup in program metadata, msgpack_errors);
+
   for (size_t i = 0; i < kernelsSize; i++) {
     assert(msgpack_errors == 0);
     std::string kernelName;
     std::string languageName;
     std::string symbolName;
-    std::string kernargSegSize;
-    amd_comgr_metadata_node_t symbolMeta;
-    amd_comgr_metadata_node_t nameMeta;
-    amd_comgr_metadata_node_t languageMeta;
-    amd_comgr_metadata_node_t kernelMD;
-    amd_comgr_metadata_node_t argsMeta;
-    amd_comgr_metadata_node_t kernargSegSizeMeta;
 
-    status = amd_comgr_index_list_metadata(kernelsMD, i, &kernelMD);
-    comgrErrorCheck(COMGR ith kernel in kernels metadata, status);
-
-    status = amd_comgr_metadata_lookup(kernelMD, ".name", &nameMeta);
-    comgrErrorCheck(COMGR kernel name metadata lookup in kernel metadata,
-                    status);
-
-    status = getMetaBuf(nameMeta, &kernelName);
-    comgrErrorCheck(COMGR kernel name lookup in name metadata, status);
-
-    status = amd_comgr_metadata_lookup(kernelMD, ".language", &languageMeta);
-    comgrErrorCheck(COMGR kernel language metadata lookup in kernel metadata,
-                    status);
-
-    status = getMetaBuf(languageMeta, &languageName);
-    comgrErrorCheck(COMGR kernel language name lookup in language metadata,
-                    status);
-
-    status = amd_comgr_metadata_lookup(kernelMD, ".symbol", &symbolMeta);
-    comgrErrorCheck(COMGR kernel symbol metadata lookup in kernel metadata,
-                    status);
-
-    status = getMetaBuf(symbolMeta, &symbolName);
-    comgrErrorCheck(COMGR kernel symbol lookup in name metadata, status);
-
-    status = amd_comgr_metadata_lookup(kernelMD, ".kernarg_segment_size",
-                                       &kernargSegSizeMeta);
-    comgrErrorCheck(
-        COMGR kernarg segment size metadata lookup in kernel metadata, status);
-
-    status = getMetaBuf(kernargSegSizeMeta, &kernargSegSize);
-    comgrErrorCheck(
-        COMGR kernarg segment size lookup in kernarg seg size metadata, status);
-
-    assert(msgpack_errors == 0);
     msgpack::byte_range element;
     msgpack_errors += array_lookup_element(kernel_array, i, &element);
-    assert(msgpack_errors == 0);
-    
-    {
-      std::string msgpack_kernelName;
-      std::string msgpack_languageName;
-      std::string msgpack_symbolName;
+    msgpackErrorCheck(element lookup in kernel metadata, msgpack_errors);
 
-      assert(msgpack_errors == 0);
-
-      msgpack_errors +=
-          map_lookup_string(element, ".name", &msgpack_kernelName);
-      msgpack_errors +=
-          map_lookup_string(element, ".language", &msgpack_languageName);
-      msgpack_errors +=
-          map_lookup_string(element, ".symbol", &msgpack_symbolName);
-      assert(msgpack_errors == 0);
-
-      assert(msgpack_kernelName == kernelName);
-      kernelName = msgpack_kernelName;
-      assert(msgpack_languageName == languageName);
-      languageName = msgpack_languageName;
-      assert(msgpack_symbolName == symbolName);
-      symbolName = msgpack_symbolName;
-    }
-  
-    // create a map from symbol to name
-    DEBUG_PRINT("Kernel symbol %s; Name: %s; Size: %s\n", symbolName.c_str(),
-                kernelName.c_str(), kernargSegSize.c_str());
-    KernelNameMap[symbolName] = kernelName;
+    msgpack_errors += map_lookup_string(element, ".name", &kernelName);
+    msgpack_errors += map_lookup_string(element, ".language", &languageName);
+    msgpack_errors += map_lookup_string(element, ".symbol", &symbolName);
+    msgpackErrorCheck(strings lookup in kernel metadata, msgpack_errors);
 
     atl_kernel_info_t info;
     size_t kernel_explicit_args_size = 0;
-    size_t kernel_segment_size = std::stoi(kernargSegSize);
+    uint64_t kernel_segment_size;
+    msgpack_errors += map_lookup_uint64_t(element, ".kernarg_segment_size",
+                                          &kernel_segment_size);
+    msgpackErrorCheck(kernarg segment size metadata lookup in kernel metadata,
+                      msgpack_errors);
 
-    {
-      uint64_t msgpack_kernargSegSize;
-      msgpack_errors += map_lookup_uint64_t(element, ".kernarg_segment_size",
-                                            &msgpack_kernargSegSize);
-      assert(kernel_segment_size == msgpack_kernargSegSize);
-      kernel_segment_size = msgpack_kernargSegSize;
-      assert(msgpack_errors == 0);
-    }
+    // create a map from symbol to name
+    DEBUG_PRINT("Kernel symbol %s; Name: %s; Size: %lu\n", symbolName.c_str(),
+                kernelName.c_str(), kernel_segment_size);
+    KernelNameMap[symbolName] = kernelName;
 
     bool hasHiddenArgs = false;
     if (kernel_segment_size > 0) {
-      size_t argsSize;
+      uint64_t argsSize;
       size_t offset = 0;
 
-      status = amd_comgr_metadata_lookup(kernelMD, ".args", &argsMeta);
-      comgrErrorCheck(COMGR kernel args metadata lookup in kernel metadata,
-                      status);
-
-      status = amd_comgr_get_metadata_list_size(argsMeta, &argsSize);
-      comgrErrorCheck(COMGR kernel args size lookup in kernel args metadata,
-                      status);
-
       msgpack::byte_range args_array;
-      {
-        uint64_t msgpack_argsSize;
-        msgpack_errors +=
-          map_lookup_array(element, ".args", &args_array, &msgpack_argsSize);
-        assert(argsSize == msgpack_argsSize);
-        argsSize = msgpack_argsSize;
-        assert(msgpack_errors == 0);
-      }
+      msgpack_errors +=
+          map_lookup_array(element, ".args", &args_array, &argsSize);
+      msgpackErrorCheck(kernel args metadata lookup in kernel metadata,
+                        msgpack_errors);
 
       info.num_args = argsSize;
 
       for (size_t i = 0; i < argsSize; ++i) {
         KernelArgMD lcArg;
 
-        amd_comgr_metadata_node_t argsNode;
-        amd_comgr_metadata_kind_t kind;
-
-        status = amd_comgr_index_list_metadata(argsMeta, i, &argsNode);
-        comgrErrorCheck(COMGR list args node in kernel args metadata, status);
-
-        status = amd_comgr_get_metadata_kind(argsNode, &kind);
-        comgrErrorCheck(COMGR args kind in kernel args metadata, status);
-
         msgpack::byte_range args_element;
         msgpack_errors += array_lookup_element(args_array, i, &args_element);
-        assert(msgpack_errors == 0);
-        
-        if (kind != AMD_COMGR_METADATA_KIND_MAP) {
-          status = AMD_COMGR_STATUS_ERROR;
-        }
-        comgrErrorCheck(COMGR check args kind in kernel args metadata, status);
+        msgpackErrorCheck(iterate args map in kernel args metadata,
+                          msgpack_errors);
 
-        status = amd_comgr_iterate_map_metadata(argsNode, populateArgs,
-                                                static_cast<void *>(&lcArg));
-        comgrErrorCheck(COMGR iterate args map in kernel args metadata, status);
+        msgpack_errors += populate_kernelArgMD(args_element, &lcArg);
+        msgpackErrorCheck(iterate args map in kernel args metadata,
+                          msgpack_errors);
 
-        amd_comgr_destroy_metadata(argsNode);
-
-        if (status != AMD_COMGR_STATUS_SUCCESS) {
-          amd_comgr_destroy_metadata(argsMeta);
-          return HSA_STATUS_ERROR_INVALID_CODE_OBJECT;
-        }
-
-        {
-          KernelArgMD msgpack_kernelarg;
-          msgpack_errors += populate_kernelArgMD(args_element, &msgpack_kernelarg);
-          assert(msgpack_errors == 0);
-          assert(msgpack_kernelarg == lcArg);
-          lcArg = msgpack_kernelarg;
-        }
-        
         // TODO(ashwinma): should the below population actions be done only for
         // non-implicit args?
         // populate info with sizes and offsets
@@ -1398,7 +1178,6 @@ static hsa_status_t get_code_object_custom_metadata(void *binary,
         }
         kernel_explicit_args_size += padding;
       }
-      amd_comgr_destroy_metadata(argsMeta);
     }
 
     // add size of implicit args, e.g.: offset x, y and z and pipe pointer, but
@@ -1413,10 +1192,7 @@ static hsa_status_t get_code_object_custom_metadata(void *binary,
     // kernel received, now add it to the kernel info table
     KernelInfoTable[gpu][kernelName] = info;
 
-    amd_comgr_destroy_metadata(nameMeta);
-    amd_comgr_destroy_metadata(kernelMD);
   }
-  amd_comgr_destroy_metadata(kernelsMD);
 
   return HSA_STATUS_SUCCESS;
 }
