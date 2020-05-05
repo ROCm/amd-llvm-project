@@ -5,6 +5,29 @@
 
 namespace msgpack {
 
+// The message pack format is dynamically typed, schema-less. Format is:
+// message: [type][header][payload]
+// where type is one byte, header length is a fixed length function of type
+// payload is zero to N bytes, with the length encoded in [type][header]
+
+// Scalar fields include boolean, signed integer, float, string etc
+// Composite types are sequences of messages
+// Array field is [header][element][element]...
+// Map field is [header][key][value][key][value]...
+
+// Multibyte integer fields are big endian encoded
+// The map key can be any message type
+// Maps may contain duplicate keys
+// Data is not uniquely encoded, e.g. integer "8" may be stored as one byte or
+// in as many as nine, as signed or unsigned. Implementation defined.
+// Similarly "foo" may embed the length in the type field or in multiple bytes
+
+// This parser is structured as an iterator over a sequence of bytes.
+// It calls a user provided function on each message in order to extract fields
+// The default implementation for each scalar type is to do nothing. For map or
+// arrays, the default implementation returns just after that message to support
+// iterating to the next message, but otherwise has no effect.
+
 struct byte_range {
   const unsigned char *start;
   const unsigned char *end;
