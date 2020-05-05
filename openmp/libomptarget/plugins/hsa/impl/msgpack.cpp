@@ -239,15 +239,14 @@ msgpack::fallback::skip_next_message(const unsigned char *start,
   return handle_msgpack({start, end}, {});
 }
 
-const unsigned char *msgpack::handle_msgpack(msgpack::byte_range bytes,
-                                             msgpack::functors f) {
+template <msgpack::type ty>
+static const unsigned char *handle_msgpack_given_type(msgpack::byte_range bytes,
+                                                      msgpack::functors f) {
   const unsigned char *start = bytes.start;
   const unsigned char *end = bytes.end;
   const uint64_t available = end - start;
-  if (available == 0) {
-    return 0;
-  }
-  const msgpack::type ty = msgpack::parse_type(*start);
+  assert(available != 0);
+
   const uint64_t bytes_used = bytes_used_fixed(ty);
   if (available < bytes_used) {
     return 0;
@@ -328,6 +327,27 @@ const unsigned char *msgpack::handle_msgpack(msgpack::byte_range bytes,
     return start + bytes_used + N;
   }
   }
+  internal_error();
+}
+
+const unsigned char *msgpack::handle_msgpack(msgpack::byte_range bytes,
+                                             msgpack::functors f) {
+  const unsigned char *start = bytes.start;
+  const unsigned char *end = bytes.end;
+  const uint64_t available = end - start;
+  if (available == 0) {
+    return 0;
+  }
+  const msgpack::type ty = msgpack::parse_type(*start);
+
+  switch (ty) {
+#define X(NAME, WIDTH, PAYLOAD, LOWER, UPPER)                                  \
+  case msgpack::NAME:                                                          \
+    return handle_msgpack_given_type<msgpack::NAME>(bytes, f);
+#include "msgpack.def"
+#undef X
+  }
+
   internal_error();
 }
 
