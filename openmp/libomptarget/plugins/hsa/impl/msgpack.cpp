@@ -162,68 +162,10 @@ payload_info_t payload_info(msgpack::type ty) {
   internal_error();
 }
 
-namespace fallback {
-
-void nop_string(size_t, const unsigned char *) {}
-void nop_signed(int64_t) {}
-void nop_unsigned(uint64_t) {}
-void nop_boolean(bool) {}
-void nop_array_elements(byte_range) {}
-void nop_map_elements(byte_range, byte_range) {}
-
-const unsigned char *array(uint64_t N, byte_range bytes,
-                           std::function<void(byte_range)> callback) {
-  for (uint64_t i = 0; i < N; i++) {
-    const unsigned char *next = skip_next_message(bytes.start, bytes.end);
-    if (!next) {
-      return 0;
-    }
-    callback(bytes);
-
-    bytes.start = next;
-  }
-  return bytes.start;
-}
-
-const unsigned char *map(uint64_t N, byte_range bytes,
-                         std::function<void(byte_range, byte_range)> callback) {
-
-  for (uint64_t i = 0; i < N; i++) {
-    const unsigned char *start_key = bytes.start;
-    const unsigned char *end_key = skip_next_message(start_key, bytes.end);
-
-    if (!end_key) {
-      break;
-    }
-
-    const unsigned char *start_value = end_key;
-    const unsigned char *end_value = skip_next_message(start_value, bytes.end);
-
-    if (!end_value) {
-      break;
-    }
-
-    callback({start_key, end_key}, {start_value, end_value});
-
-    bytes.start = end_value;
-  }
-  return bytes.start;
-}
-
-const unsigned char *nop_map(uint64_t N, byte_range bytes) {
-  return map(N, bytes, nop_map_elements);
-}
-
-const unsigned char *nop_array(uint64_t N, byte_range bytes) {
-  return array(N, bytes, nop_array_elements);
-}
-
-} // namespace fallback
 } // namespace msgpack
 
-const unsigned char *
-msgpack::fallback::skip_next_message(const unsigned char *start,
-                                     const unsigned char *end) {
+const unsigned char *msgpack::skip_next_message(const unsigned char *start,
+                                                const unsigned char *end) {
   class f : public functors_defaults<f> {};
   return handle_msgpack({start, end}, f());
 }
@@ -231,32 +173,16 @@ msgpack::fallback::skip_next_message(const unsigned char *start,
 namespace msgpack {
 bool message_is_string(byte_range bytes, const char *needle) {
   bool matched = false;
-  functors f;
   size_t needleN = strlen(needle);
 
-  f.cb_string = [=, &matched](size_t N, const unsigned char *str) {
+  foronly_string(bytes, [=, &matched](size_t N, const unsigned char *str) {
     if (N == needleN) {
       if (memcmp(needle, str, N) == 0) {
         matched = true;
       }
     }
-  };
-
-  handle_msgpack(bytes, f);
+  });
   return matched;
-}
-
-void foreach_map(byte_range bytes,
-                 std::function<void(byte_range, byte_range)> callback) {
-  functors f;
-  f.cb_map_elements = callback;
-  handle_msgpack(bytes, f);
-}
-
-void foreach_array(byte_range bytes, std::function<void(byte_range)> callback) {
-  functors f;
-  f.cb_array_elements = callback;
-  handle_msgpack(bytes, f);
 }
 
 void dump(byte_range bytes) {
@@ -296,6 +222,7 @@ void dump(byte_range bytes) {
 
       return bytes.start;
     }
+
     const unsigned char *handle_map(uint64_t N, byte_range bytes) {
       printf("\n%*s{\n", indent, "");
       indent += by;
