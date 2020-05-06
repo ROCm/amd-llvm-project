@@ -83,7 +83,130 @@ struct functors {
       };
 };
 
-const unsigned char *handle_msgpack(byte_range, functors f);
+typedef enum : uint8_t {
+#define X(NAME, WIDTH, PAYLOAD, LOWER, UPPER) NAME,
+#include "msgpack.def"
+#undef X
+} type;
+
+[[noreturn]] void internal_error();
+type parse_type(unsigned char x);
+unsigned bytes_used_fixed(type ty);
+
+typedef uint64_t (*payload_info_t)(const unsigned char *);
+payload_info_t payload_info(msgpack::type ty);
+
+template <typename T, typename R> R bitcast(T x);
+
+template <msgpack::type ty>
+const unsigned char *handle_msgpack_given_type(byte_range bytes, functors f) {
+  const unsigned char *start = bytes.start;
+  const unsigned char *end = bytes.end;
+  const uint64_t available = end - start;
+  assert(available != 0);
+
+  const uint64_t bytes_used = bytes_used_fixed(ty);
+  if (available < bytes_used) {
+    return 0;
+  }
+  const uint64_t available_post_header = available - bytes_used;
+
+  const payload_info_t info = payload_info(ty);
+  const uint64_t N = info(start);
+
+  switch (ty) {
+  case msgpack::t:
+  case msgpack::f: {
+    // t is 0b11000010, f is 0b11000011, masked with 0x1
+    f.cb_boolean(N);
+    return start + bytes_used;
+  }
+
+  case msgpack::posfixint:
+  case msgpack::uint8:
+  case msgpack::uint16:
+  case msgpack::uint32:
+  case msgpack::uint64: {
+    f.cb_unsigned(N);
+    return start + bytes_used;
+  }
+
+  case msgpack::negfixint:
+  case msgpack::int8:
+  case msgpack::int16:
+  case msgpack::int32:
+  case msgpack::int64: {
+    f.cb_signed(bitcast<uint64_t, int64_t>(N));
+    return start + bytes_used;
+  }
+
+  case msgpack::fixstr:
+  case msgpack::str8:
+  case msgpack::str16:
+  case msgpack::str32: {
+    if (available_post_header < N) {
+      return 0;
+    } else {
+      f.cb_string(N, start + bytes_used);
+      return start + bytes_used + N;
+    }
+  }
+
+  case msgpack::fixarray:
+  case msgpack::array16:
+  case msgpack::array32: {
+    return f.cb_array(N, {start + bytes_used, end});
+  }
+
+  case msgpack::fixmap:
+  case msgpack::map16:
+  case msgpack::map32: {
+    return f.cb_map(N, {start + bytes_used, end});
+  }
+
+  case msgpack::nil:
+  case msgpack::bin8:
+  case msgpack::bin16:
+  case msgpack::bin32:
+  case msgpack::float32:
+  case msgpack::float64:
+  case msgpack::ext8:
+  case msgpack::ext16:
+  case msgpack::ext32:
+  case msgpack::fixext1:
+  case msgpack::fixext2:
+  case msgpack::fixext4:
+  case msgpack::fixext8:
+  case msgpack::fixext16:
+  case msgpack::never_used: {
+    if (available_post_header < N) {
+      return 0;
+    }
+    return start + bytes_used + N;
+  }
+  }
+  internal_error();
+}
+
+inline const unsigned char *handle_msgpack(byte_range bytes, functors f) {
+  const unsigned char *start = bytes.start;
+  const unsigned char *end = bytes.end;
+  const uint64_t available = end - start;
+  if (available == 0) {
+    return 0;
+  }
+  const type ty = parse_type(*start);
+
+  switch (ty) {
+#define X(NAME, WIDTH, PAYLOAD, LOWER, UPPER)                                  \
+  case msgpack::NAME:                                                          \
+    return handle_msgpack_given_type<msgpack::NAME>(bytes, f);
+#include "msgpack.def"
+#undef X
+  }
+
+  internal_error();
+}
 
 bool message_is_string(byte_range bytes, const char *str);
 
