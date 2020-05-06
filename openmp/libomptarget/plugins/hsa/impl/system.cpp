@@ -1002,17 +1002,21 @@ int map_lookup_array(msgpack::byte_range message, const char *needle,
 int map_lookup_string(msgpack::byte_range message, const char *needle,
                       std::string *res) {
   unsigned count = 0;
-  msgpack::foreach_map(
-      message, [&](msgpack::byte_range key, msgpack::byte_range value) {
-        if (msgpack::message_is_string(key, needle)) {
-          msgpack::functors f;
-          f.cb_string = [&](size_t N, const unsigned char *str) {
-            count++;
-            *res = std::string(str, str + N);
-          };
-          msgpack::handle_msgpack(value, f);
-        }
-      });
+  struct s : public msgpack::functors_defaults<s> {
+    s(unsigned &count, std::string *res) : count(count), res(res) {}
+    unsigned &count;
+    std::string *res;
+    void handle_string(size_t N, const unsigned char *str) {
+      count++;
+      *res = std::string(str, str + N);
+    }
+  };
+  msgpack::foreach_map(message,
+                       [&](msgpack::byte_range key, msgpack::byte_range value) {
+                         if (msgpack::message_is_string(key, needle)) {
+                           msgpack::handle_msgpack<s>(value, {count, res});
+                         }
+                       });
   return count != 1;
 }
 
