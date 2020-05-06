@@ -83,6 +83,72 @@ struct functors {
       };
 };
 
+template <typename Derived> class functors_defaults {
+public:
+  void cb_string(size_t N, const unsigned char *str) {
+    derived().handle_string(N, str);
+  }
+  void cb_boolean(bool x) { derived().handle_boolean(x); }
+  void cb_signed(int64_t x) { derived().handle_signed(x); }
+  void cb_unsigned(uint64_t x) { derived().handle_unsigned(x); }
+  void cb_array_elements(byte_range bytes) {
+    derived().handle_array_elements(bytes);
+  }
+  void cb_map_elements(byte_range key, byte_range value) {
+    derived().handle_map_elements(key, value);
+  }
+  const unsigned char *cb_array(uint64_t N, byte_range bytes) {
+    return derived().handle_array(N, bytes);
+  }
+  const unsigned char *cb_map(uint64_t N, byte_range bytes) {
+    return derived().handle_map(N, bytes);
+  }
+
+private:
+  Derived &derived() { return *static_cast<Derived *>(this); }
+
+  // Default implementations for scalar ops are no-ops
+  void handle_string(size_t, const unsigned char *) {}
+  void handle_boolean(bool) {}
+  void handle_signed(int64_t) {}
+  void handle_unsigned(uint64_t) {}
+  void handle_map_elements(byte_range, byte_range) {}
+  void handle_array_elements(byte_range) {}
+
+  // Default implementation for sequences is to skip over the messages
+  const unsigned char *handle_array(uint64_t N, byte_range bytes) {
+    for (uint64_t i = 0; i < N; i++) {
+      const unsigned char *next =
+          fallback::skip_next_message(bytes.start, bytes.end);
+      if (!next) {
+        return nullptr;
+      }
+      cb_array_elements(bytes);
+      bytes.start = next;
+    }
+    return bytes.start;
+  }
+  const unsigned char *handle_map(uint64_t N, byte_range bytes) {
+    for (uint64_t i = 0; i < N; i++) {
+      const unsigned char *start_key = bytes.start;
+      const unsigned char *end_key =
+          fallback::skip_next_message(start_key, bytes.end);
+      if (!end_key) {
+        return nullptr;
+      }
+      const unsigned char *start_value = end_key;
+      const unsigned char *end_value =
+          fallback::skip_next_message(start_value, bytes.end);
+      if (!end_value) {
+        return nullptr;
+      }
+      cb_map_elements({start_key, end_key}, {start_value, end_value});
+      bytes.start = end_value;
+    }
+    return bytes.start;
+  }
+};
+
 typedef enum : uint8_t {
 #define X(NAME, WIDTH, PAYLOAD, LOWER, UPPER) NAME,
 #include "msgpack.def"
@@ -98,12 +164,13 @@ payload_info_t payload_info(msgpack::type ty);
 
 template <typename T, typename R> R bitcast(T x);
 
-template <msgpack::type ty>
-const unsigned char *handle_msgpack_given_type(byte_range bytes, functors f) {
+template <typename F, msgpack::type ty>
+const unsigned char *handle_msgpack_given_type(byte_range bytes, F f) {
   const unsigned char *start = bytes.start;
   const unsigned char *end = bytes.end;
   const uint64_t available = end - start;
   assert(available != 0);
+  assert(ty == parse_type(*start));
 
   const uint64_t bytes_used = bytes_used_fixed(ty);
   if (available < bytes_used) {
@@ -188,7 +255,8 @@ const unsigned char *handle_msgpack_given_type(byte_range bytes, functors f) {
   internal_error();
 }
 
-inline const unsigned char *handle_msgpack(byte_range bytes, functors f) {
+template <typename F>
+const unsigned char *handle_msgpack(byte_range bytes, F f) {
   const unsigned char *start = bytes.start;
   const unsigned char *end = bytes.end;
   const uint64_t available = end - start;
@@ -200,7 +268,7 @@ inline const unsigned char *handle_msgpack(byte_range bytes, functors f) {
   switch (ty) {
 #define X(NAME, WIDTH, PAYLOAD, LOWER, UPPER)                                  \
   case msgpack::NAME:                                                          \
-    return handle_msgpack_given_type<msgpack::NAME>(bytes, f);
+    return handle_msgpack_given_type<F, msgpack::NAME>(bytes, f);
 #include "msgpack.def"
 #undef X
   }

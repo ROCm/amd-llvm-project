@@ -224,7 +224,8 @@ const unsigned char *nop_array(uint64_t N, byte_range bytes) {
 const unsigned char *
 msgpack::fallback::skip_next_message(const unsigned char *start,
                                      const unsigned char *end) {
-  return handle_msgpack({start, end}, {});
+  class f : public functors_defaults<f> {};
+  return handle_msgpack({start, end}, f());
 }
 
 namespace msgpack {
@@ -259,76 +260,78 @@ void foreach_array(byte_range bytes, std::function<void(byte_range)> callback) {
 }
 
 void dump(byte_range bytes) {
-  functors f;
-  unsigned indent = 0;
-  const unsigned by = 2;
+  struct inner : functors_defaults<inner> {
+    inner(unsigned indent) : indent(indent) {}
+    const unsigned by = 2;
+    unsigned indent = 0;
 
-  f.cb_string = [&](size_t N, const unsigned char *bytes) {
-    char *tmp = (char *)malloc(N + 1);
-    memcpy(tmp, bytes, N);
-    tmp[N] = '\0';
-    printf("\"%s\"", tmp);
-    free(tmp);
-  };
+    void handle_string(size_t N, const unsigned char *bytes) {
+      char *tmp = (char *)malloc(N + 1);
+      memcpy(tmp, bytes, N);
+      tmp[N] = '\0';
+      printf("\"%s\"", tmp);
+      free(tmp);
+    }
 
-  f.cb_signed = [&](int64_t x) { printf("%ld", x); };
-  f.cb_unsigned = [&](uint64_t x) { printf("%lu", x); };
+    void handle_signed(int64_t x) { printf("%ld", x); }
+    void handle_unsigned(uint64_t x) { printf("%lu", x); }
 
-  f.cb_array = [&](uint64_t N, byte_range bytes) -> const unsigned char * {
-    printf("\n%*s[\n", indent, "");
-    indent += by;
-
-    for (uint64_t i = 0; i < N; i++) {
+    const unsigned char *handle_array(uint64_t N, byte_range bytes) {
+      printf("\n%*s[\n", indent, "");
       indent += by;
-      printf("%*s", indent, "");
-      const unsigned char *next = handle_msgpack(bytes, f);
-      printf(",\n");
+
+      for (uint64_t i = 0; i < N; i++) {
+        indent += by;
+        printf("%*s", indent, "");
+        const unsigned char *next = handle_msgpack<inner>(bytes, {indent});
+        printf(",\n");
+        indent -= by;
+        bytes.start = next;
+        if (!next) {
+          break;
+        }
+      }
       indent -= by;
-      bytes.start = next;
-      if (!next) {
-        break;
-      }
-    }
-    indent -= by;
-    printf("%*s]", indent, "");
+      printf("%*s]", indent, "");
 
-    return bytes.start;
+      return bytes.start;
+    }
+    const unsigned char *handle_map(uint64_t N, byte_range bytes) {
+      printf("\n%*s{\n", indent, "");
+      indent += by;
+
+      for (uint64_t i = 0; i < 2 * N; i += 2) {
+        const unsigned char *start_key = bytes.start;
+        printf("%*s", indent, "");
+        const unsigned char *end_key =
+            handle_msgpack<inner>({start_key, bytes.end}, {indent});
+        if (!end_key) {
+          break;
+        }
+
+        printf(" : ");
+
+        const unsigned char *start_value = end_key;
+        const unsigned char *end_value =
+            handle_msgpack<inner>({start_value, bytes.end}, {indent});
+
+        if (!end_value) {
+          break;
+        }
+
+        printf(",\n");
+        bytes.start = end_value;
+      }
+
+      indent -= by;
+      printf("%*s}", indent, "");
+
+      return bytes.start;
+    }
   };
 
-  f.cb_map = [&](uint64_t N, byte_range bytes) -> const unsigned char * {
-    printf("\n%*s{\n", indent, "");
-    indent += by;
-
-    for (uint64_t i = 0; i < 2 * N; i += 2) {
-      const unsigned char *start_key = bytes.start;
-      printf("%*s", indent, "");
-      const unsigned char *end_key = handle_msgpack({start_key, bytes.end}, f);
-      if (!end_key) {
-        break;
-      }
-
-      printf(" : ");
-
-      const unsigned char *start_value = end_key;
-      const unsigned char *end_value =
-          handle_msgpack({start_value, bytes.end}, f);
-
-      if (!end_value) {
-        break;
-      }
-
-      printf(",\n");
-
-      bytes.start = end_value;
-    }
-
-    indent -= by;
-    printf("%*s}", indent, "");
-
-    return bytes.start;
-  };
-
-  handle_msgpack(bytes, f);
+  handle_msgpack<inner>(bytes, {0});
   printf("\n");
 }
+
 } // namespace msgpack
