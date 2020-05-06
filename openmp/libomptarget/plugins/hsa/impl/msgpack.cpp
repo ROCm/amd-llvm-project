@@ -6,20 +6,12 @@
 
 #include "msgpack.h"
 
-namespace {
+namespace msgpack {
+
 [[noreturn]] void internal_error() {
   printf("internal error\n");
   exit(1);
 }
-} // namespace
-
-namespace msgpack {
-
-typedef enum : uint8_t {
-#define X(NAME, WIDTH, PAYLOAD, LOWER, UPPER) NAME,
-#include "msgpack.def"
-#undef X
-} type;
 
 const char *type_name(type ty) {
   switch (ty) {
@@ -55,31 +47,29 @@ msgpack::type parse_type(unsigned char x) {
   { internal_error(); }
 }
 
-} // namespace msgpack
-
-namespace {
 template <typename T, typename R> R bitcast(T x) {
   static_assert(sizeof(T) == sizeof(R), "");
   R tmp;
   memcpy(&tmp, &x, sizeof(T));
   return tmp;
 }
+template int64_t bitcast<uint64_t, int64_t>(uint64_t);
+} // namespace msgpack
 
 // Helper functions for reading additional payload from the header
 // Depending on the type, this can be a number of bytes, elements,
 // key-value pairs or an embedded integer.
 // Each takes a pointer to the start of the header and returns a uint64_t
 
-typedef uint64_t (*payload_info_t)(const unsigned char *);
-
+namespace {
 namespace payload {
 uint64_t read_zero(const unsigned char *) { return 0; }
 
 // Read the first byte and zero/sign extend it
 uint64_t read_embedded_u8(const unsigned char *start) { return start[0]; }
 uint64_t read_embedded_s8(const unsigned char *start) {
-  int64_t res = bitcast<uint8_t, int8_t>(start[0]);
-  return bitcast<int64_t, uint64_t>(res);
+  int64_t res = msgpack::bitcast<uint8_t, int8_t>(start[0]);
+  return msgpack::bitcast<int64_t, uint64_t>(res);
 }
 
 // Read a masked part of the first byte
@@ -137,25 +127,28 @@ uint64_t read_size_field_u64(const unsigned char *from) {
 
 uint64_t read_size_field_s8(const unsigned char *from) {
   uint8_t u = read_size_field_u8(from);
-  int64_t res = bitcast<uint8_t, int8_t>(u);
-  return bitcast<int64_t, uint64_t>(res);
+  int64_t res = msgpack::bitcast<uint8_t, int8_t>(u);
+  return msgpack::bitcast<int64_t, uint64_t>(res);
 }
 uint64_t read_size_field_s16(const unsigned char *from) {
   uint16_t u = read_size_field_u16(from);
-  int64_t res = bitcast<uint16_t, int16_t>(u);
-  return bitcast<int64_t, uint64_t>(res);
+  int64_t res = msgpack::bitcast<uint16_t, int16_t>(u);
+  return msgpack::bitcast<int64_t, uint64_t>(res);
 }
 uint64_t read_size_field_s32(const unsigned char *from) {
   uint32_t u = read_size_field_u32(from);
-  int64_t res = bitcast<uint32_t, int32_t>(u);
-  return bitcast<int64_t, uint64_t>(res);
+  int64_t res = msgpack::bitcast<uint32_t, int32_t>(u);
+  return msgpack::bitcast<int64_t, uint64_t>(res);
 }
 uint64_t read_size_field_s64(const unsigned char *from) {
   uint64_t u = read_size_field_u64(from);
-  int64_t res = bitcast<uint64_t, int64_t>(u);
-  return bitcast<int64_t, uint64_t>(res);
+  int64_t res = msgpack::bitcast<uint64_t, int64_t>(u);
+  return msgpack::bitcast<int64_t, uint64_t>(res);
 }
 } // namespace payload
+} // namespace
+
+namespace msgpack {
 
 payload_info_t payload_info(msgpack::type ty) {
   using namespace msgpack;
@@ -168,12 +161,7 @@ payload_info_t payload_info(msgpack::type ty) {
   }
   internal_error();
 }
-} // namespace
 
-// Only failure mode is going to be out of bounds
-// Return NULL on out of bounds, otherwise start of the next entry
-
-namespace msgpack {
 namespace fallback {
 
 void nop_string(size_t, const unsigned char *) {}
@@ -237,118 +225,6 @@ const unsigned char *
 msgpack::fallback::skip_next_message(const unsigned char *start,
                                      const unsigned char *end) {
   return handle_msgpack({start, end}, {});
-}
-
-template <msgpack::type ty>
-static const unsigned char *handle_msgpack_given_type(msgpack::byte_range bytes,
-                                                      msgpack::functors f) {
-  const unsigned char *start = bytes.start;
-  const unsigned char *end = bytes.end;
-  const uint64_t available = end - start;
-  assert(available != 0);
-
-  const uint64_t bytes_used = bytes_used_fixed(ty);
-  if (available < bytes_used) {
-    return 0;
-  }
-  const uint64_t available_post_header = available - bytes_used;
-
-  const payload_info_t info = payload_info(ty);
-  const uint64_t N = info(start);
-
-  switch (ty) {
-  case msgpack::t:
-  case msgpack::f: {
-    // t is 0b11000010, f is 0b11000011, masked with 0x1
-    f.cb_boolean(N);
-    return start + bytes_used;
-  }
-
-  case msgpack::posfixint:
-  case msgpack::uint8:
-  case msgpack::uint16:
-  case msgpack::uint32:
-  case msgpack::uint64: {
-    f.cb_unsigned(N);
-    return start + bytes_used;
-  }
-
-  case msgpack::negfixint:
-  case msgpack::int8:
-  case msgpack::int16:
-  case msgpack::int32:
-  case msgpack::int64: {
-    f.cb_signed(bitcast<uint64_t, int64_t>(N));
-    return start + bytes_used;
-  }
-
-  case msgpack::fixstr:
-  case msgpack::str8:
-  case msgpack::str16:
-  case msgpack::str32: {
-    if (available_post_header < N) {
-      return 0;
-    } else {
-      f.cb_string(N, start + bytes_used);
-      return start + bytes_used + N;
-    }
-  }
-
-  case msgpack::fixarray:
-  case msgpack::array16:
-  case msgpack::array32: {
-    return f.cb_array(N, {start + bytes_used, end});
-  }
-
-  case msgpack::fixmap:
-  case msgpack::map16:
-  case msgpack::map32: {
-    return f.cb_map(N, {start + bytes_used, end});
-  }
-
-  case msgpack::nil:
-  case msgpack::bin8:
-  case msgpack::bin16:
-  case msgpack::bin32:
-  case msgpack::float32:
-  case msgpack::float64:
-  case msgpack::ext8:
-  case msgpack::ext16:
-  case msgpack::ext32:
-  case msgpack::fixext1:
-  case msgpack::fixext2:
-  case msgpack::fixext4:
-  case msgpack::fixext8:
-  case msgpack::fixext16:
-  case msgpack::never_used: {
-    if (available_post_header < N) {
-      return 0;
-    }
-    return start + bytes_used + N;
-  }
-  }
-  internal_error();
-}
-
-const unsigned char *msgpack::handle_msgpack(msgpack::byte_range bytes,
-                                             msgpack::functors f) {
-  const unsigned char *start = bytes.start;
-  const unsigned char *end = bytes.end;
-  const uint64_t available = end - start;
-  if (available == 0) {
-    return 0;
-  }
-  const msgpack::type ty = msgpack::parse_type(*start);
-
-  switch (ty) {
-#define X(NAME, WIDTH, PAYLOAD, LOWER, UPPER)                                  \
-  case msgpack::NAME:                                                          \
-    return handle_msgpack_given_type<msgpack::NAME>(bytes, f);
-#include "msgpack.def"
-#undef X
-  }
-
-  internal_error();
 }
 
 namespace msgpack {
