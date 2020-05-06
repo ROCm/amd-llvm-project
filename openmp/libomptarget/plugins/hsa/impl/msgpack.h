@@ -33,55 +33,8 @@ struct byte_range {
   const unsigned char *end;
 };
 
-namespace fallback {
-
 const unsigned char *skip_next_message(const unsigned char *start,
                                        const unsigned char *end);
-
-void nop_string(size_t, const unsigned char *);
-void nop_signed(int64_t);
-void nop_unsigned(uint64_t);
-void nop_boolean(bool);
-void nop_array_elements(byte_range);
-void nop_map_elements(byte_range, byte_range);
-
-const unsigned char *nop_map(uint64_t N, byte_range);
-const unsigned char *nop_array(uint64_t N, byte_range);
-
-const unsigned char *array(uint64_t N, byte_range,
-                           std::function<void(byte_range)> callback);
-const unsigned char *map(uint64_t N, byte_range,
-                         std::function<void(byte_range, byte_range)> callback);
-} // namespace fallback
-
-struct functors {
-
-  std::function<void(size_t, const unsigned char *)> cb_string =
-      fallback::nop_string;
-
-  std::function<void(int64_t)> cb_signed = fallback::nop_signed;
-
-  std::function<void(uint64_t)> cb_unsigned = fallback::nop_unsigned;
-
-  std::function<void(bool)> cb_boolean = fallback::nop_boolean;
-
-  std::function<void(byte_range, byte_range)> cb_map_elements =
-      fallback::nop_map_elements;
-
-  std::function<void(byte_range)> cb_array_elements =
-      fallback::nop_array_elements;
-
-  std::function<const unsigned char *(uint64_t N, byte_range)> cb_array =
-      [=](uint64_t N, byte_range bytes) {
-        return fallback::array(N, bytes, this->cb_array_elements);
-      };
-
-  std::function<const unsigned char *(uint64_t N, byte_range)>
-
-      cb_map = [=](uint64_t N, byte_range bytes) {
-        return fallback::map(N, bytes, this->cb_map_elements);
-      };
-};
 
 template <typename Derived> class functors_defaults {
 public:
@@ -112,14 +65,14 @@ private:
   void handle_boolean(bool) {}
   void handle_signed(int64_t) {}
   void handle_unsigned(uint64_t) {}
-  void handle_map_elements(byte_range, byte_range) {}
   void handle_array_elements(byte_range) {}
+  void handle_map_elements(byte_range, byte_range) {}
 
   // Default implementation for sequences is to skip over the messages
   const unsigned char *handle_array(uint64_t N, byte_range bytes) {
     for (uint64_t i = 0; i < N; i++) {
       const unsigned char *next =
-          fallback::skip_next_message(bytes.start, bytes.end);
+          skip_next_message(bytes.start, bytes.end);
       if (!next) {
         return nullptr;
       }
@@ -132,13 +85,13 @@ private:
     for (uint64_t i = 0; i < N; i++) {
       const unsigned char *start_key = bytes.start;
       const unsigned char *end_key =
-          fallback::skip_next_message(start_key, bytes.end);
+          skip_next_message(start_key, bytes.end);
       if (!end_key) {
         return nullptr;
       }
       const unsigned char *start_value = end_key;
       const unsigned char *end_value =
-          fallback::skip_next_message(start_value, bytes.end);
+          skip_next_message(start_value, bytes.end);
       if (!end_value) {
         return nullptr;
       }
@@ -278,10 +231,43 @@ const unsigned char *handle_msgpack(byte_range bytes, F f) {
 
 bool message_is_string(byte_range bytes, const char *str);
 
-void foreach_map(byte_range,
-                 std::function<void(byte_range, byte_range)> callback);
+template <typename C> void foronly_string(byte_range bytes, C callback) {
+  struct inner : functors_defaults<inner> {
+    inner(C &cb) : cb(cb) {}
+    C &cb;
+    void handle_string(size_t N, const unsigned char *str) { cb(N, str); }
+  };
+  handle_msgpack<inner>(bytes, {callback});
+}
 
-void foreach_array(byte_range, std::function<void(byte_range)> callback);
+template <typename C> void foronly_unsigned(byte_range bytes, C callback) {
+  struct inner : functors_defaults<inner> {
+    inner(C &cb) : cb(cb) {}
+    C &cb;
+    void handle_unsigned(uint64_t x) { cb(x); }
+  };
+  handle_msgpack<inner>(bytes, {callback});
+}
+
+template <typename C> void foreach_array(byte_range bytes, C callback) {
+  struct inner : functors_defaults<inner> {
+    inner(C &cb) : cb(cb) {}
+    C &cb;
+    void handle_array_elements(byte_range element) { cb(element); }
+  };
+  handle_msgpack<inner>(bytes, {callback});
+}
+
+template <typename C> void foreach_map(byte_range bytes, C callback) {
+  struct inner : functors_defaults<inner> {
+    inner(C &cb) : cb(cb) {}
+    C &cb;
+    void handle_map_elements(byte_range key, byte_range value) {
+      cb(key, value);
+    }
+  };
+  handle_msgpack<inner>(bytes, {callback});
+}
 
 // Crude approximation to json
 void dump(byte_range);

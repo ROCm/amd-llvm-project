@@ -977,25 +977,28 @@ namespace {
 int map_lookup_array(msgpack::byte_range message, const char *needle,
                      msgpack::byte_range *res, uint64_t *size) {
   unsigned count = 0;
+  struct s : msgpack::functors_defaults<s> {
+    s(unsigned &count, uint64_t *size) : count(count), size(size) {}
+    unsigned &count;
+    uint64_t *size;
+    const unsigned char *handle_array(uint64_t N, msgpack::byte_range bytes) {
+      count++;
+      *size = N;
+      return bytes.end;
+    }
+  };
 
-  msgpack::foreach_map(
-      message, [&](msgpack::byte_range key, msgpack::byte_range value) {
-        if (msgpack::message_is_string(key, needle)) {
-
-          msgpack::functors f;
-          // Check the message is an array and get the number of elements in it
-          f.cb_array = [&](uint64_t N,
-                           msgpack::byte_range bytes) -> const unsigned char * {
-            count++;
-            *size = N;
-            return bytes.end;
-          };
-
-          // return the whole array
-          *res = value;
-          msgpack::handle_msgpack(value, f);
-        }
-      });
+  msgpack::foreach_map(message,
+                       [&](msgpack::byte_range key, msgpack::byte_range value) {
+                         if (msgpack::message_is_string(key, needle)) {
+                           // If the message is an array, record number of
+                           // elements in *size
+                           msgpack::handle_msgpack<s>(value, {count, size});
+                           // return the whole array
+                           *res = value;
+                         }
+                       });
+  // Only claim success if exactly one key/array pair matched
   return count != 1;
 }
 
@@ -1026,12 +1029,10 @@ int map_lookup_uint64_t(msgpack::byte_range message, const char *needle,
   msgpack::foreach_map(message,
                        [&](msgpack::byte_range key, msgpack::byte_range value) {
                          if (msgpack::message_is_string(key, needle)) {
-                           msgpack::functors f;
-                           f.cb_unsigned = [&](uint64_t x) {
+                           msgpack::foronly_unsigned(value, [&](uint64_t x) {
                              count++;
                              *res = x;
-                           };
-                           msgpack::handle_msgpack(value, f);
+                           });
                          }
                        });
   return count != 1;
@@ -1053,36 +1054,31 @@ int array_lookup_element(msgpack::byte_range message, uint64_t elt,
 
 int populate_kernelArgMD(msgpack::byte_range args_element,
                          KernelArgMD *kernelarg) {
+  using namespace msgpack;
   int error = 0;
-  msgpack::foreach_map(
-      args_element,
-      [&](msgpack::byte_range key, msgpack::byte_range value) -> void {
-        msgpack::functors f;
-        if (msgpack::message_is_string(key, ".name")) {
-          f.cb_string = [&](size_t N, const unsigned char *str) {
-            kernelarg->name_ = std::string(str, str + N);
-          };
-        } else if (msgpack::message_is_string(key, ".type_name")) {
-          f.cb_string = [&](size_t N, const unsigned char *str) {
-            kernelarg->typeName_ = std::string(str, str + N);
-          };
-        } else if (msgpack::message_is_string(key, ".size")) {
-          f.cb_unsigned = [&](uint64_t x) { kernelarg->size_ = x; };
-        } else if (msgpack::message_is_string(key, ".offset")) {
-          f.cb_unsigned = [&](uint64_t x) { kernelarg->offset_ = x; };
-        } else if (msgpack::message_is_string(key, ".value_kind")) {
-          f.cb_string = [&](size_t N, const unsigned char *str) {
-            std::string s = std::string(str, str + N);
-            auto itValueKind = ArgValueKind.find(s);
-            if (itValueKind != ArgValueKind.end()) {
-              kernelarg->valueKind_ = itValueKind->second;
-            }
-          };
-        }
-
-        msgpack::handle_msgpack(value, f);
+  foreach_map(args_element, [&](byte_range key, byte_range value) -> void {
+    if (message_is_string(key, ".name")) {
+      foronly_string(value, [&](size_t N, const unsigned char *str) {
+        kernelarg->name_ = std::string(str, str + N);
       });
-
+    } else if (message_is_string(key, ".type_name")) {
+      foronly_string(value, [&](size_t N, const unsigned char *str) {
+        kernelarg->typeName_ = std::string(str, str + N);
+      });
+    } else if (message_is_string(key, ".size")) {
+      foronly_unsigned(value, [&](uint64_t x) { kernelarg->size_ = x; });
+    } else if (message_is_string(key, ".offset")) {
+      foronly_unsigned(value, [&](uint64_t x) { kernelarg->offset_ = x; });
+    } else if (message_is_string(key, ".value_kind")) {
+      foronly_string(value, [&](size_t N, const unsigned char *str) {
+        std::string s = std::string(str, str + N);
+        auto itValueKind = ArgValueKind.find(s);
+        if (itValueKind != ArgValueKind.end()) {
+          kernelarg->valueKind_ = itValueKind->second;
+        }
+      });
+    }
+  });
   return error;
 }
 } // namespace
