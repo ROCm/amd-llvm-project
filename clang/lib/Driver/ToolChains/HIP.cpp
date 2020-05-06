@@ -487,25 +487,12 @@ void HIPToolChain::addClangTargetOptions(
     else
       WaveFrontSizeBC = "oclc_wavefrontsize64_off.amdgcn.bc";
 
-    // FIXME remove double link of aompextras and hip
-    if (DriverArgs.hasArg(options::OPT_cuda_device_only))
-      // FIXME: when building aompextras, we need to skip aompextras
-      BCLibs.append({"hip.amdgcn.bc", "opencl.amdgcn.bc", "ocml.amdgcn.bc",
-                     "ockl.amdgcn.bc", "oclc_finite_only_off.amdgcn.bc",
-                     FlushDenormalControlBC,
-                     "oclc_correctly_rounded_sqrt_on.amdgcn.bc",
-                     "oclc_unsafe_math_off.amdgcn.bc", ISAVerBC,
-                     std::string(WaveFrontSizeBC)});
-
-    else
-      BCLibs.append(
-          {"hip.amdgcn.bc", "opencl.amdgcn.bc", "ocml.amdgcn.bc",
-           "ockl.amdgcn.bc", "oclc_finite_only_off.amdgcn.bc",
-           FlushDenormalControlBC,
-           "oclc_correctly_rounded_sqrt_on.amdgcn.bc",
-           "oclc_unsafe_math_off.amdgcn.bc", ISAVerBC,
-           DriverArgs.MakeArgString("libaompextras-amdgcn-" + GpuArch + ".bc"),
-           std::string(WaveFrontSizeBC)});
+    BCLibs.append({"hip.amdgcn.bc", "ocml.amdgcn.bc", "ockl.amdgcn.bc",
+                   "oclc_finite_only_off.amdgcn.bc",
+                   FlushDenormalControlBC,
+                   "oclc_correctly_rounded_sqrt_on.amdgcn.bc",
+                   "oclc_unsafe_math_off.amdgcn.bc", ISAVerBC,
+                   std::string(WaveFrontSizeBC)});
   }
   for (auto Lib : BCLibs)
     addBCLib(getDriver(), DriverArgs, CC1Args, LibraryPaths, Lib,
