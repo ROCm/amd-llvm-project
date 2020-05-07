@@ -44,7 +44,12 @@
 DEVICE char gpuHeap[SIZE_OF_HEAP];
 DEVICE uint32_t gpuFlags[NUM_PAGES];
 
+EXTERN char *  printf_alloc(uint32_t bufsz);
+
 DEVICE void *__malloc(size_t size) {
+
+  return printf_alloc(size);
+  
   char *heap = (char *)gpuHeap;
   if (size > SIZE_OF_HEAP) {
     return (void *)nullptr;
@@ -78,6 +83,8 @@ DEVICE void *__malloc(size_t size) {
 }
 
 DEVICE void __free(void *ptr) {
+  return;
+  
   if (ptr == nullptr) {
     return;
   }
