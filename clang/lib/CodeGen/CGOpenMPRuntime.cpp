@@ -1675,6 +1675,11 @@ llvm::Value *CGOpenMPRuntime::emitUpdateLocation(CodeGenFunction &CGF,
   // OpenMPLocThreadIDMap may have null DebugLoc and non-null ThreadID, if
   // GetOpenMPThreadID was called before this routine.
   if (!LocValue.isValid()) {
+   // AMDGCN does not handle static initializers of aggregate constants.
+   // compiling -g will excercise this path.
+   if (CGM.getTriple().getArch() == llvm::Triple::amdgcn)
+      return getOrCreateDefaultLocation(Flags).getPointer();
+
     // Generate "ident_t .kmpc_loc.addr;"
     Address AI = CGF.CreateMemTemp(IdentQTy, ".kmpc_loc.addr");
     auto &Elem = OpenMPLocThreadIDMap.FindAndConstruct(CGF.CurFn);
