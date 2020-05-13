@@ -1612,15 +1612,6 @@ Address CGOpenMPRuntime::getOrCreateDefaultLocation(unsigned Flags) {
           CGM.GetAddrOfConstantCString(";unknown;unknown;0;0;;").getPointer();
       DefaultOpenMPPSource =
           llvm::ConstantExpr::getBitCast(DefaultOpenMPPSource, CGM.Int8PtrTy);
-
-      if (CGM.getTriple().getArch() == llvm::Triple::amdgcn) {
-        // amdgcn llc rejects static initializers containing addrspace cast (and
-        // other things)
-        // LLVM ERROR: Unsupported expression in static initializer
-        // Emitting NULL instead of the string works around this. The real fix
-        // may involve extending llc
-        DefaultOpenMPPSource = llvm::ConstantInt::getNullValue(CGM.Int8PtrTy);
-      }
     }
 
     llvm::Constant *Data[] = {
@@ -1684,9 +1675,6 @@ llvm::Value *CGOpenMPRuntime::emitUpdateLocation(CodeGenFunction &CGF,
   // OpenMPLocThreadIDMap may have null DebugLoc and non-null ThreadID, if
   // GetOpenMPThreadID was called before this routine.
   if (!LocValue.isValid()) {
-    // AMDGCN does not handle static initializers of aggregate constants.
-    if (CGM.getTriple().getArch() == llvm::Triple::amdgcn)
-      return getOrCreateDefaultLocation(Flags).getPointer();
     // Generate "ident_t .kmpc_loc.addr;"
     Address AI = CGF.CreateMemTemp(IdentQTy, ".kmpc_loc.addr");
     auto &Elem = OpenMPLocThreadIDMap.FindAndConstruct(CGF.CurFn);
@@ -9900,9 +9888,6 @@ void CGOpenMPRuntime::emitTargetNumIterationsCall(
   if (!isOpenMPDistributeDirective(Kind) || !isOpenMPTeamsDirective(Kind))
     TD = getNestedDistributeDirective(CGM.getContext(), D);
   if (!TD)
-    return;
-  const std::vector<llvm::Triple> &Devices = CGM.getLangOpts().OMPTargetTriples;
-  if (Devices.empty())
     return;
   const auto *LD = cast<OMPLoopDirective>(TD);
   auto &&CodeGen = [LD, DeviceID, SizeEmitter, this](CodeGenFunction &CGF,

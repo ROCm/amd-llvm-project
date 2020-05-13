@@ -1246,13 +1246,10 @@ void CGOpenMPRuntimeNVPTX::GenerateMetaData(CodeGenModule &CGM,
   // Emitting Metadata for thread_limit causes an issue in ISEL, due to
   // an optimization in OPT.
   // See line 230 lib/Target/AMDGPU/AMDGPULowerKernelAttributes.cpp
-  bool enableMetaOptBug = false;
   bool flatAttrEmitted = false;
   int FlatAttr = 0;
   int DefaultWorkGroupSz =
       CGM.getTarget().getGridValue(GPU::GVIDX::GV_Default_WG_Size);
-  if (char *envStr = getenv("AMDGPU_ENABLE_META_OPT_BUG"))
-    enableMetaOptBug = atoi(envStr);
 
   if ((CGM.getTriple().getArch() == llvm::Triple::amdgcn) &&
       (isOpenMPTeamsDirective(D.getDirectiveKind()) ||
@@ -1293,9 +1290,8 @@ void CGOpenMPRuntimeNVPTX::GenerateMetaData(CodeGenModule &CGM,
               llvm::ConstantInt::get(llvm::Type::getInt32Ty(Ctx), 1)),
           llvm::ConstantAsMetadata::get(
               llvm::ConstantInt::get(llvm::Type::getInt32Ty(Ctx), 1))};
-      if (enableMetaOptBug)
-        OutlinedFn->setMetadata("reqd_work_group_size",
-                                llvm::MDNode::get(Ctx, AttrMDArgs));
+      OutlinedFn->setMetadata("reqd_work_group_size",
+                              llvm::MDNode::get(Ctx, AttrMDArgs));
       OutlinedFn->setMetadata("work_group_size_hint",
                               llvm::MDNode::get(Ctx, AttrMDArgs));
       std::string AttrVal = llvm::utostr(compileTimeThreadLimit);
