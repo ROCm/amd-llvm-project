@@ -559,24 +559,26 @@ std::string tools::FindDebugInLibraryPath() {
   return "";
 }
 
+void tools::addOpenMPRuntimeSpecificRPath(const ToolChain &TC, const ArgList &Args,
+                                         ArgStringList &CmdArgs) {
+  const Driver &D = TC.getDriver();
+  std::string CandidateRPath = FindDebugInLibraryPath();
+  if (CandidateRPath.empty())
+    CandidateRPath = D.Dir + "/../lib";
+
+  if (TC.getVFS().exists(CandidateRPath)) {
+    CmdArgs.push_back("-rpath");
+   CmdArgs.push_back(Args.MakeArgString(CandidateRPath.c_str()));
+  }
+}
+
 void tools::addArchSpecificRPath(const ToolChain &TC, const ArgList &Args,
                                  ArgStringList &CmdArgs) {
-  std::string CandidateRPath;
-  if (TC.getDriver().getOpenMPRuntime(Args) == Driver::OMPRT_OMP) {
-    // The AOMP compiler installation for OpenMP has both release and debug
-    // versions of host runtimes and device runtimes.  If LIBRARY_PATH
-    // does not contain lib-debug, then only get lomp and lomptarget
-    // from compiler installation.
-    const Driver &D = TC.getDriver();
-    CandidateRPath = FindDebugInLibraryPath();
-    if (CandidateRPath.empty())
-      CandidateRPath = D.Dir + "/../lib";
-  } else {
-    if (!Args.hasFlag(options::OPT_frtlib_add_rpath,
-                      options::OPT_fno_rtlib_add_rpath, false))
-      return;
-    CandidateRPath = TC.getArchSpecificLibPath();
-  }
+  if (!Args.hasFlag(options::OPT_frtlib_add_rpath,
+                    options::OPT_fno_rtlib_add_rpath, false))
+    return;
+
+  std::string CandidateRPath = TC.getArchSpecificLibPath();
   if (TC.getVFS().exists(CandidateRPath)) {
     CmdArgs.push_back("-rpath");
     CmdArgs.push_back(Args.MakeArgString(CandidateRPath.c_str()));
@@ -602,7 +604,7 @@ bool tools::addOpenMPRuntime(ArgStringList &CmdArgs, const ToolChain &TC,
   switch (RTKind) {
   case Driver::OMPRT_OMP:
     CmdArgs.push_back("-lomp");
-    addArchSpecificRPath(TC, Args, CmdArgs);
+    addOpenMPRuntimeSpecificRPath(TC, Args, CmdArgs);
     break;
   case Driver::OMPRT_GOMP:
     CmdArgs.push_back("-lgomp");
