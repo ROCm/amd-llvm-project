@@ -42,22 +42,20 @@ SOFTWARE.
 typedef struct atl_hcq_element_s atl_hcq_element_t;
 struct atl_hcq_element_s {
   buffer_t *hcb;
-  amd_hostcall_consumer_t *consumer;
   hsa_queue_t *hsa_q;
   atl_hcq_element_t *next_ptr;
-  uint32_t device_id;
 };
 
 //  Persistent static values for the hcq linked list
-atl_hcq_element_t *atl_hcq_front;
-atl_hcq_element_t *atl_hcq_rear;
-int atl_hcq_count;
+static atl_hcq_element_t *atl_hcq_front = NULL;
+static atl_hcq_element_t *atl_hcq_rear = NULL;
+static int atl_hcq_count = 0;
+static amd_hostcall_consumer_t *atl_hcq_consumer = NULL;
 
 static int atl_hcq_size() { return atl_hcq_count; }
 
-atl_hcq_element_t *atl_hcq_push(buffer_t *hcb,
-                                amd_hostcall_consumer_t *consumer,
-                                hsa_queue_t *hsa_q, uint32_t devid) {
+static atl_hcq_element_t *atl_hcq_push(buffer_t *hcb, hsa_queue_t *hsa_q,
+                                       uint32_t devid) {
   // FIXME , check rc of these mallocs
   if (atl_hcq_rear == NULL) {
     atl_hcq_rear = (atl_hcq_element_t *)malloc(sizeof(atl_hcq_element_t));
@@ -68,11 +66,9 @@ atl_hcq_element_t *atl_hcq_push(buffer_t *hcb,
     atl_hcq_rear->next_ptr = new_rear;
     atl_hcq_rear = new_rear;
   }
-  atl_hcq_rear->next_ptr = NULL;
   atl_hcq_rear->hcb = hcb;
   atl_hcq_rear->hsa_q = hsa_q;
-  atl_hcq_rear->consumer = consumer;
-  atl_hcq_rear->device_id = devid;
+  atl_hcq_rear->next_ptr = NULL;
   atl_hcq_count++;
   return atl_hcq_rear;
 }
@@ -153,6 +149,15 @@ unsigned long atmi_hostcall_assign_buffer(hsa_queue_t *this_Q,
   atl_hcq_element_t *llq_elem;
   llq_elem = atl_hcq_find_by_hsa_q(this_Q);
   if (!llq_elem) {
+    // May be the first call. Create consumer if so
+    if (!atl_hcq_consumer) {
+      atl_hcq_consumer = amd_hostcall_create_consumer();
+      // None of the handlers use the callback data at present
+      hostcall_register_all_handlers(atl_hcq_consumer, NULL);
+      // Spawns a thread
+      amd_hostcall_launch_consumer(atl_hcq_consumer);
+    }
+
     hsa_agent_t agent;
     atmi_place_t place = ATMI_PLACE_GPU(0, device_id);
     // FIXME: error check for this function
@@ -173,37 +178,24 @@ unsigned long atmi_hostcall_assign_buffer(hsa_queue_t *this_Q,
     unsigned int minpackets = numCu * waverPerCu;
     //  For now, we create one bufer and one consumer per ATMI hsa queue
     buffer_t *hcb = atl_hcq_create_buffer(minpackets);
-    amd_hostcall_consumer_t *c;
-    atl_hcq_element_t *front = atl_hcq_front;
-    if (front)
-      c = front->consumer;
-    else
-      c = amd_hostcall_create_consumer();
-    amd_hostcall_register_buffer(c, hcb);
-    // create element of linked list hcq. This will also be the callback data
-    llq_elem = atl_hcq_push(hcb, c, this_Q, device_id);
-    hostcall_register_all_handlers(c, (void *)llq_elem);
-    amd_hostcall_launch_consumer(c);
+    amd_hostcall_register_buffer(atl_hcq_consumer, hcb);
+    // create element of linked list hcq.
+    llq_elem = atl_hcq_push(hcb, this_Q, device_id);
   }
   return (unsigned long)llq_elem->hcb;
 }
 
-hsa_status_t atmi_hostcall_init() {
-  atl_hcq_count = 0;
-  atl_hcq_front = atl_hcq_rear = NULL;
-  return HSA_STATUS_SUCCESS;
-}
+hsa_status_t atmi_hostcall_init() { return HSA_STATUS_SUCCESS; }
 
 hsa_status_t atmi_hostcall_terminate() {
-  amd_hostcall_consumer_t *c;
   atl_hcq_element_t *this_front = atl_hcq_front;
   atl_hcq_element_t *last_front;
   int reverse_counter = atl_hcq_size();
+  if (atl_hcq_consumer) {
+    amd_hostcall_destroy_consumer(atl_hcq_consumer);
+    atl_hcq_consumer = NULL;
+  }
   while (reverse_counter) {
-    if (this_front == atl_hcq_front) {
-      c = this_front->consumer;
-      amd_hostcall_destroy_consumer(c);
-    }
     atmi_free(this_front->hcb);
     last_front = this_front;
     this_front = this_front->next_ptr;
