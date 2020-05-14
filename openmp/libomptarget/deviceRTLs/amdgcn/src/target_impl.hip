@@ -38,10 +38,10 @@ DEVICE __kmpc_impl_lanemask_t __kmpc_impl_lanemask_gt() {
 DEVICE double __kmpc_impl_get_wtick() { return ((double)1E-9); }
 
 DEVICE double __kmpc_impl_get_wtime() {
-#if __AMDGCN_MODEL__ > 800
-  uint64_t t = __builtin_amdgcn_s_memrealtime();
-#else
+#ifdef __AMDGCN_USE_SMEMTIME__
   uint64_t t = __builtin_amdgcn_s_memtime();
+#else
+  uint64_t t = __builtin_amdgcn_s_memrealtime();
 #endif
   return ((double)1.0 / 745000000.0) * t;
 }

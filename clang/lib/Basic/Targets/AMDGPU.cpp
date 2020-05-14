@@ -343,9 +343,10 @@ void AMDGPUTargetInfo::getTargetDefines(const LangOptions &Opts,
     StringRef CanonName = isAMDGCN(getTriple()) ?
       getArchNameAMDGCN(GPUKind) : getArchNameR600(GPUKind);
     Builder.defineMacro(Twine("__") + Twine(CanonName) + Twine("__"));
-    // Make AMDGCN be a useful numeric value
-    Builder.defineMacro("__AMDGCN_MODEL__", CanonName.substr(3));
-
+    StringRef Model = CanonName.substr(3);
+    if (Model == "700" || Model == "701" || Model == "702")
+      // Define __AMDGCN_USE_SMEMTIME__ if pre gfx801, to avoid use s_memtime
+      Builder.defineMacro("__AMDGCN_USE_SMEMTIME__");
   }
 
   // TODO: __HAS_FMAF__, __HAS_LDEXPF__, __HAS_FP64__ are deprecated and will be
