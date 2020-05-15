@@ -91,12 +91,6 @@ DEVICE bool __kmpc_impl_is_first_active_thread() {
 }
 
 // Memory
-DEVICE void *__malloc(size_t);
-DEVICE void *__kmpc_impl_malloc(size_t x) {
-  return __malloc(x);
-}
+DEVICE void *__kmpc_impl_malloc(size_t) { return 0; }
 
-DEVICE void __free(void *);
-DEVICE void __kmpc_impl_free(void *x) {
-  __free(x);
-}
+DEVICE void __kmpc_impl_free(void *) {}
