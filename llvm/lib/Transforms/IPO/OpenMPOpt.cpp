@@ -16,6 +16,7 @@
 
 #include "llvm/ADT/EnumeratedArray.h"
 #include "llvm/ADT/Statistic.h"
+#include "llvm/ADT/Triple.h"
 #include "llvm/Analysis/CallGraph.h"
 #include "llvm/Analysis/CallGraphSCCPass.h"
 #include "llvm/Frontend/OpenMP/OMPConstants.h"
@@ -34,20 +35,7 @@ using namespace types;
 static cl::opt<bool> DisableOpenMPOptimizations(
     "openmp-opt-disable", cl::ZeroOrMore,
     cl::desc("Disable OpenMP specific optimizations."), cl::Hidden,
-    cl::init(true));
-
-// Disabled for AOMP branch.
-//
-// The deduplication logic looks for a good place to insert a call. This
-// sometimes chooses the start of the entry block.
-// Said entry block contains allocas which would be handled by llc.
-// When the inserted call is to a function with multiple basic blocks, the
-// inliner splices in multiple blocks above these alloca, thus moving them
-// out of the entry block. They then cause llc to raise errors.
-//
-// The right fix is going to be adjusting the insertion point to avoid
-// disturbing alloca in the entry block.
-// The quick fix is to disable this optimisation.
+    cl::init(false));
 
 STATISTIC(NumOpenMPRuntimeCallsDeduplicated,
           "Number of OpenMP runtime calls deduplicated");
@@ -590,6 +578,24 @@ struct OpenMPOptLegacyPass : public CallGraphSCCPass {
   bool doInitialization(CallGraph &CG) override {
     // Disable the pass if there is no OpenMP (runtime call) in the module.
     containsOpenMP(CG.getModule(), OMPInModule);
+
+    // Out amdgcn llc does not properly deal with alloca placement.
+    // Disable this pass for AMDGCN only.
+    //
+    // The deduplication logic looks for a good place to insert a call. This
+    // sometimes chooses the start of the entry block.
+    // Said entry block contains allocas which would be handled by llc.
+    // When the inserted call is to a function with multiple basic blocks, the
+    // inliner splices in multiple blocks above these alloca, thus moving them
+    // out of the entry block. They then cause llc to raise errors.
+    //
+    // The right fix is going to be adjusting the insertion point to avoid
+    // disturbing alloca in the entry block.
+    // The quick fix is to disable this optimisation.
+    Triple T(CG.getModule().getTargetTriple());
+    if (T.getArch() == Triple::amdgcn)
+     OMPInModule = false;
+
     return false;
   }
 
