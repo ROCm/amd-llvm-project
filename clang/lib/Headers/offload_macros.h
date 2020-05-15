@@ -74,41 +74,42 @@
 #endif
  
 #if defined(_DEVICE_ARCH) && ( _DEVICE_ARCH == amdgcn )
-  // AMD uses binary macros only, so create a value for _DEVICE_GPU
+  // AMD uses binary macros for GPU identification
+  // Create a generational value x10 for expansion
   #if defined(__gfx601__)
-    #define _DEVICE_GPU 601
+    #define _DEVICE_GPU 6010
   #elif defined(__gfx700__)
-    #define _DEVICE_GPU 700
+    #define _DEVICE_GPU 7000
   #elif defined(__gfx701__)
-    #define _DEVICE_GPU 701
+    #define _DEVICE_GPU 7010
   #elif defined(__gfx702__)
-    #define _DEVICE_GPU 702
+    #define _DEVICE_GPU 7020
   #elif defined(__gfx703__)
-    #define _DEVICE_GPU 703
+    #define _DEVICE_GPU 7030
   #elif defined(__gfx801__)
-    #define _DEVICE_GPU 801
+    #define _DEVICE_GPU 8010
   #elif defined(__gfx802__)
-    #define _DEVICE_GPU 802
+    #define _DEVICE_GPU 8020
   #elif defined(__gfx803__)
-    #define _DEVICE_GPU 803
+    #define _DEVICE_GPU 8030
   #elif defined(__gfx810__)
-    #define _DEVICE_GPU 810
+    #define _DEVICE_GPU 8100
   #elif defined(__gfx900__)
-    #define _DEVICE_GPU 900 
+    #define _DEVICE_GPU 9000
   #elif defined(__gfx902__)
-    #define _DEVICE_GPU 902 
+    #define _DEVICE_GPU 9020
   #elif defined(__gfx904__)
-    #define _DEVICE_GPU 904 
+    #define _DEVICE_GPU 9040
   #elif defined(__gfx906__)
-    #define _DEVICE_GPU 906 
+    #define _DEVICE_GPU 9060
   #elif defined(__gfx909__)
-    #define _DEVICE_GPU 909 
+    #define _DEVICE_GPU 9090
   #elif defined(__gfx1010__)
-    #define _DEVICE_GPU 1010
+    #define _DEVICE_GPU 10100
   #elif defined(__gfx1011__)
-    #define _DEVICE_GPU 1011
+    #define _DEVICE_GPU 10110
   #elif defined(__gfx1012__)
-    #define _DEVICE_GPU 1012
+    #define _DEVICE_GPU 10120
   #else
     #define _DEVICE_GPU UNKNOWN
   #endif
