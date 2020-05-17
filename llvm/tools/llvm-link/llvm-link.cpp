@@ -344,11 +344,10 @@ static bool linkFiles(const char *argv0, LLVMContext &Context, Linker &L,
   // Similar to some flags, internalization doesn't apply to the first file.
   bool InternalizeLinkedSymbols = false;
   for (const auto &File : Files) {
-    const char *Ext = strrchr(File.c_str(), '.');
     std::unique_ptr<Module> M =
-        (!strncmp(Ext, ".a", 2))
-            ? loadArFile(argv0, File, Context, L, Flags, ApplicableFlags)
-            : loadFile(argv0, File, Context);
+      (llvm::sys::path::extension(File) == ".a")
+          ? loadArFile(argv0, File, Context, L, Flags, ApplicableFlags)
+          : loadFile(argv0, File, Context);
     if (!M.get()) {
       errs() << argv0 << ": ";
       WithColor::error() << " loading file '" << File << "'\n";
