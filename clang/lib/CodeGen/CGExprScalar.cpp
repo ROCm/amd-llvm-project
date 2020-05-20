@@ -2014,9 +2014,6 @@ Value *ScalarExprEmitter::VisitCastExpr(CastExpr *CE) {
     llvm::Type *DstTy = ConvertType(DestTy);
     if (SrcTy->isPtrOrPtrVectorTy() && DstTy->isPtrOrPtrVectorTy() &&
         SrcTy->getPointerAddressSpace() != DstTy->getPointerAddressSpace()) {
-      Src = Builder.CreatePointerBitCastOrAddrSpaceCast(Src, DstTy);
-      SrcTy = Src->getType();
-      if (SrcTy->getPointerAddressSpace() != DstTy->getPointerAddressSpace())
         llvm_unreachable("wrong cast for pointers in different address spaces"
                          "(must be an address space cast)!");
     }

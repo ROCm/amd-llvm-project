@@ -165,26 +165,6 @@ CudaVersion MaxVersionForCudaArch(CudaArch A) {
   case CudaArch::SM_20:
   case CudaArch::SM_21:
     return CudaVersion::CUDA_80;
-  case CudaArch::GFX600:
-  case CudaArch::GFX601:
-  case CudaArch::GFX700:
-  case CudaArch::GFX701:
-  case CudaArch::GFX702:
-  case CudaArch::GFX703:
-  case CudaArch::GFX704:
-  case CudaArch::GFX801:
-  case CudaArch::GFX802:
-  case CudaArch::GFX803:
-  case CudaArch::GFX810:
-  case CudaArch::GFX900:
-  case CudaArch::GFX902:
-  case CudaArch::GFX904:
-  case CudaArch::GFX906:
-  case CudaArch::GFX909:
-  case CudaArch::GFX1010:
-  case CudaArch::GFX1011:
-  case CudaArch::GFX1012:
-    return CudaVersion::CUDA_90;
   default:
     return CudaVersion::LATEST;
   }
