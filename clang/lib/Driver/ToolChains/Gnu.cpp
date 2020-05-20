@@ -652,8 +652,16 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   // Add HIP offloading linker script args if required.
   AddHIPLinkerScript(getToolChain(), C, Output, Inputs, Args, CmdArgs, JA,
                      *this);
+  std::string alt_lld(D.Dir + "/../alt/bin/ld.lld");
+  bool use_alt_LTO_linker = ToolChain.getVFS().exists(alt_lld);
+  const char *Exec = (!D.isUsingLTO())
+                         ? Args.MakeArgString(ToolChain.GetLinkerPath())
+                         // Use LTO linker ld.lld if LTO needed.
+                         // but use alternative ld.lld if available
+                         : use_alt_LTO_linker
+                               ? Args.MakeArgString(alt_lld)
+                               : Args.MakeArgString(D.Dir + "/ld.lld");
 
-  const char *Exec = Args.MakeArgString(ToolChain.GetLinkerPath());
   C.addCommand(std::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
 }
 
