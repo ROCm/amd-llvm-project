@@ -991,7 +991,7 @@ CodeGenAction::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
 
         for (auto &C : ArchivePtr->children(Err)) {
           Expected<MemoryBufferRef> MemBufRef = C.getMemoryBufferRef();
-          if (Error E = MemBufRef.takeError()) {
+          if (MemBufRef.takeError()) {
             CI.getDiagnostics().Report(diag::err_cannot_open_file)
                 << F.Filename;
             LinkModules.clear();
