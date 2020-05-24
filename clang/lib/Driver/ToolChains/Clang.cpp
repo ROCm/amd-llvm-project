@@ -5814,8 +5814,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // Enable vectorization per default according to the optimization level
   // selected. For optimization levels that want vectorization we use the alias
   // option to simplify the hasFlag logic.
-  // Do not vectorize on GPUs
-  // FIXME: Temporarily turn off vectorization for GPUs
   bool EnableVec = shouldEnableVectorizerAtOLevel(Args, false) &&
                    !(Triple.getArch() == llvm::Triple::amdgcn ||
                      Triple.getArch() == llvm::Triple::nvptx64);

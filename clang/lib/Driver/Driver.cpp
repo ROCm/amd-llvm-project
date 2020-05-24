@@ -2430,8 +2430,8 @@ class OffloadingActionBuilder final {
 
         // If the host input is not CUDA or HIP, we don't need to bother about
         // this input. CUDA and HIP are allowed in cpp and c files.
-        if (IA->getType() != types::TY_CUDA && IA->getType() != types::TY_HIP &&
-            IA->getType() != types::TY_CXX && IA->getType() != types::TY_C) {
+        if (IA->getType() != types::TY_CUDA &&
+            IA->getType() != types::TY_HIP) {
           // The builder will ignore this input.
           IsActive = false;
           return ABRT_Inactive;
