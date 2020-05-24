@@ -2747,7 +2747,7 @@ class OffloadingActionBuilder final {
       if (CudaDeviceActions.empty() ||
           (CurPhase == phases::Backend && Relocatable) ||
           CurPhase == phases::Assemble)
-        return ABRT_Success;
+        return CompileDeviceOnly ? ABRT_Ignore_Host : ABRT_Success;
 
       assert(((CurPhase == phases::Link && Relocatable) ||
               CudaDeviceActions.size() == GpuArchList.size()) &&
@@ -2820,16 +2820,13 @@ class OffloadingActionBuilder final {
       }
 
       // By default, we produce an action for each device arch.
-      bool LastActionIsCompile = false;
       for (Action *&A : CudaDeviceActions) {
         A = C.getDriver().ConstructPhaseAction(C, Args, CurPhase, A,
                                                AssociatedOffloadKind);
-        LastActionIsCompile =
-            (A->getKind() == Action::ActionClass::CompileJobClass);
       }
 
-      return (CompileDeviceOnly && LastActionIsCompile) ? ABRT_Ignore_Host
-                                                        : ABRT_Success;
+      return (CompileDeviceOnly && CurPhase == FinalPhase) ? ABRT_Ignore_Host
+                                                           : ABRT_Success;
     }
 
     void appendLinkDependences(OffloadAction::DeviceDependences &DA) override {
