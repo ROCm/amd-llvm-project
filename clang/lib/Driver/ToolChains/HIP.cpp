@@ -442,12 +442,14 @@ void HIPToolChain::addClangTargetOptions(
 
   addDirectoryList(DriverArgs, LibraryPaths, "", "HIP_DEVICE_LIB_PATH");
 
-  // If device debugging turned on, add specially built bc files
-  std::string lib_debug_path = FindDebugInLibraryPath();
-  if (!lib_debug_path.empty()) {
-    LibraryPaths.push_back(
-        DriverArgs.MakeArgString(lib_debug_path + "/libdevice"));
-    LibraryPaths.push_back(DriverArgs.MakeArgString(lib_debug_path));
+  if (DeviceOffloadingKind == Action::OFK_OpenMP) {
+    // If device debugging turned on, add specially built bc files
+    std::string lib_debug_path = FindDebugInLibraryPath();
+    if (!lib_debug_path.empty()) {
+      LibraryPaths.push_back(
+          DriverArgs.MakeArgString(lib_debug_path + "/libdevice"));
+      LibraryPaths.push_back(DriverArgs.MakeArgString(lib_debug_path));
+    }
   }
 
   // Add compiler path libdevice last as lowest priority search
