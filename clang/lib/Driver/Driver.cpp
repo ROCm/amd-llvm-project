@@ -2901,7 +2901,7 @@ class OffloadingActionBuilder final {
       // backend and assemble phases to output LLVM IR.
       if (Is_amdgcn &&
           (CurPhase == phases::Backend || CurPhase == phases::Assemble))
-        return ABRT_Success;
+        return CompileDeviceOnly ? ABRT_Ignore_Host : ABRT_Success;
 
       // The host only depends on device action in the linking phase, when all
       // the device images have to be embedded in the host image.
@@ -2921,14 +2921,11 @@ class OffloadingActionBuilder final {
       }
 
       // By default, we produce an action for each device arch.
-      bool LastActionIsCompile = false;
       for (Action *&A : OpenMPDeviceActions) {
         A = C.getDriver().ConstructPhaseAction(C, Args, CurPhase, A);
-        LastActionIsCompile =
-            (A->getKind() == Action::ActionClass::CompileJobClass);
       }
-      return (CompileDeviceOnly && LastActionIsCompile) ? ABRT_Ignore_Host
-                                                        : ABRT_Success;
+      return (CompileDeviceOnly && CurPhase == FinalPhase) ? ABRT_Ignore_Host
+                                                           : ABRT_Success;
     }
 
     ActionBuilderReturnCode addDeviceDepences(Action *HostAction) override {
