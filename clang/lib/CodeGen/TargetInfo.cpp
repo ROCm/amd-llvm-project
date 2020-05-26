@@ -8643,8 +8643,6 @@ void AMDGPUTargetCodeGenInfo::setTargetAttributes(
     F->addFnAttr(llvm::Attribute::AlwaysInline);
     F->addFnAttr(llvm::Attribute::NoUnwind);
     F->addFnAttr(llvm::Attribute::NoRecurse);
-    if (!GV->isDeclaration())
-      F->setLinkage(llvm::GlobalVariable::ExternalLinkage);
   }
   if (GV->isDeclaration())
     return;

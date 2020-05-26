@@ -508,8 +508,7 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
     ToolChain.addFastMathRuntimeIfAvailable(Args, CmdArgs);
   }
 
-  if (JA.isHostOffloading(Action::OFK_HIP) ||
-      JA.isHostOffloading(Action::OFK_OpenMP)) {
+  if (JA.isHostOffloading(Action::OFK_OpenMP)) {
     addDirectoryList(Args, CmdArgs, "-L", "LIBRARY_PATH");
     CmdArgs.push_back(Args.MakeArgString("-L" + D.Dir + "/../lib"));
   }
