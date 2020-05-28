@@ -69,6 +69,9 @@ static cl::opt<bool> Verbose("v",
 static cl::opt<bool> DirectCalls("d", cl::desc("Enable direct calls"),
                                  cl::init(true));
 
+static cl::opt<bool> BuiltinCode("mlink-builtin-bitcode", cl::desc("Ignore option"),
+                                 cl::ZeroOrMore, cl::init(true));
+
 static ExitOnError ExitOnErr;
 
 /// ---------------------------------------------

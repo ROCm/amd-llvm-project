@@ -43,8 +43,7 @@ static void addBCLib(const Driver &D, const ArgList &Args,
     llvm::sys::path::append(Path, BCName);
     FullName = Path;
     if (llvm::sys::fs::exists(FullName)) {
-      if (postClangLink)
-        CmdArgs.push_back("-mlink-builtin-bitcode");
+      CmdArgs.push_back("-mlink-builtin-bitcode");
       CmdArgs.push_back(Args.MakeArgString(FullName));
       return;
     }
