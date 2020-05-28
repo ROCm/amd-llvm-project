@@ -36,7 +36,7 @@ namespace {
 
 static void addBCLib(const Driver &D, const ArgList &Args,
                      ArgStringList &CmdArgs, ArgStringList LibraryPaths,
-                     StringRef BCName, bool postClangLink) {
+                     StringRef BCName) {
   StringRef FullName;
   for (std::string LibraryPath : LibraryPaths) {
     SmallString<128> Path(LibraryPath);
@@ -119,8 +119,7 @@ const char *AMDGCN::Linker::constructOmpExtraCmds(
   }
 
   for (auto Lib : BCLibs)
-    addBCLib(C.getDriver(), Args, CmdArgs, LibraryPaths, Lib,
-             /* PostClang Link? */ false);
+    addBCLib(C.getDriver(), Args, CmdArgs, LibraryPaths, Lib);
 
   // This will find .a and .bc files that match naming convention.
   AddStaticDeviceLibs(C, *this, JA, Inputs, Args, CmdArgs, "amdgcn",
@@ -496,8 +495,7 @@ void HIPToolChain::addClangTargetOptions(
                    std::string(WaveFrontSizeBC)});
   }
   for (auto Lib : BCLibs)
-    addBCLib(getDriver(), DriverArgs, CC1Args, LibraryPaths, Lib,
-             /* PostClang Link? */ true);
+    addBCLib(getDriver(), DriverArgs, CC1Args, LibraryPaths, Lib);
 }
 
 llvm::opt::DerivedArgList *
