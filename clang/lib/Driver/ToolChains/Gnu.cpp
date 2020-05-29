@@ -507,11 +507,13 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
     // Add crtfastmath.o if available and fast math is enabled.
     ToolChain.addFastMathRuntimeIfAvailable(Args, CmdArgs);
   }
-
+  
+  //FIXME: Added HIP condition back on as HIP will need to resolve libraries outside of AOMP install
   if (JA.isHostOffloading(Action::OFK_HIP) ||
       JA.isHostOffloading(Action::OFK_OpenMP)) {
     addDirectoryList(Args, CmdArgs, "-L", "LIBRARY_PATH");
     CmdArgs.push_back(Args.MakeArgString("-L" + D.Dir + "/../lib"));
+    CmdArgs.push_back(Args.MakeArgString("-L" + D.Dir + "/../../lib"));
   }
   Args.AddAllArgs(CmdArgs, options::OPT_L);
   Args.AddAllArgs(CmdArgs, options::OPT_u);
@@ -549,6 +551,9 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-lamdhip64");
     CmdArgs.push_back("-rpath");
     CmdArgs.push_back(Args.MakeArgString(D.Dir + "/../lib"));
+    //FIXME:This can be removed once clang is called from /opt/rocm/bin instead of aomp/bin
+    CmdArgs.push_back("-rpath");
+    CmdArgs.push_back(Args.MakeArgString(D.Dir + "/../../lib"));
   }
 
   if (D.CCCIsCXX() &&
