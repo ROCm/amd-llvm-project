@@ -560,7 +560,11 @@ void HIPToolChain::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
 
   HostTC.AddClangSystemIncludeArgs(DriverArgs, CC1Args);
   // HIP headers need the cuda_wrappers in include path
-
+  
+  CC1Args.push_back("-internal-isystem");
+  SmallString<128> P2(HostTC.getDriver().ResourceDir);
+  CC1Args.push_back(DriverArgs.MakeArgString(P2));
+  
   CC1Args.push_back("-internal-isystem");
   SmallString<128> P(HostTC.getDriver().ResourceDir);
   llvm::sys::path::append(P, "include/cuda_wrappers");
