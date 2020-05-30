@@ -152,9 +152,17 @@ const char *AMDGCN::Linker::constructOmpExtraCmds(
 
 const char *AMDGCN::Linker::constructLLVMLinkCommand(
     Compilation &C, const JobAction &JA, const InputInfoList &Inputs,
-    const ArgList &Args, StringRef SubArchName, StringRef OutputFilePrefix,
-    StringRef overrideInputsFile) const {
+    const ArgList &Args, StringRef SubArchName,
+    StringRef OutputFilePrefix) const {
   ArgStringList CmdArgs;
+
+  bool DoOverride = JA.getOffloadingDeviceKind() == Action::OFK_OpenMP;
+  StringRef overrideInputsFile =
+      DoOverride
+          ? constructOmpExtraCmds(C, JA, Inputs, Args, SubArchName,
+			          OutputFilePrefix)
+          : "";
+
   // Add the input bc's created by compile step.
   if (overrideInputsFile.empty()) {
     for (const auto &II : Inputs)
@@ -370,13 +378,8 @@ void AMDGCN::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   assert(Prefix.length() && "no linker inputs are files ");
 
   // Each command outputs different files.
-  bool DoOverride = JA.getOffloadingDeviceKind() == Action::OFK_OpenMP;
-  const char *overrideInputs =
-      DoOverride
-          ? constructOmpExtraCmds(C, JA, Inputs, Args, SubArchName, Prefix)
-          : "";
-  const char *LLVMLinkCommand = constructLLVMLinkCommand(
-      C, JA, Inputs, Args, SubArchName, Prefix, overrideInputs);
+  const char *LLVMLinkCommand =
+      constructLLVMLinkCommand( C, JA, Inputs, Args, SubArchName, Prefix);
   const char *OptCommand = constructOptCommand(C, JA, Inputs, Args, SubArchName,
                                                Prefix, LLVMLinkCommand);
   const char *LlcCommand =
