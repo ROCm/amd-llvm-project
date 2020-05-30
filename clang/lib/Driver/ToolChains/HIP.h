@@ -50,8 +50,7 @@ private:
                                        const InputInfoList &Inputs,
                                        const llvm::opt::ArgList &Args,
                                        llvm::StringRef SubArchName,
-                                       llvm::StringRef OutputFilePrefix,
-                                       llvm::StringRef overrideInputs) const;
+                                       llvm::StringRef OutputFilePrefix) const;
 
   /// \return opt output file name.
   const char *constructOptCommand(Compilation &C, const JobAction &JA,
