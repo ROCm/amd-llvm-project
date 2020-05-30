@@ -626,10 +626,6 @@ bool tools::addOpenMPRuntime(ArgStringList &CmdArgs, const ToolChain &TC,
     CmdArgs.push_back("-lomptarget");
 
   addArchSpecificRPath(TC, Args, CmdArgs);
-
-  // FIXME add if driver called with -stdlib=libstdc++
-  CmdArgs.push_back("-lstdc++");
-
   return true;
 }
 
