@@ -8,7 +8,6 @@
 
 #include "llvm/DebugInfo/DWARF/DWARFExpression.h"
 #include "llvm/DebugInfo/DWARF/DWARFUnit.h"
-#include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/Support/Format.h"
 #include <cassert>
@@ -100,6 +99,21 @@ static DescVector getDescriptions() {
   Descriptions[DW_OP_GNU_addr_index] = Desc(Op::Dwarf4, Op::SizeLEB);
   Descriptions[DW_OP_GNU_const_index] = Desc(Op::Dwarf4, Op::SizeLEB);
   Descriptions[DW_OP_GNU_entry_value] = Desc(Op::Dwarf4, Op::SizeLEB);
+  Descriptions[DW_OP_LLVM_form_aspace_address] = Desc(Op::Dwarf4);
+  Descriptions[DW_OP_LLVM_push_lane] = Desc(Op::Dwarf4);
+  Descriptions[DW_OP_LLVM_offset] = Desc(Op::Dwarf4);
+  Descriptions[DW_OP_LLVM_offset_uconst] = Desc(Op::Dwarf4, Op::SizeLEB);
+  Descriptions[DW_OP_LLVM_bit_offset] = Desc(Op::Dwarf4);
+  Descriptions[DW_OP_LLVM_call_frame_entry_reg] = Desc(Op::Dwarf4, Op::SizeLEB);
+  Descriptions[DW_OP_LLVM_undefined] = Desc(Op::Dwarf4);
+  Descriptions[DW_OP_LLVM_aspace_bregx] =
+      Desc(Op::Dwarf4, Op::SizeLEB, Op::SizeLEB);
+  Descriptions[DW_OP_LLVM_aspace_implicit_pointer] =
+      Desc(Op::Dwarf4, Op::SizeRefAddr, Op::SignedSizeLEB);
+  Descriptions[DW_OP_LLVM_piece_end] = Desc(Op::Dwarf4);
+  Descriptions[DW_OP_LLVM_extend] = Desc(Op::Dwarf4, Op::SizeLEB, Op::SizeLEB);
+  Descriptions[DW_OP_LLVM_select_bit_piece] =
+      Desc(Op::Dwarf4, Op::SizeLEB, Op::SizeLEB);
 
   Descriptions[DW_OP_convert] = Desc(Op::Dwarf5, Op::BaseTypeRef);
   Descriptions[DW_OP_entry_value] = Desc(Op::Dwarf5, Op::SizeLEB);
@@ -119,14 +133,14 @@ static DWARFExpression::Operation::Description getOpDesc(unsigned OpCode) {
 }
 
 bool DWARFExpression::Operation::extract(DataExtractor Data,
-                                         uint8_t AddressSize, uint64_t Offset) {
+                                         uint8_t AddressSize, uint64_t Offset,
+                                         Optional<DwarfFormat> Format) {
+  EndOffset = Offset;
   Opcode = Data.getU8(&Offset);
 
   Desc = getOpDesc(Opcode);
-  if (Desc.Version == Operation::DwarfNA) {
-    EndOffset = Offset;
+  if (Desc.Version == Operation::DwarfNA)
     return false;
-  }
 
   for (unsigned Operand = 0; Operand < 2; ++Operand) {
     unsigned Size = Desc.Op[Operand];
@@ -158,8 +172,10 @@ bool DWARFExpression::Operation::extract(DataExtractor Data,
       Operands[Operand] = Data.getUnsigned(&Offset, AddressSize);
       break;
     case Operation::SizeRefAddr:
-      // TODO: Add support for 64-bit DWARF format.
-      Operands[Operand] = Data.getU32(&Offset);
+      if (!Format)
+        return false;
+      Operands[Operand] =
+          Data.getUnsigned(&Offset, dwarf::getDwarfOffsetByteSize(*Format));
       break;
     case Operation::SizeLEB:
       if (Signed)
@@ -226,8 +242,10 @@ static bool prettyPrintRegisterOp(DWARFUnit *U, raw_ostream &OS, uint8_t Opcode,
   unsigned OpNum = 0;
 
   if (Opcode == DW_OP_bregx || Opcode == DW_OP_regx ||
-      Opcode == DW_OP_regval_type)
+      Opcode == DW_OP_regval_type || Opcode == DW_OP_LLVM_aspace_bregx)
     DwarfRegNum = Operands[OpNum++];
+  else if (Opcode == DW_OP_LLVM_call_frame_entry_reg)
+    DwarfRegNum = Operands[OpNum];
   else if (Opcode >= DW_OP_breg0 && Opcode < DW_OP_bregx)
     DwarfRegNum = Opcode - DW_OP_breg0;
   else
@@ -236,7 +254,7 @@ static bool prettyPrintRegisterOp(DWARFUnit *U, raw_ostream &OS, uint8_t Opcode,
   if (Optional<unsigned> LLVMRegNum = MRI->getLLVMRegNum(DwarfRegNum, isEH)) {
     if (const char *RegName = MRI->getName(*LLVMRegNum)) {
       if ((Opcode >= DW_OP_breg0 && Opcode <= DW_OP_breg31) ||
-          Opcode == DW_OP_bregx)
+          Opcode == DW_OP_bregx || Opcode == DW_OP_LLVM_aspace_bregx)
         OS << format(" %s%+" PRId64, RegName, Operands[OpNum]);
       else
         OS << ' ' << RegName;
@@ -267,7 +285,9 @@ bool DWARFExpression::Operation::print(raw_ostream &OS,
   if ((Opcode >= DW_OP_breg0 && Opcode <= DW_OP_breg31) ||
       (Opcode >= DW_OP_reg0 && Opcode <= DW_OP_reg31) ||
       Opcode == DW_OP_bregx || Opcode == DW_OP_regx ||
-      Opcode == DW_OP_regval_type)
+      Opcode == DW_OP_regval_type ||
+      Opcode == DW_OP_LLVM_call_frame_entry_reg ||
+      Opcode == DW_OP_LLVM_aspace_bregx)
     if (prettyPrintRegisterOp(U, OS, Opcode, Operands, RegInfo, isEH))
       return true;
 

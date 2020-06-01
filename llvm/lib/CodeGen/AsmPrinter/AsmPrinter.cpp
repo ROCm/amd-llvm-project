@@ -14,6 +14,7 @@
 #include "CodeViewDebug.h"
 #include "DwarfDebug.h"
 #include "DwarfException.h"
+#include "UnwindStreamer.h"
 #include "WasmException.h"
 #include "WinCFGuard.h"
 #include "WinException.h"
@@ -135,6 +136,8 @@ static const char *const DWARFGroupName = "dwarf";
 static const char *const DWARFGroupDescription = "DWARF Emission";
 static const char *const DbgTimerName = "emit";
 static const char *const DbgTimerDescription = "Debug Info Emission";
+static const char *const UnwindTimerName = "write_unwind";
+static const char *const UnwindTimerDescription = "DWARF Unwind Writer";
 static const char *const EHTimerName = "write_exception";
 static const char *const EHTimerDescription = "DWARF Exception Writer";
 static const char *const CFGuardName = "Control Flow Guard";
@@ -322,6 +325,16 @@ bool AsmPrinter::doInitialization(Module &M) {
     }
   }
 
+  if (MMI->hasDebugInfo() &&
+      MAI->getExceptionHandlingType() == ExceptionHandling::None &&
+      MAI->doesSupportDebugUnwindInformation()) {
+    isCFIMoveForDebugging = true;
+    Handlers.emplace_back(std::make_unique<UnwindStreamer>(this),
+                          UnwindTimerName, UnwindTimerDescription,
+                          DWARFGroupName, DWARFGroupDescription);
+    return false;
+  }
+
   switch (MAI->getExceptionHandlingType()) {
   case ExceptionHandling::SjLj:
   case ExceptionHandling::DwarfCFI:
@@ -395,6 +408,9 @@ void AsmPrinter::emitLinkage(const GlobalValue *GV, MCSymbol *GVSym) const {
   GlobalValue::LinkageTypes Linkage = GV->getLinkage();
   switch (Linkage) {
   case GlobalValue::CommonLinkage:
+    assert(!TM.getTargetTriple().isOSBinFormatXCOFF() &&
+           "CommonLinkage of XCOFF should not come to this path.");
+    LLVM_FALLTHROUGH;
   case GlobalValue::LinkOnceAnyLinkage:
   case GlobalValue::LinkOnceODRLinkage:
   case GlobalValue::WeakAnyLinkage:
@@ -418,8 +434,10 @@ void AsmPrinter::emitLinkage(const GlobalValue *GV, MCSymbol *GVSym) const {
     }
     return;
   case GlobalValue::ExternalLinkage:
-    // If external, declare as a global symbol: .globl _foo
-    OutStreamer->emitSymbolAttribute(GVSym, MCSA_Global);
+    if (MAI->hasDotExternDirective() && GV->isDeclaration())
+      OutStreamer->emitSymbolAttribute(GVSym, MCSA_Extern);
+    else
+      OutStreamer->emitSymbolAttribute(GVSym, MCSA_Global);
     return;
   case GlobalValue::PrivateLinkage:
     return;
@@ -427,9 +445,14 @@ void AsmPrinter::emitLinkage(const GlobalValue *GV, MCSymbol *GVSym) const {
     if (MAI->hasDotLGloblDirective())
       OutStreamer->emitSymbolAttribute(GVSym, MCSA_LGlobal);
     return;
+  case GlobalValue::ExternalWeakLinkage:
+    if (TM.getTargetTriple().isOSBinFormatXCOFF()) {
+      OutStreamer->emitSymbolAttribute(GVSym, MCSA_Weak);
+      return;
+    }
+    LLVM_FALLTHROUGH;
   case GlobalValue::AppendingLinkage:
   case GlobalValue::AvailableExternallyLinkage:
-  case GlobalValue::ExternalWeakLinkage:
     llvm_unreachable("Should never emit this");
   }
   llvm_unreachable("Unknown linkage type!");
@@ -992,7 +1015,8 @@ bool AsmPrinter::needsSEHMoves() {
 
 void AsmPrinter::emitCFIInstruction(const MachineInstr &MI) {
   ExceptionHandling ExceptionHandlingType = MAI->getExceptionHandlingType();
-  if (ExceptionHandlingType != ExceptionHandling::DwarfCFI &&
+  if (!MAI->doesSupportDebugUnwindInformation() &&
+      ExceptionHandlingType != ExceptionHandling::DwarfCFI &&
       ExceptionHandlingType != ExceptionHandling::ARM)
     return;
 
@@ -1489,15 +1513,30 @@ bool AsmPrinter::doFinalization(Module &M) {
   // Emit remaining GOT equivalent globals.
   emitGlobalGOTEquivs();
 
-  // Emit visibility info for declarations
+  // Emit linkage(XCOFF) and visibility info for declarations
   for (const Function &F : M) {
     if (!F.isDeclarationForLinker())
       continue;
+
+    MCSymbol *Name = getSymbol(&F);
+    // Function getSymbol gives us the function descriptor symbol for XCOFF.
+    if (TM.getTargetTriple().isOSBinFormatXCOFF() && !F.isIntrinsic()) {
+
+      // Get the function entry point symbol.
+      MCSymbol *FnEntryPointSym = OutContext.getOrCreateSymbol(
+          "." + cast<MCSymbolXCOFF>(Name)->getUnqualifiedName());
+      if (cast<MCSymbolXCOFF>(FnEntryPointSym)->hasRepresentedCsectSet())
+        // Emit linkage for the function entry point.
+        emitLinkage(&F, FnEntryPointSym);
+
+      // Emit linkage for the function descriptor.
+      emitLinkage(&F, Name);
+    }
+
     GlobalValue::VisibilityTypes V = F.getVisibility();
     if (V == GlobalValue::DefaultVisibility)
       continue;
 
-    MCSymbol *Name = getSymbol(&F);
     emitVisibility(Name, V, false);
   }
 
@@ -2617,9 +2656,10 @@ static void emitGlobalConstantLargeInt(const ConstantInt *CI, AsmPrinter &AP) {
       // [chunk1][chunk2] ... [chunkN].
       // The most significant chunk is chunkN and it should be emitted first.
       // However, due to the alignment issue chunkN contains useless bits.
-      // Realign the chunks so that they contain only useless information:
+      // Realign the chunks so that they contain only useful information:
       // ExtraBits     0       1       (BitWidth / 64) - 1
       //       chu[nk1 chu][nk2 chu] ... [nkN-1 chunkN]
+      ExtraBitsSize = alignTo(ExtraBitsSize, 8);
       ExtraBits = Realigned.getRawData()[0] &
         (((uint64_t)-1) >> (64 - ExtraBitsSize));
       Realigned.lshrInPlace(ExtraBitsSize);
@@ -2640,7 +2680,7 @@ static void emitGlobalConstantLargeInt(const ConstantInt *CI, AsmPrinter &AP) {
     // Emit the extra bits after the 64-bits chunks.
 
     // Emit a directive that fills the expected size.
-    uint64_t Size = AP.getDataLayout().getTypeAllocSize(CI->getType());
+    uint64_t Size = AP.getDataLayout().getTypeStoreSize(CI->getType());
     Size -= (BitWidth / 64) * 8;
     assert(Size && Size * 8 >= ExtraBitsSize &&
            (ExtraBits & (((uint64_t)-1) >> (64 - ExtraBitsSize)))
@@ -2755,20 +2795,22 @@ static void emitGlobalConstantImpl(const DataLayout &DL, const Constant *CV,
     return AP.OutStreamer->emitZeros(Size);
 
   if (const ConstantInt *CI = dyn_cast<ConstantInt>(CV)) {
-    switch (Size) {
-    case 1:
-    case 2:
-    case 4:
-    case 8:
+    const uint64_t StoreSize = DL.getTypeStoreSize(CV->getType());
+
+    if (StoreSize < 8) {
       if (AP.isVerbose())
         AP.OutStreamer->GetCommentOS() << format("0x%" PRIx64 "\n",
                                                  CI->getZExtValue());
-      AP.OutStreamer->emitIntValue(CI->getZExtValue(), Size);
-      return;
-    default:
+      AP.OutStreamer->emitIntValue(CI->getZExtValue(), StoreSize);
+    } else {
       emitGlobalConstantLargeInt(CI, AP);
-      return;
     }
+
+    // Emit tail padding if needed
+    if (Size != StoreSize)
+      AP.OutStreamer->emitZeros(Size - StoreSize);
+
+    return;
   }
 
   if (const ConstantFP *CFP = dyn_cast<ConstantFP>(CV))

@@ -152,9 +152,17 @@ const char *AMDGCN::Linker::constructOmpExtraCmds(
 
 const char *AMDGCN::Linker::constructLLVMLinkCommand(
     Compilation &C, const JobAction &JA, const InputInfoList &Inputs,
-    const ArgList &Args, StringRef SubArchName, StringRef OutputFilePrefix,
-    StringRef overrideInputsFile) const {
+    const ArgList &Args, StringRef SubArchName,
+    StringRef OutputFilePrefix) const {
   ArgStringList CmdArgs;
+
+  bool DoOverride = JA.getOffloadingDeviceKind() == Action::OFK_OpenMP;
+  StringRef overrideInputsFile =
+      DoOverride
+          ? constructOmpExtraCmds(C, JA, Inputs, Args, SubArchName,
+			          OutputFilePrefix)
+          : "";
+
   // Add the input bc's created by compile step.
   if (overrideInputsFile.empty()) {
     for (const auto &II : Inputs)
@@ -370,13 +378,8 @@ void AMDGCN::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   assert(Prefix.length() && "no linker inputs are files ");
 
   // Each command outputs different files.
-  bool DoOverride = JA.getOffloadingDeviceKind() == Action::OFK_OpenMP;
-  const char *overrideInputs =
-      DoOverride
-          ? constructOmpExtraCmds(C, JA, Inputs, Args, SubArchName, Prefix)
-          : "";
-  const char *LLVMLinkCommand = constructLLVMLinkCommand(
-      C, JA, Inputs, Args, SubArchName, Prefix, overrideInputs);
+  const char *LLVMLinkCommand =
+      constructLLVMLinkCommand( C, JA, Inputs, Args, SubArchName, Prefix);
   const char *OptCommand = constructOptCommand(C, JA, Inputs, Args, SubArchName,
                                                Prefix, LLVMLinkCommand);
   const char *LlcCommand =
@@ -442,12 +445,14 @@ void HIPToolChain::addClangTargetOptions(
 
   addDirectoryList(DriverArgs, LibraryPaths, "", "HIP_DEVICE_LIB_PATH");
 
-  // If device debugging turned on, add specially built bc files
-  std::string lib_debug_path = FindDebugInLibraryPath();
-  if (!lib_debug_path.empty()) {
-    LibraryPaths.push_back(
-        DriverArgs.MakeArgString(lib_debug_path + "/libdevice"));
-    LibraryPaths.push_back(DriverArgs.MakeArgString(lib_debug_path));
+  if (DeviceOffloadingKind == Action::OFK_OpenMP) {
+    // If device debugging turned on, add specially built bc files
+    std::string lib_debug_path = FindDebugInLibraryPath();
+    if (!lib_debug_path.empty()) {
+      LibraryPaths.push_back(
+          DriverArgs.MakeArgString(lib_debug_path + "/libdevice"));
+      LibraryPaths.push_back(DriverArgs.MakeArgString(lib_debug_path));
+    }
   }
 
   // Add compiler path libdevice last as lowest priority search
@@ -487,25 +492,12 @@ void HIPToolChain::addClangTargetOptions(
     else
       WaveFrontSizeBC = "oclc_wavefrontsize64_off.amdgcn.bc";
 
-    // FIXME remove double link of aompextras and hip
-    if (DriverArgs.hasArg(options::OPT_cuda_device_only))
-      // FIXME: when building aompextras, we need to skip aompextras
-      BCLibs.append({"hip.amdgcn.bc", "opencl.amdgcn.bc", "ocml.amdgcn.bc",
-                     "ockl.amdgcn.bc", "oclc_finite_only_off.amdgcn.bc",
-                     FlushDenormalControlBC,
-                     "oclc_correctly_rounded_sqrt_on.amdgcn.bc",
-                     "oclc_unsafe_math_off.amdgcn.bc", ISAVerBC,
-                     std::string(WaveFrontSizeBC)});
-
-    else
-      BCLibs.append(
-          {"hip.amdgcn.bc", "opencl.amdgcn.bc", "ocml.amdgcn.bc",
-           "ockl.amdgcn.bc", "oclc_finite_only_off.amdgcn.bc",
-           FlushDenormalControlBC,
-           "oclc_correctly_rounded_sqrt_on.amdgcn.bc",
-           "oclc_unsafe_math_off.amdgcn.bc", ISAVerBC,
-           DriverArgs.MakeArgString("libaompextras-amdgcn-" + GpuArch + ".bc"),
-           std::string(WaveFrontSizeBC)});
+    BCLibs.append({"hip.amdgcn.bc", "ocml.amdgcn.bc", "ockl.amdgcn.bc",
+                   "oclc_finite_only_off.amdgcn.bc",
+                   FlushDenormalControlBC,
+                   "oclc_correctly_rounded_sqrt_on.amdgcn.bc",
+                   "oclc_unsafe_math_off.amdgcn.bc", ISAVerBC,
+                   std::string(WaveFrontSizeBC)});
   }
   for (auto Lib : BCLibs)
     addBCLib(getDriver(), DriverArgs, CC1Args, LibraryPaths, Lib,

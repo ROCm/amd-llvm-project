@@ -4,6 +4,7 @@
 #include <hsa/hsa.h>
 #endif // WITH_HSA
 
+#include "amd_hostcall.h"
 #include <assert.h>
 #include <atomic>
 #include <cstring>

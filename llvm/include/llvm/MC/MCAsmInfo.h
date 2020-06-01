@@ -307,6 +307,10 @@ protected:
   /// false.
   bool HasAltEntry = false;
 
+  /// True if this target supports the XCOFF .extern directive.  Defaults to
+  /// false.
+  bool HasDotExternDirective = false;
+
   /// Used to declare a global as being a weak symbol. Defaults to ".weak".
   const char *WeakDirective;
 
@@ -353,6 +357,11 @@ protected:
   /// false.
   bool SupportsDebugInformation = false;
 
+  /// True if target supports emitting .debug_frame unwind information when
+  /// ExceptionsType = ExceptionHandling::None and debug info is requested.
+  /// Defaults to false.
+  bool SupportsDebugUnwindInformation = false;
+
   /// Exception handling format for the target.  Defaults to None.
   ExceptionHandling ExceptionsType = ExceptionHandling::None;
 
@@ -378,6 +387,11 @@ protected:
   /// True if the target supports flags in ".loc" directive, false if only
   /// location is allowed.
   bool SupportsExtendedDwarfLocDirective = true;
+
+  /// True if the target supports the extensions defined at
+  /// https://llvm.org/docs/AMDGPUDwarfProposalForHeterogeneousDebugging.html.
+  /// Defaults to false.
+  bool SupportsHeterogeneousDebuggingExtensions = false;
 
   //===--- Prologue State ----------------------------------------------===//
 
@@ -583,6 +597,7 @@ public:
   bool hasIdentDirective() const { return HasIdentDirective; }
   bool hasNoDeadStrip() const { return HasNoDeadStrip; }
   bool hasAltEntry() const { return HasAltEntry; }
+  bool hasDotExternDirective() const { return HasDotExternDirective; }
   const char *getWeakDirective() const { return WeakDirective; }
   const char *getWeakRefDirective() const { return WeakRefDirective; }
   bool hasWeakDefDirective() const { return HasWeakDefDirective; }
@@ -608,6 +623,10 @@ public:
   bool getSymbolsHaveSMC() const { return SymbolsHaveSMC; }
 
   bool doesSupportDebugInformation() const { return SupportsDebugInformation; }
+
+  bool doesSupportDebugUnwindInformation() const {
+    return SupportsDebugUnwindInformation;
+  }
 
   bool doesSupportExceptionHandling() const {
     return ExceptionsType != ExceptionHandling::None;
@@ -642,6 +661,9 @@ public:
   bool useParensForSymbolVariant() const { return UseParensForSymbolVariant; }
   bool supportsExtendedDwarfLocDirective() const {
     return SupportsExtendedDwarfLocDirective;
+  }
+  bool supportsHeterogeneousDebuggingExtensions() const {
+    return SupportsHeterogeneousDebuggingExtensions;
   }
 
   void addInitialFrameState(const MCCFIInstruction &Inst);

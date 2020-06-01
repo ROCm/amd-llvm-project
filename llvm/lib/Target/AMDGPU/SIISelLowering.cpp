@@ -1253,9 +1253,10 @@ bool SITargetLowering::isLegalAddressingMode(const DataLayout &DL,
     // addressing modes, so treat them as having no offset like flat
     // instructions.
     return isLegalFlatAddressingMode(AM);
-  } else {
-    llvm_unreachable("unhandled address space");
   }
+
+  // Assume a user alias of global for unknown address spaces.
+  return isLegalGlobalAddressingMode(AM);
 }
 
 bool SITargetLowering::canMergeStoresTo(unsigned AS, EVT MemVT,
@@ -4809,6 +4810,10 @@ SDValue SITargetLowering::lowerADDRSPACECAST(SDValue Op,
                          FlatNullPtr);
     }
   }
+
+  if (ASC->getDestAddressSpace() == AMDGPUAS::CONSTANT_ADDRESS_32BIT &&
+      Src.getValueType() == MVT::i64)
+    return DAG.getNode(ISD::TRUNCATE, SL, MVT::i32, Src);
 
   // global <-> flat are no-ops and never emitted.
 
@@ -11009,7 +11014,7 @@ static bool hasCFUser(const Value *V, SmallPtrSet<const Value *, 16> &Visited,
 bool SITargetLowering::requiresUniformRegister(MachineFunction &MF,
                                                const Value *V) const {
   if (const CallInst *CI = dyn_cast<CallInst>(V)) {
-    if (isa<InlineAsm>(CI->getCalledValue())) {
+    if (CI->isInlineAsm()) {
       // FIXME: This cannot give a correct answer. This should only trigger in
       // the case where inline asm returns mixed SGPR and VGPR results, used
       // outside the defining block. We don't have a specific result to

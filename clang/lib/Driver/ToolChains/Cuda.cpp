@@ -602,8 +602,7 @@ std::string CudaToolChain::getInputFilename(const InputInfo &Input) const {
   // Replace extension for object files with cubin because nvlink relies on
   // these particular file names.
   SmallString<256> Filename(ToolChain::getInputFilename(Input));
-  if (llvm::sys::path::extension(Filename) != ".a")
-    llvm::sys::path::replace_extension(Filename, "cubin");
+  llvm::sys::path::replace_extension(Filename, "cubin");
   return std::string(Filename.str());
 }
 

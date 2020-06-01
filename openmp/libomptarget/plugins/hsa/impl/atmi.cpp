@@ -100,14 +100,6 @@ atmi_status_t atmi_task_wait(atmi_task_handle_t task) {
 }
 
 /*
- * [AOMP hostcall] print buffers/pipes
- */
-atmi_status_t atmi_register_task_hostcall_handler(
-    atmi_task_hostcall_handler_t fp) {
-  return core::Runtime::getInstance().RegisterTaskHostcallHandler(fp);
-}
-
-/*
  * Tasks
  */
 

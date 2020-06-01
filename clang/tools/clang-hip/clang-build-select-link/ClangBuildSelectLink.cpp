@@ -385,7 +385,9 @@ static bool buildSelectFunction(Module *MOUT, LLVMContext &Ctx) {
 
   if (Verbose) {
     errs() << "Generated function is \n";
+#ifndef NDEBUG
     Fn->dump();
+#endif
   }
   return true;
 }
@@ -431,7 +433,9 @@ static bool removeStackSaveRestore(Module *MOUT, LLVMContext &Ctx) {
   llvm::Function *F = MOUT->getFunction(fName);
   if (F) {
     printf("\n\n FOUND stacksave \n");
+#ifndef NDEBUG
     F->dump();
+#endif
   }
   return true;
 }

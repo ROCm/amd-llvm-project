@@ -38,10 +38,10 @@ DEVICE __kmpc_impl_lanemask_t __kmpc_impl_lanemask_gt() {
 DEVICE double __kmpc_impl_get_wtick() { return ((double)1E-9); }
 
 DEVICE double __kmpc_impl_get_wtime() {
-#if __AMDGCN_MODEL__ > 800
-  uint64_t t = __builtin_amdgcn_s_memrealtime();
-#else
+#if __gfx700__ || __gfx701__ || __gfx702__
   uint64_t t = __builtin_amdgcn_s_memtime();
+#else
+  uint64_t t = __builtin_amdgcn_s_memrealtime();
 #endif
   return ((double)1.0 / 745000000.0) * t;
 }
@@ -90,13 +90,9 @@ DEVICE bool __kmpc_impl_is_first_active_thread() {
   return (Sh == (unsigned long long)0);
 }
 
-// Memory
-DEVICE void *__malloc(size_t);
-DEVICE void *__kmpc_impl_malloc(size_t x) {
-  return __malloc(x);
-}
+EXTERN char * printf_alloc(uint32_t bufsz);
 
-DEVICE void __free(void *);
-DEVICE void __kmpc_impl_free(void *x) {
-  __free(x);
-}
+// Memory
+DEVICE void *__kmpc_impl_malloc(size_t t) { return printf_alloc(t); }
+
+DEVICE void __kmpc_impl_free(void *) {}
