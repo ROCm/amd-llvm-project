@@ -364,43 +364,10 @@ public:
 static RTLDeviceInfoTy DeviceInfo;
 
 namespace {
-#ifdef FIXME
-typedef int CUstream;
-CUstream selectStream(int32_t Id, __tgt_async_info *AsyncInfo) {
-  if (!AsyncInfo)
-    return DeviceInfo.getNextStream(Id);
-
-  if (!AsyncInfo->Queue)
-    AsyncInfo->Queue = DeviceInfo.getNextStream(Id);
-
-  return reinterpret_cast<CUstream>(AsyncInfo->Queue);
-  return 0;
-}
-#endif
 
 int32_t dataRetrieve(int32_t DeviceId, void *HstPtr, void *TgtPtr, int64_t Size,
                      __tgt_async_info *AsyncInfoPtr) {
   assert(AsyncInfoPtr && "AsyncInfoPtr is nullptr");
-#ifdef FIXME
-  // Set the context we are using.
-  CUresult err = cuCtxSetCurrent(DeviceInfo.Contexts[DeviceId]);
-  if (err != CUDA_SUCCESS) {
-    DP("Error when setting CUDA context\n");
-    CUDA_ERR_STRING(err);
-    return OFFLOAD_FAIL;
-  }
-
-  CUstream Stream = selectStream(DeviceId, AsyncInfoPtr);
-
-  err = cuMemcpyDtoHAsync(HstPtr, (CUdeviceptr)TgtPtr, Size, Stream);
-  if (err != CUDA_SUCCESS) {
-    DP("Error when copying data from device to host. Pointers: host = " DPxMOD
-       ", device = " DPxMOD ", size = %" PRId64 "\n",
-       DPxPTR(HstPtr), DPxPTR(TgtPtr), Size);
-    CUDA_ERR_STRING(err);
-    return OFFLOAD_FAIL;
-  }
-#endif
     assert(DeviceId < DeviceInfo.NumberOfDevices && "Device ID too large");
   // Return success if we are not copying back to host from target.
   if (!HstPtr)
@@ -425,26 +392,6 @@ int32_t dataRetrieve(int32_t DeviceId, void *HstPtr, void *TgtPtr, int64_t Size,
 int32_t dataSubmit(int32_t DeviceId, void *TgtPtr, void *HstPtr, int64_t Size,
                    __tgt_async_info *AsyncInfoPtr) {
   assert(AsyncInfoPtr && "AsyncInfoPtr is nullptr");
-#ifdef FIXME
-  // Set the context we are using.
-  CUresult err = cuCtxSetCurrent(DeviceInfo.Contexts[DeviceId]);
-  if (err != CUDA_SUCCESS) {
-    DP("Error when setting CUDA context\n");
-    CUDA_ERR_STRING(err);
-    return OFFLOAD_FAIL;
-  }
-
-  CUstream Stream = selectStream(DeviceId, AsyncInfoPtr);
-
-  err = cuMemcpyHtoDAsync((CUdeviceptr)TgtPtr, HstPtr, Size, Stream);
-  if (err != CUDA_SUCCESS) {
-    DP("Error when copying data from host to device. Pointers: host = " DPxMOD
-       ", device = " DPxMOD ", size = %" PRId64 "\n",
-       DPxPTR(HstPtr), DPxPTR(TgtPtr), Size);
-    CUDA_ERR_STRING(err);
-    return OFFLOAD_FAIL;
-  }
-#endif
   atmi_status_t err;
   assert(DeviceId < DeviceInfo.NumberOfDevices && "Device ID too large");
   // Return success if we are not doing host to target.
@@ -1358,19 +1305,6 @@ int32_t __tgt_rtl_run_target_region_async(int32_t device_id, void *tgt_entry_ptr
 
 int32_t __tgt_rtl_synchronize(int32_t device_id, __tgt_async_info *async_info) {
   assert(async_info && "async_info is nullptr");
-#ifdef FIXME
-  assert(async_info->Queue && "async_info->Queue is nullptr");
-
-  CUstream Stream = reinterpret_cast<CUstream>(async_info->Queue);
-  CUresult Err = cuStreamSynchronize(Stream);
-  if (Err != CUDA_SUCCESS) {
-    DP("Error when synchronizing stream. stream = " DPxMOD
-       ", async info ptr = " DPxMOD "\n",
-       DPxPTR(Stream), DPxPTR(async_info));
-    CUDA_ERR_STRING(Err);
-    return OFFLOAD_FAIL;
-  }
-#endif
   return OFFLOAD_SUCCESS;
 }
 

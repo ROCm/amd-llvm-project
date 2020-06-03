@@ -94,21 +94,6 @@ using namespace clang::driver;
 using namespace clang;
 using namespace llvm::opt;
 
-// static
-static bool archiveContainsDeviceCode(const char *UBProgram,
-                                      std::string Archive,
-                                      std::string GpuName) {
-  std::vector<StringRef> UBArgs;
-  std::string InputArg("-input=" + Archive);
-  std::string OffloadArg("-offload-arch=" + GpuName);
-  UBArgs.push_back("clang-unbundle-archive");
-  UBArgs.push_back("-dry-run");
-  UBArgs.push_back(InputArg);
-  UBArgs.push_back(OffloadArg);
-  int ExecResult = llvm::sys::ExecuteAndWait(UBProgram, UBArgs);
-  return ExecResult == 0;
-}
-
 std::string Driver::GetResourcesPath(StringRef BinaryPath,
                                      StringRef CustomResourceDir) {
   // Since the resource directory is embedded in the module hash, it's important
@@ -2445,8 +2430,8 @@ class OffloadingActionBuilder final {
 
         // If the host input is not CUDA or HIP, we don't need to bother about
         // this input. CUDA and HIP are allowed in cpp and c files.
-        if (IA->getType() != types::TY_CUDA && IA->getType() != types::TY_HIP &&
-            IA->getType() != types::TY_CXX && IA->getType() != types::TY_C) {
+        if (IA->getType() != types::TY_CUDA &&
+            IA->getType() != types::TY_HIP) {
           // The builder will ignore this input.
           IsActive = false;
           return ABRT_Inactive;
@@ -2762,7 +2747,7 @@ class OffloadingActionBuilder final {
       if (CudaDeviceActions.empty() ||
           (CurPhase == phases::Backend && Relocatable) ||
           CurPhase == phases::Assemble)
-        return ABRT_Success;
+        return CompileDeviceOnly ? ABRT_Ignore_Host : ABRT_Success;
 
       assert(((CurPhase == phases::Link && Relocatable) ||
               CudaDeviceActions.size() == GpuArchList.size()) &&
@@ -2835,16 +2820,13 @@ class OffloadingActionBuilder final {
       }
 
       // By default, we produce an action for each device arch.
-      bool LastActionIsCompile = false;
       for (Action *&A : CudaDeviceActions) {
         A = C.getDriver().ConstructPhaseAction(C, Args, CurPhase, A,
                                                AssociatedOffloadKind);
-        LastActionIsCompile =
-            (A->getKind() == Action::ActionClass::CompileJobClass);
       }
 
-      return (CompileDeviceOnly && LastActionIsCompile) ? ABRT_Ignore_Host
-                                                        : ABRT_Success;
+      return (CompileDeviceOnly && CurPhase == FinalPhase) ? ABRT_Ignore_Host
+                                                           : ABRT_Success;
     }
 
     void appendLinkDependences(OffloadAction::DeviceDependences &DA) override {
@@ -2919,7 +2901,7 @@ class OffloadingActionBuilder final {
       // backend and assemble phases to output LLVM IR.
       if (Is_amdgcn &&
           (CurPhase == phases::Backend || CurPhase == phases::Assemble))
-        return ABRT_Success;
+        return CompileDeviceOnly ? ABRT_Ignore_Host : ABRT_Success;
 
       // The host only depends on device action in the linking phase, when all
       // the device images have to be embedded in the host image.
@@ -2939,14 +2921,11 @@ class OffloadingActionBuilder final {
       }
 
       // By default, we produce an action for each device arch.
-      bool LastActionIsCompile = false;
       for (Action *&A : OpenMPDeviceActions) {
         A = C.getDriver().ConstructPhaseAction(C, Args, CurPhase, A);
-        LastActionIsCompile =
-            (A->getKind() == Action::ActionClass::CompileJobClass);
       }
-      return (CompileDeviceOnly && LastActionIsCompile) ? ABRT_Ignore_Host
-                                                        : ABRT_Success;
+      return (CompileDeviceOnly && CurPhase == FinalPhase) ? ABRT_Ignore_Host
+                                                           : ABRT_Success;
     }
 
     ActionBuilderReturnCode addDeviceDepences(Action *HostAction) override {
@@ -2989,22 +2968,6 @@ class OffloadingActionBuilder final {
         }
 
         for (unsigned I = 0; I < ToolChains.size(); ++I) {
-          bool foundDeviceCode = false;
-          for (unsigned I = 0, E = GpuArchList.size(); I != E; ++I) {
-            StringRef Extension =
-                llvm::sys::path::extension(FileName).drop_front();
-            if (Extension != "a" ||
-                archiveContainsDeviceCode(
-                    ToolChains[I]
-                        ->GetProgramPath("clang-unbundle-archive")
-                        .c_str(),
-                    FileName, CudaArchToString(GpuArchList[I]))) {
-              foundDeviceCode = true;
-            }
-          }
-          if (!foundDeviceCode)
-            return ABRT_Inactive;
-
           OpenMPDeviceActions.push_back(UA);
           if (GpuArchList.size())
             for (unsigned I = 0, E = GpuArchList.size(); I != E; ++I) {

@@ -33,10 +33,9 @@ using namespace mlir::linalg;
 
 /// Forward declarations.
 template <typename NamedStructuredOpType>
-static void buildNamedStructuredOpRegion(Builder &builder,
-                                         OperationState &result,
-                                         TypeRange operandTypes,
-                                         TypeRange tensorResultTypes);
+static void buildNamedStructuredOpRegionAndAttributes(
+    Builder &builder, OperationState &result, TypeRange operandTypes,
+    TypeRange tensorResultTypes);
 template <typename NamedStructuredOpType>
 static void printNamedStructuredOp(OpAsmPrinter &p, NamedStructuredOpType op);
 template <typename NamedStructuredOpType>
@@ -45,82 +44,16 @@ static ParseResult parseNamedStructuredOp(OpAsmParser &parser,
 template <typename NamedStructuredOpType>
 static LogicalResult verifyNamedStructuredOp(NamedStructuredOpType op);
 
-/// Determines whether it is possible to fold it away in the parent Linalg op:
-///
-/// ```mlir
-///   %1 = memref_cast %0 : memref<8x16xf32> to memref<?x?xf32>
-///   %2 = linalg.slice %1 ... : memref<?x?xf32> ...
-///   // or
-///   %1 = memref_cast %0 : memref<8x16xf32, affine_map<(i, j)->(16 * i + j)>>
-///          to memref<?x?xf32>
-///   linalg.generic(%1 ...) : memref<?x?xf32> ...
-/// ```
-///
-/// into
-///
-/// ```mlir
-///   %2 = linalg.slice %0 ... : memref<8x16xf32> ...
-///   // or
-///   linalg.generic(%0 ... : memref<8x16xf32, affine_map<(i, j)->(16 * i + j)>>
-/// ```
-///
-static bool canFold(MemRefCastOp castOp) {
-  MemRefType sourceType = castOp.source().getType().dyn_cast<MemRefType>();
-  MemRefType resultType = castOp.getType().dyn_cast<MemRefType>();
-
-  // If we don't have MemRefType as source and destination, bail out.
-  if (!sourceType || !resultType)
-    return false;
-
-  // If resultType has a map, it needs to be the same as the source type to
-  // canonicalize.
-  if (!resultType.getAffineMaps().empty() &&
-      sourceType.getAffineMaps() != resultType.getAffineMaps())
-    return false;
-
-  // Ensure that:
-  //   1. source is static
-  //   2. source and target have the same rank (will be extended when needed)
-  //   3. if result is partially static, ensure sizes match.
-  if (!sourceType.hasStaticShape() ||
-      sourceType.getRank() != resultType.getRank())
-    return false;
-
-  for (auto it : llvm::zip(sourceType.getShape(), resultType.getShape())) {
-    auto sourceSize = std::get<0>(it);
-    auto resultSize = std::get<1>(it);
-    if (ShapedType::isDynamic(resultSize))
-      continue;
-    if (sourceSize != resultSize)
-      return false;
-  }
-
-  // If source has a map, it can only canonicalize if it is the canonical
-  // strided layout map.
-  if (sourceType.getAffineMaps().empty())
-    return true;
-
-  int64_t offset;
-  SmallVector<int64_t, 4> strides;
-  auto res = getStridesAndOffset(sourceType, strides, offset);
-  (void)res;
-  assert(succeeded(res));
-  auto stridedMap =
-      makeStridedLinearLayoutMap(strides, offset, castOp.getContext());
-  AffineMap sourceMap = sourceType.getAffineMaps().front();
-  return sourceMap == stridedMap;
-}
-
 /// This is a common class used for patterns of the form
 /// ```
 ///    someop(memrefcast) -> someop
 /// ```
-/// It folds the source of any memref_cast into the root operation directly.
+/// It folds the source of the memref_cast into the root operation directly.
 static LogicalResult foldMemRefCast(Operation *op) {
   bool folded = false;
   for (OpOperand &operand : op->getOpOperands()) {
     auto castOp = dyn_cast_or_null<MemRefCastOp>(operand.get().getDefiningOp());
-    if (castOp && canFold(castOp)) {
+    if (castOp && canFoldIntoConsumerOp(castOp)) {
       operand.set(castOp.getOperand());
       folded = true;
     }
@@ -470,7 +403,7 @@ getSymbolLessAffineMaps(ArrayRef<ArrayRef<AffineExpr>> reassociation) {
 }
 
 void mlir::linalg::ReshapeOp::build(
-    Builder *b, OperationState &result, Value src,
+    OpBuilder &b, OperationState &result, Value src,
     ArrayRef<ArrayRef<AffineExpr>> reassociation,
     ArrayRef<NamedAttribute> attrs) {
   auto maps = getSymbolLessAffineMaps(reassociation);
@@ -478,17 +411,17 @@ void mlir::linalg::ReshapeOp::build(
   auto resultType = computeReshapeCollapsedType(memRefType, maps);
   build(b, result, resultType, src, attrs);
   result.addAttribute(ReshapeOp::getReassociationAttrName(),
-                      b->getAffineMapArrayAttr(maps));
+                      b.getAffineMapArrayAttr(maps));
 }
 
 void mlir::linalg::ReshapeOp::build(
-    Builder *b, OperationState &result, Type resultType, Value src,
+    OpBuilder &b, OperationState &result, Type resultType, Value src,
     ArrayRef<ArrayRef<AffineExpr>> reassociation,
     ArrayRef<NamedAttribute> attrs) {
   auto maps = getSymbolLessAffineMaps(reassociation);
   build(b, result, resultType, src, attrs);
   result.addAttribute(ReshapeOp::getReassociationAttrName(),
-                      b->getAffineMapArrayAttr(maps));
+                      b.getAffineMapArrayAttr(maps));
 }
 
 // Common verifier for reshape-like types. Fills `expandedType` and
@@ -572,7 +505,7 @@ computeTensorReshapeCollapsedType(RankedTensorType type,
 }
 
 void mlir::linalg::TensorReshapeOp::build(
-    Builder *b, OperationState &result, Value src,
+    OpBuilder &b, OperationState &result, Value src,
     ArrayRef<ArrayRef<AffineExpr>> reassociation,
     ArrayRef<NamedAttribute> attrs) {
   auto maps = getSymbolLessAffineMaps(reassociation);
@@ -580,17 +513,17 @@ void mlir::linalg::TensorReshapeOp::build(
       src.getType().cast<RankedTensorType>(), maps);
   build(b, result, resultType, src, attrs);
   result.addAttribute(TensorReshapeOp::getReassociationAttrName(),
-                      b->getAffineMapArrayAttr(maps));
+                      b.getAffineMapArrayAttr(maps));
 }
 
 void mlir::linalg::TensorReshapeOp::build(
-    Builder *b, OperationState &result, Type resultType, Value src,
+    OpBuilder &b, OperationState &result, Type resultType, Value src,
     ArrayRef<ArrayRef<AffineExpr>> reassociation,
     ArrayRef<NamedAttribute> attrs) {
   auto maps = getSymbolLessAffineMaps(reassociation);
   build(b, result, resultType, src, attrs);
   result.addAttribute(TensorReshapeOp::getReassociationAttrName(),
-                      b->getAffineMapArrayAttr(maps));
+                      b.getAffineMapArrayAttr(maps));
 }
 
 static LogicalResult verify(TensorReshapeOp op) {
@@ -611,7 +544,7 @@ static LogicalResult verify(TensorReshapeOp op) {
 //===----------------------------------------------------------------------===//
 // SliceOp
 //===----------------------------------------------------------------------===//
-void mlir::linalg::SliceOp::build(Builder *b, OperationState &result,
+void mlir::linalg::SliceOp::build(OpBuilder &b, OperationState &result,
                                   Value base, ValueRange indexings) {
   result.addOperands(base);
   result.addOperands(indexings);
@@ -629,7 +562,7 @@ void mlir::linalg::SliceOp::build(Builder *b, OperationState &result,
   result.addTypes({MemRefType::Builder(memRefType)
                        .setShape(sizes)
                        .setAffineMaps(makeStridedLinearLayoutMap(
-                           strides, offset, b->getContext()))});
+                           strides, offset, b.getContext()))});
 }
 
 static void print(OpAsmPrinter &p, SliceOp op) {
@@ -688,7 +621,7 @@ Value SliceOp::getViewSource() { return view(); }
 //===----------------------------------------------------------------------===//
 // TransposeOp
 //===----------------------------------------------------------------------===//
-void mlir::linalg::TransposeOp::build(Builder *b, OperationState &result,
+void mlir::linalg::TransposeOp::build(OpBuilder &b, OperationState &result,
                                       Value view, AffineMapAttr permutation,
                                       ArrayRef<NamedAttribute> attrs) {
   auto permutationMap = permutation.getValue();
@@ -709,7 +642,7 @@ void mlir::linalg::TransposeOp::build(Builder *b, OperationState &result,
   auto res = getStridesAndOffset(memRefType, strides, offset);
   assert(succeeded(res) && strides.size() == static_cast<unsigned>(rank));
   (void)res;
-  auto map = makeStridedLinearLayoutMap(strides, offset, b->getContext());
+  auto map = makeStridedLinearLayoutMap(strides, offset, b.getContext());
   map = permutationMap ? map.compose(permutationMap) : map;
   // Compute result type.
   MemRefType resultType =
@@ -1085,9 +1018,10 @@ OpFoldResult TransposeOp::fold(ArrayRef<Attribute>) {
 //===----------------------------------------------------------------------===//
 
 template <typename NamedStructuredOpType>
-void buildNamedStructuredOpRegion(Builder &builder, OperationState &result,
-                                  TypeRange operandTypes,
-                                  TypeRange tensorResultTypes) {
+void buildNamedStructuredOpRegionAndAttributes(Builder &builder,
+                                               OperationState &result,
+                                               TypeRange operandTypes,
+                                               TypeRange tensorResultTypes) {
   Region &region = *result.addRegion();
   Block *body = new Block();
   // TODO: atm all operands go through getElementTypeOrSelf,
@@ -1102,12 +1036,24 @@ void buildNamedStructuredOpRegion(Builder &builder, OperationState &result,
   opBuilder.setInsertionPointToStart(&region.front());
   mlir::edsc::ScopedContext scope(opBuilder, builder.getUnknownLoc());
   NamedStructuredOpType::regionBuilder(*body);
+
+  auto indexingMaps = builder.getAffineMapArrayAttr(
+      NamedStructuredOpType::referenceIndexingMaps(operandTypes,
+                                                   tensorResultTypes));
+  result.addAttribute(getIndexingMapsAttrName(), indexingMaps);
+
+  auto iterators =
+      builder.getStrArrayAttr(NamedStructuredOpType::referenceIterators(
+          operandTypes, tensorResultTypes));
+  result.addAttribute(getIteratorTypesAttrName(), iterators);
 }
 
 template <typename NamedStructuredOpType>
 static void printNamedStructuredOp(OpAsmPrinter &p, NamedStructuredOpType op) {
+  std::array<StringRef, 2> silentAttrNames{getIndexingMapsAttrName(),
+                                           getIteratorTypesAttrName()};
   p << op.getOperationName() << ' ';
-  p.printOptionalAttrDict(op.getAttrs());
+  p.printOptionalAttrDict(op.getAttrs(), silentAttrNames);
   p << ' ' << op.getOperands();
   p << ": (" << op.getOperandTypes() << ")";
   auto outputTensorTypes = op.getResultTypes();
@@ -1139,7 +1085,7 @@ static ParseResult parseNamedStructuredOp(OpAsmParser &parser,
   if (!tensorResultTypes.empty())
     result.addTypes(tensorResultTypes);
 
-  buildNamedStructuredOpRegion<NamedStructuredOpType>(
+  buildNamedStructuredOpRegionAndAttributes<NamedStructuredOpType>(
       parser.getBuilder(), result, operandTypes, tensorResultTypes);
 
   return parser.resolveOperands(operandsInfo, operandTypes,

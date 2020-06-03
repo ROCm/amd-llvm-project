@@ -86,6 +86,7 @@ add_library(omptarget.rtl.hsa SHARED
       impl/task.cpp
       impl/taskgroup.cpp
       impl/utils.cpp
+      impl/msgpack.cpp
       impl/atmi_hostcall.c
       impl/hostcall.cpp
       impl/hostcall_handlers.c
@@ -101,9 +102,8 @@ install(TARGETS omptarget.rtl.hsa LIBRARY DESTINATION "lib${OPENMP_LIBDIR_SUFFIX
 # Also, the AOMP specific build of ATMI has seperate release and debug builds. 
 target_link_libraries(
   omptarget.rtl.hsa
-  -L${LLVM_LIBDIR}${OPENMP_LIBDIR_SUFFIX} -lamd_comgr -lpthread -ldl -Wl,-rpath,${LLVM_LIBDIR}${OPENMP_LIBDIR_SUFFIX}
-  -L${LIBOMPTARGET_DEP_LIBHSA_LIBRARIES_DIRS} -L${LIBOMPTARGET_DEP_LIBHSAKMT_LIBRARIES_DIRS} -lhsa-runtime64 -lhsakmt  -Wl,-rpath,${LIBOMPTARGET_DEP_LIBHSA_LIBRARIES_DIRS},-rpath,${LIBOMPTARGET_DEP_LIBHSAKMT_LIBRARIES_DIRS}
-  -L${LLVM_LIBDIR} -lLLVMAMDGPUDesc -lLLVMAMDGPUUtils -lLLVMMC -lLLVMCore -lLLVMSupport -Wl,-rpath,${LLVM_LIBDIR}
+  -lpthread -ldl -Wl,-rpath,${LLVM_LIBDIR}${OPENMP_LIBDIR_SUFFIX}
+  -L${LIBOMPTARGET_DEP_LIBHSA_LIBRARIES_DIRS} -L${LIBOMPTARGET_DEP_LIBHSAKMT_LIBRARIES_DIRS} -lhsa-runtime64 -lhsakmt -Wl,-rpath,${LIBOMPTARGET_DEP_LIBHSA_LIBRARIES_DIRS},-rpath,${LIBOMPTARGET_DEP_LIBHSAKMT_LIBRARIES_DIRS}
   -lelf
   "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/../exports"
   "-Wl,-z,defs"

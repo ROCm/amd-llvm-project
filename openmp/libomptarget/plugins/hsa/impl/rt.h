@@ -101,10 +101,7 @@ class Runtime {
                                  const unsigned int);
   // sync
   atmi_status_t TaskWait(atmi_task_handle_t);
-  // print buffers/pipes
-  atmi_status_t RegisterTaskHostcallHandler(atmi_task_hostcall_handler_t fp);
   // tasks
-
   atmi_task_handle_t LaunchTask(atmi_lparm_t *, atmi_kernel_t, void **);
   // taskgroups
   atmi_status_t TaskGroupCreate(atmi_taskgroup_handle_t *, bool ordered = false,

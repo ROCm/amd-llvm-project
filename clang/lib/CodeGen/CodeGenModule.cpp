@@ -461,11 +461,7 @@ void CodeGenModule::Release() {
   emitLLVMUsed();
   if (SanStats)
     SanStats->finish();
-
-  // Disable linker.options for HIP device compilation. This is a workaround
-  // to get things going until https://reviews.llvm.org/D57829 is committed.
   if (CodeGenOpts.Autolink &&
-      !(Context.getLangOpts().CUDAIsDevice && Context.getLangOpts().HIP) &&
       (Context.getLangOpts().Modules || !LinkerOptionsMetadata.empty())) {
     EmitModuleLinkOptions();
   }
@@ -882,9 +878,6 @@ static bool shouldAssumeDSOLocal(const CodeGenModule &CGM,
 
   // Only handle COFF and ELF for now.
   if (!TT.isOSBinFormatELF())
-    return false;
-
-  if ((TT.getArch() == llvm::Triple::amdgcn) || TT.isNVPTX())
     return false;
 
   // If this is not an executable, don't assume anything is local.

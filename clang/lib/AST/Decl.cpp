@@ -3211,17 +3211,19 @@ unsigned FunctionDecl::getBuiltinID(bool ConsiderWrapperFunctions) const {
 
   // OpenCL v1.2 s6.9.f - The library functions defined in
   // the C99 standard headers are not available.
-  if ((Context.getLangOpts().OpenCL ||
-       (Context.getTargetInfo().getTriple().getArch() ==
-        llvm::Triple::amdgcn)) &&
-      Context.BuiltinInfo.isPredefinedLibFunction(BuiltinID) &&
-      !(BuiltinID == Builtin::BIprintf || BuiltinID == Builtin::BImalloc))
+  if (Context.getLangOpts().OpenCL &&
+      Context.BuiltinInfo.isPredefinedLibFunction(BuiltinID))
     return 0;
 
   // CUDA does not have device-side standard library. printf and malloc are the
   // only special cases that are supported by device-side runtime.
   if (Context.getLangOpts().CUDA && hasAttr<CUDADeviceAttr>() &&
       !hasAttr<CUDAHostAttr>() &&
+      !(BuiltinID == Builtin::BIprintf || BuiltinID == Builtin::BImalloc))
+    return 0;
+
+  if (Context.getTargetInfo().getTriple().getArch() == llvm::Triple::amdgcn &&
+      Context.BuiltinInfo.isPredefinedLibFunction(BuiltinID) &&
       !(BuiltinID == Builtin::BIprintf || BuiltinID == Builtin::BImalloc))
     return 0;
 
@@ -4412,6 +4414,21 @@ bool RecordDecl::isCapturedRecord() const {
 
 void RecordDecl::setCapturedRecord() {
   addAttr(CapturedRecordAttr::CreateImplicit(getASTContext()));
+}
+
+bool RecordDecl::isOrContainsUnion() const {
+  if (isUnion())
+    return true;
+
+  if (const RecordDecl *Def = getDefinition()) {
+    for (const FieldDecl *FD : Def->fields()) {
+      const RecordType *RT = FD->getType()->getAs<RecordType>();
+      if (RT && RT->getDecl()->isOrContainsUnion())
+        return true;
+    }
+  }
+
+  return false;
 }
 
 RecordDecl::field_iterator RecordDecl::field_begin() const {

@@ -6862,7 +6862,7 @@ public:
                                     bool IgnoreAccess = false);
   bool CheckDerivedToBaseConversion(QualType Derived, QualType Base,
                                     unsigned InaccessibleBaseID,
-                                    unsigned AmbigiousBaseConvID,
+                                    unsigned AmbiguousBaseConvID,
                                     SourceLocation Loc, SourceRange Range,
                                     DeclarationName Name,
                                     CXXCastPath *BasePath,
@@ -10766,6 +10766,21 @@ public:
                                           SourceLocation LParenLoc,
                                           SourceLocation EndLoc);
 
+  /// Data for list of allocators.
+  struct UsesAllocatorsData {
+    /// Allocator.
+    Expr *Allocator = nullptr;
+    /// Allocator traits.
+    Expr *AllocatorTraits = nullptr;
+    /// Locations of '(' and ')' symbols.
+    SourceLocation LParenLoc, RParenLoc;
+  };
+  /// Called on well-formed 'uses_allocators' clause.
+  OMPClause *ActOnOpenMPUsesAllocatorClause(SourceLocation StartLoc,
+                                            SourceLocation LParenLoc,
+                                            SourceLocation EndLoc,
+                                            ArrayRef<UsesAllocatorsData> Data);
+
   /// The kind of conversion being performed.
   enum CheckedConversionKind {
     /// An implicit conversion.
@@ -11969,6 +11984,10 @@ private:
 
   ExprResult CheckBuiltinFunctionCall(FunctionDecl *FDecl,
                                       unsigned BuiltinID, CallExpr *TheCall);
+
+  bool CheckTSBuiltinFunctionCall(llvm::Triple::ArchType Arch,
+                                  unsigned BuiltinID, CallExpr *TheCall);
+
   void checkFortifiedBuiltinMemoryFunction(FunctionDecl *FD, CallExpr *TheCall);
 
   bool CheckARMBuiltinExclusiveCall(unsigned BuiltinID, CallExpr *TheCall,

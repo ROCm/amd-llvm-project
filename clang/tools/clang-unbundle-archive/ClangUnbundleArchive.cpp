@@ -554,6 +554,8 @@ static bool checkDeviceOptions(StringRef Device) {
 // Unbundle the files. Return true if an error was found.
 static bool UnbundleArchive() {
   std::map<std::string, std::vector<NewArchiveMember>> OutputArchives;
+  // Initialize to empty, that way we can create an empty archive
+  OutputArchives[OffloadArch];
 
   StringRef IFName = InputFileName;
   ErrorOr<std::unique_ptr<MemoryBuffer>> BufOrErr =

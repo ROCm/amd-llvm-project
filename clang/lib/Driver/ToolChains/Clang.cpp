@@ -812,8 +812,8 @@ static void addPGOAndCoverageFlags(const ToolChain &TC, Compilation &C,
     CmdArgs.push_back("-fprofile-instrument=clang");
     if (TC.getTriple().isWindowsMSVCEnvironment()) {
       // Add dependent lib for clang_rt.profile
-      CmdArgs.push_back(Args.MakeArgString("--dependent-lib=" +
-                                           TC.getCompilerRT(Args, "profile")));
+      CmdArgs.push_back(Args.MakeArgString(
+          "--dependent-lib=" + TC.getCompilerRTBasename(Args, "profile")));
     }
   }
 
@@ -830,8 +830,9 @@ static void addPGOAndCoverageFlags(const ToolChain &TC, Compilation &C,
   }
   if (PGOGenArg) {
     if (TC.getTriple().isWindowsMSVCEnvironment()) {
-      CmdArgs.push_back(Args.MakeArgString("--dependent-lib=" +
-                                           TC.getCompilerRT(Args, "profile")));
+      // Add dependent lib for clang_rt.profile
+      CmdArgs.push_back(Args.MakeArgString(
+          "--dependent-lib=" + TC.getCompilerRTBasename(Args, "profile")));
     }
     if (PGOGenArg->getOption().matches(
             PGOGenerateArg ? options::OPT_fprofile_generate_EQ
@@ -860,11 +861,10 @@ static void addPGOAndCoverageFlags(const ToolChain &TC, Compilation &C,
     }
   }
 
-  bool EmitCovNotes = Args.hasArg(options::OPT_ftest_coverage) ||
+  bool EmitCovNotes = Args.hasFlag(options::OPT_ftest_coverage,
+                                   options::OPT_fno_test_coverage, false) ||
                       Args.hasArg(options::OPT_coverage);
-  bool EmitCovData = Args.hasFlag(options::OPT_fprofile_arcs,
-                                  options::OPT_fno_profile_arcs, false) ||
-                     Args.hasArg(options::OPT_coverage);
+  bool EmitCovData = TC.needsGCovInstrumentation(Args);
   if (EmitCovNotes)
     CmdArgs.push_back("-femit-coverage-notes");
   if (EmitCovData)
@@ -1217,6 +1217,11 @@ void Clang::AddPreprocessingOptions(Compilation &C, const JobAction &JA,
 
     CmdArgs.push_back("-include");
     CmdArgs.push_back("__clang_openmp_device_functions.h");
+  }
+  if (Args.hasFlag(options::OPT_fopenmp, options::OPT_fopenmp_EQ,
+                   options::OPT_fno_openmp, false)){
+    CmdArgs.push_back("-I");
+    CmdArgs.push_back(Args.MakeArgString(D.Dir + "/../include"));
   }
 
   // Add -i* options, and automatically translate to
@@ -3731,6 +3736,8 @@ static void RenderDebugOptions(const ToolChain &TC, const Driver &D,
         if (T.getArch() == llvm::Triple::amdgcn) {
           CmdArgs.push_back("-disable-O0-optnone");
           CmdArgs.push_back("-disable-O0-noinline");
+          CmdArgs.push_back("-mllvm");
+          CmdArgs.push_back("-amdgpu-spill-cfi-saved-regs");
           // -ggdb with AMDGCN does not currently compose with options that
           // affect the debug info kind. The behavior of commands like `-ggdb
           // -g` may be surprising (the -g is effectively ignored).
@@ -4044,7 +4051,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   if (IsCuda || IsHIP) {
-    CmdArgs.push_back("-std=c++11");
     // We have to pass the triple of the host if compiling for a CUDA/HIP device
     // and vice-versa.
     std::string NormalizedTriple;
@@ -4267,6 +4273,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
         options::OPT_fno_function_sections,
         options::OPT_fdata_sections,
         options::OPT_fno_data_sections,
+        options::OPT_funique_internal_linkage_names,
+        options::OPT_fno_unique_internal_linkage_names,
         options::OPT_funique_section_names,
         options::OPT_fno_unique_section_names,
         options::OPT_mrestrict_it,
@@ -4687,8 +4695,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Enable -mconstructor-aliases except on darwin, where we have to work around
   // a linker bug (see <rdar://problem/7651567>), and CUDA device code, where
-  // aliases aren't supported.
-  if (!RawTriple.isOSDarwin() && !RawTriple.isNVPTX())
+  // aliases aren't supported. Similarly, aliases aren't yet supported for AIX.
+  if (!RawTriple.isOSDarwin() && !RawTriple.isNVPTX() && !RawTriple.isOSAIX())
     CmdArgs.push_back("-mconstructor-aliases");
 
   // Darwin's kernel doesn't support guard variables; just die if we
@@ -4885,6 +4893,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if (!Args.hasFlag(options::OPT_funique_section_names,
                     options::OPT_fno_unique_section_names, true))
     CmdArgs.push_back("-fno-unique-section-names");
+
+  if (Args.hasFlag(options::OPT_funique_internal_linkage_names,
+                   options::OPT_fno_unique_internal_linkage_names, false))
+    CmdArgs.push_back("-funique-internal-linkage-names");
 
   Args.AddLastArg(CmdArgs, options::OPT_finstrument_functions,
                   options::OPT_finstrument_functions_after_inlining,
@@ -5806,8 +5818,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // Enable vectorization per default according to the optimization level
   // selected. For optimization levels that want vectorization we use the alias
   // option to simplify the hasFlag logic.
-  // Do not vectorize on GPUs
-  // FIXME: Temporarily turn off vectorization for GPUs
   bool EnableVec = shouldEnableVectorizerAtOLevel(Args, false) &&
                    !(Triple.getArch() == llvm::Triple::amdgcn ||
                      Triple.getArch() == llvm::Triple::nvptx64);

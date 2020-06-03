@@ -46,6 +46,8 @@ public:
     return SpillSGPRToVGPR;
   }
 
+  bool isCFISavedRegsSpillEnabled() const;
+
   /// Return the end register initially reserved for the scratch buffer in case
   /// spilling is needed.
   MCRegister reservedPrivateSegmentBufferReg(const MachineFunction &MF) const;
@@ -94,9 +96,8 @@ public:
     const MachineFunction &MF, unsigned Kind = 0) const override;
 
   /// If \p OnlyToVGPR is true, this will only succeed if this
-  bool spillSGPR(MachineBasicBlock::iterator MI,
-                 int FI, RegScavenger *RS,
-                 bool OnlyToVGPR = false) const;
+  bool spillSGPR(MachineBasicBlock::iterator MI, int FI, RegScavenger *RS,
+                 bool OnlyToVGPR = false, bool NeedsCFI = false) const;
 
   bool restoreSGPR(MachineBasicBlock::iterator MI,
                    int FI, RegScavenger *RS,
@@ -283,7 +284,7 @@ public:
 
   // \returns a DWORD offset of a \p SubReg
   unsigned getChannelFromSubReg(unsigned SubReg) const {
-    return SubReg ? divideCeil(getSubRegIdxOffset(SubReg), 32) : 0;
+    return SubReg ? (getSubRegIdxOffset(SubReg) + 31) / 32 : 0;
   }
 
   // \returns a DWORD size of a \p SubReg
@@ -291,17 +292,17 @@ public:
     return getNumCoveredRegs(getSubRegIndexLaneMask(SubReg));
   }
 
+  // For a given 16 bit \p Reg \returns a 32 bit register holding it.
+  // \returns \p Reg otherwise.
+  MCPhysReg get32BitRegister(MCPhysReg Reg) const;
+
 private:
-  void buildSpillLoadStore(MachineBasicBlock::iterator MI,
-                           unsigned LoadStoreOp,
-                           int Index,
-                           Register ValueReg,
-                           bool ValueIsKill,
+  void buildSpillLoadStore(MachineBasicBlock::iterator MI, unsigned LoadStoreOp,
+                           int Index, Register ValueReg, bool ValueIsKill,
                            MCRegister ScratchRsrcReg,
-                           MCRegister ScratchOffsetReg,
-                           int64_t InstrOffset,
-                           MachineMemOperand *MMO,
-                           RegScavenger *RS) const;
+                           MCRegister ScratchOffsetReg, int64_t InstrOffset,
+                           MachineMemOperand *MMO, RegScavenger *RS,
+                           bool NeedsCFI = false) const;
 };
 
 } // End namespace llvm

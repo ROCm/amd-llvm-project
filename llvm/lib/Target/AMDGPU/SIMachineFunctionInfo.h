@@ -485,6 +485,9 @@ public: // FIXME
   Register SGPRForFPSaveRestoreCopy;
   Optional<int> FramePointerSaveIndex;
 
+  int ReturnAddressSaveIndex;
+  int EXECSaveIndex;
+
 public:
   SIMachineFunctionInfo(const MachineFunction &MF);
 
@@ -675,6 +678,8 @@ public:
   unsigned getGITPtrHigh() const {
     return GITPtrHigh;
   }
+
+  Register getGITPtrLoReg(const MachineFunction &MF) const;
 
   uint32_t get32BitAddressHighBits() const {
     return HighBitsOf32BitAddress;

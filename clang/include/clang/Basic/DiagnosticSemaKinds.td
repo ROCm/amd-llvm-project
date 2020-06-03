@@ -171,8 +171,9 @@ def err_field_designator_unknown : Error<
 def err_field_designator_nonfield : Error<
   "field designator %0 does not refer to a non-static data member">;
 def note_field_designator_found : Note<"field designator refers here">;
-def err_designator_for_scalar_init : Error<
-  "designator in initializer for scalar type %0">;
+def err_designator_for_scalar_or_sizeless_init : Error<
+  "designator in initializer for %select{scalar|indivisible sizeless}0 "
+  "type %1">;
 def warn_initializer_overrides : Warning<
   "initializer %select{partially |}0overrides prior initialization of "
   "this subobject">, InGroup<InitializerOverrides>;
@@ -2959,6 +2960,11 @@ def warn_objc_collection_literal_element : Warning<
   "object of type %0 is not compatible with "
   "%select{array element type|dictionary key type|dictionary value type}1 %2">,
   InGroup<ObjCLiteralConversion>;
+def warn_nsdictionary_duplicate_key : Warning<
+  "duplicate key in dictionary literal">,
+  InGroup<DiagGroup<"objc-dictionary-duplicate-keys">>;
+def note_nsdictionary_duplicate_key_here : Note<
+  "previous equal key is here">;
 def err_swift_param_attr_not_swiftcall : Error<
   "'%0' parameter can only be used with swiftcall calling convention">;
 def err_swift_indirect_result_not_first : Error<
@@ -3123,6 +3129,10 @@ def warn_weak_identifier_undeclared : Warning<
 def warn_attribute_cmse_entry_static : Warning<
   "'cmse_nonsecure_entry' cannot be applied to functions with internal linkage">,
   InGroup<IgnoredAttributes>;
+def warn_cmse_nonsecure_union : Warning<
+  "passing union across security boundary via %select{parameter %1|return value}0 "
+  "may leak information">,
+  InGroup<DiagGroup<"cmse-union-leak">>;
 def err_attribute_weak_static : Error<
   "weak declaration cannot have internal linkage">;
 def err_attribute_selectany_non_extern_data : Error<
@@ -3336,7 +3346,7 @@ def warn_thread_attribute_argument_not_lockable : Warning<
   InGroup<ThreadSafetyAttributes>, DefaultIgnore;
 def warn_thread_attribute_decl_not_lockable : Warning<
   "%0 attribute can only be applied in a context annotated "
-  "with 'capability(\"mutex\")' attribute">,
+  "with 'capability' attribute">,
   InGroup<ThreadSafetyAttributes>, DefaultIgnore;
 def warn_thread_attribute_decl_not_pointer : Warning<
   "%0 only applies to pointer types; type here is %1">,
@@ -5377,29 +5387,43 @@ def err_variable_object_no_init : Error<
 def err_excess_initializers : Error<
   "excess elements in %select{array|vector|scalar|union|struct}0 initializer">;
 def ext_excess_initializers : ExtWarn<
-  "excess elements in %select{array|vector|scalar|union|struct}0 initializer">;
+  "excess elements in %select{array|vector|scalar|union|struct}0 initializer">,
+  InGroup<ExcessInitializers>;
+def err_excess_initializers_for_sizeless_type : Error<
+  "excess elements in initializer for indivisible sizeless type %0">;
+def ext_excess_initializers_for_sizeless_type : ExtWarn<
+  "excess elements in initializer for indivisible sizeless type %0">,
+  InGroup<ExcessInitializers>;
 def err_excess_initializers_in_char_array_initializer : Error<
   "excess elements in char array initializer">;
 def ext_excess_initializers_in_char_array_initializer : ExtWarn<
-  "excess elements in char array initializer">;
+  "excess elements in char array initializer">,
+  InGroup<ExcessInitializers>;
 def err_initializer_string_for_char_array_too_long : Error<
   "initializer-string for char array is too long">;
 def ext_initializer_string_for_char_array_too_long : ExtWarn<
-  "initializer-string for char array is too long">;
+  "initializer-string for char array is too long">,
+  InGroup<ExcessInitializers>;
 def warn_missing_field_initializers : Warning<
   "missing field %0 initializer">,
   InGroup<MissingFieldInitializers>, DefaultIgnore;
-def warn_braces_around_scalar_init : Warning<
-  "braces around scalar initializer">, InGroup<DiagGroup<"braced-scalar-init">>;
-def ext_many_braces_around_scalar_init : ExtWarn<
-  "too many braces around scalar initializer">,
+def warn_braces_around_init : Warning<
+  "braces around %select{scalar |}0initializer">,
+  InGroup<DiagGroup<"braced-scalar-init">>;
+def ext_many_braces_around_init : ExtWarn<
+  "too many braces around %select{scalar |}0initializer">,
   InGroup<DiagGroup<"many-braces-around-scalar-init">>, SFINAEFailure;
 def ext_complex_component_init : Extension<
   "complex initialization specifying real and imaginary components "
   "is an extension">, InGroup<DiagGroup<"complex-component-init">>;
 def err_empty_scalar_initializer : Error<"scalar initializer cannot be empty">;
+def err_empty_sizeless_initializer : Error<
+  "initializer for sizeless type %0 cannot be empty">;
 def warn_cxx98_compat_empty_scalar_initializer : Warning<
   "scalar initialized from empty initializer list is incompatible with C++98">,
+  InGroup<CXX98Compat>, DefaultIgnore;
+def warn_cxx98_compat_empty_sizeless_initializer : Warning<
+  "initializing %0 from an empty initializer list is incompatible with C++98">,
   InGroup<CXX98Compat>, DefaultIgnore;
 def warn_cxx98_compat_reference_list_init : Warning<
   "reference initialized from initializer list is incompatible with C++98">,
@@ -5450,6 +5474,8 @@ def err_bitfield_width_exceeds_type_width : Error<
 def err_anon_bitfield_width_exceeds_type_width : Error<
   "width of anonymous bit-field (%0 bits) exceeds %select{width|size}1 "
   "of its type (%2 bit%s2)">;
+def err_anon_bitfield_init : Error<
+  "anonymous bit-field cannot have a default member initializer">;
 def err_incorrect_number_of_vector_initializers : Error<
   "number of elements must be either one or match the size of the vector">;
 
@@ -7957,9 +7983,8 @@ def err_cuda_device_exceptions : Error<
 def err_dynamic_var_init : Error<
     "dynamic initialization is not supported for "
     "__device__, __constant__, and __shared__ variables.">;
-def warn_shared_var_init : Warning<
-    "initialization is not supported for __shared__ variables.">,
-    InGroup<DiagGroup<"cuda-shared-init">>, DefaultError;
+def err_shared_var_init : Error<
+    "initialization is not supported for __shared__ variables.">;
 def err_device_static_local_var : Error<
     "within a %select{__device__|__global__|__host__|__host__ __device__}0 "
     "function, only __shared__ variables or const variables without device "
@@ -10218,8 +10243,8 @@ def note_omp_flush_order_clause_here : Note<
   "memory order clause '%0' is specified here">;
 def err_omp_non_lvalue_in_map_or_motion_clauses: Error<
   "expected addressable lvalue in '%0' clause">;
-def err_omp_event_var_expected : Error<
-  "expected variable of the 'omp_event_handle_t' type%select{|, not %1}0">;
+def err_omp_var_expected : Error<
+  "expected variable of the '%0' type%select{|, not %2}1">;
 def warn_nested_declare_variant
     : Warning<"nesting `omp begin/end declare variant` is not supported yet; "
               "nested context ignored">,
@@ -10227,6 +10252,22 @@ def warn_nested_declare_variant
 def err_omp_non_pointer_type_array_shaping_base : Error<
   "expected expression with a pointer to a complete type as a base of an array "
   "shaping operation">;
+def err_omp_reduction_task_not_parallel_or_worksharing : Error<
+  "'reduction' clause with 'task' modifier allowed only on non-simd parallel or"
+  " worksharing constructs">;
+def err_omp_expected_array_alloctraits : Error<
+  "expected constant sized array of 'omp_alloctrait_t' elements, not %0">;
+def err_omp_predefined_allocator_with_traits : Error<
+  "predefined allocator cannot have traits specified">;
+def note_omp_predefined_allocator : Note<
+  "predefined trait '%0' used here">;
+def err_omp_nonpredefined_allocator_without_traits : Error<
+  "non-predefined allocator must have traits specified">;
+def err_omp_allocator_used_in_clauses : Error<
+  "allocators used in 'uses_allocators' clause cannot appear in other "
+  "data-sharing or data-mapping attribute clauses">;
+def err_omp_allocator_not_in_uses_allocators : Error<
+  "allocator must be specified in the 'uses_allocators' clause">;
 } // end of OpenMP category
 
 let CategoryName = "Related Result Type Issue" in {
@@ -10295,11 +10336,6 @@ def err_module_unimported_use : Error<
   "explicit specialization|partial specialization}0 of %1 must be imported "
   "from module '%2' before it is required">;
 def err_module_unimported_use_header : Error<
-  "missing '#include %3'; "
-  "%select{declaration|definition|default argument|"
-  "explicit specialization|partial specialization}0 of %1 must be imported "
-  "from module '%2' before it is required">;
-def err_module_unimported_use_global_module_fragment : Error<
   "%select{missing '#include'|missing '#include %3'}2; "
   "%select{||default argument of |explicit specialization of |"
   "partial specialization of }0%1 must be "
@@ -10309,6 +10345,10 @@ def err_module_unimported_use_multiple : Error<
   "%select{declaration|definition|default argument|"
   "explicit specialization|partial specialization}0 of %1 must be imported "
   "from one of the following modules before it is required:%2">;
+def note_unreachable_entity : Note<
+  "%select{declaration|definition|default argument declared|"
+  "explicit specialization declared|partial specialization declared}0 here "
+  "is not %select{visible|reachable|reachable|reachable|reachable|reachable}0">;
 def ext_module_import_in_extern_c : ExtWarn<
   "import of C++ module '%0' appears within extern \"C\" language linkage "
   "specification">, DefaultError,

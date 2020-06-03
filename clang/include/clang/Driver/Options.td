@@ -616,9 +616,9 @@ def fcuda_short_ptr : Flag<["-"], "fcuda-short-ptr">, Flags<[CC1Option]>,
   HelpText<"Use 32-bit pointers for accessing const/local/shared address spaces.">;
 def fno_cuda_short_ptr : Flag<["-"], "fno-cuda-short-ptr">;
 def rocm_path_EQ : Joined<["--"], "rocm-path=">, Group<i_Group>,
-  HelpText<"ROCm installation path">;
+  HelpText<"ROCm installation path, used for finding and automatically linking required bitcode libraries.">;
 def hip_device_lib_path_EQ : Joined<["--"], "hip-device-lib-path=">, Group<Link_Group>,
-  HelpText<"HIP device library path">;
+  HelpText<"HIP device library path. Alternative to rocm-path.">;
 def hip_device_lib_EQ : Joined<["--"], "hip-device-lib=">, Group<Link_Group>,
   HelpText<"HIP device library">;
 def fhip_dump_offload_linker_script : Flag<["-"], "fhip-dump-offload-linker-script">,
@@ -1882,6 +1882,7 @@ def foptimization_record_passes_EQ : Joined<["-"], "foptimization-record-passes=
   MetaVarName<"<regex>">;
 
 def ftest_coverage : Flag<["-"], "ftest-coverage">, Group<f_Group>;
+def fno_test_coverage : Flag<["-"], "fno-test-coverage">, Group<f_Group>;
 def fvectorize : Flag<["-"], "fvectorize">, Group<f_Group>,
   HelpText<"Enable the loop vectorization passes">;
 def fno_vectorize : Flag<["-"], "fno-vectorize">, Group<f_Group>;
@@ -2007,6 +2008,12 @@ def funique_section_names : Flag <["-"], "funique-section-names">,
   HelpText<"Use unique names for text and data sections">;
 def fno_unique_section_names : Flag <["-"], "fno-unique-section-names">,
   Group<f_Group>, Flags<[CC1Option]>;
+
+def funique_internal_linkage_names : Flag <["-"], "funique-internal-linkage-names">,
+  Group<f_Group>, Flags<[CC1Option]>,
+  HelpText<"Uniqueify Internal Linkage Symbol Names by appending the MD5 hash of the module path">;
+def fno_unique_internal_linkage_names : Flag <["-"], "fno-unique-internal-linkage-names">,
+  Group<f_Group>;
 
 def fstrict_return : Flag<["-"], "fstrict-return">, Group<f_Group>,
   HelpText<"Always treat control flow paths that fall off the end of a "
@@ -3495,6 +3502,13 @@ defm func_args_alias : BooleanFFlag<"func-args-alias">, Group<gfortran_Group>,
   HelpText<"Function argument may alias (equivalent to ansi alias)">;
 defm use_flang_math_libs : BooleanFFlag<"use-flang-math-libs">, Group<gfortran_Group>,
   HelpText<"Use Flang internal runtime math library instead of LLVM math intrinsics.">;
+// AOCC Begin
+// Flang option to enable all loop vectorize pragmas: !dir$ vector/novector/ivdep
+def Menable_vectorize_pragmas_EQ : Joined<["-"], "Menable-vectorize-pragmas=">, Group<pgi_fortran_Group>,
+HelpText<"Enable loop vectorizing pragmas">, Values<"true,false">,
+Flags<[HelpHidden]>;
+// AOCC End
+
 // Flang-specific options
 multiclass BooleanKFlag<string name> {
   def _on : Flag<["-"], "K"#name>;

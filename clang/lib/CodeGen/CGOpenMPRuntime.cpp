@@ -710,6 +710,12 @@ enum OpenMPRTLFunction {
   // Call to void *__kmpc_task_reduction_get_th_data(int gtid, void *tg, void
   // *d);
   OMPRTL__kmpc_task_reduction_get_th_data,
+  // Call to void *__kmpc_taskred_modifier_init(ident_t *loc, int gtid, int
+  // is_ws, int num, void *data);
+  OMPRTL__kmpc_taskred_modifier_init,
+  // Call to void __kmpc_task_reduction_modifier_fini(ident_t *loc, int gtid,
+  // int is_ws);
+  OMPRTL__kmpc_task_reduction_modifier_fini,
   // Call to void *__kmpc_alloc(int gtid, size_t sz, omp_allocator_handle_t al);
   OMPRTL__kmpc_alloc,
   // Call to void __kmpc_free(int gtid, void *ptr, omp_allocator_handle_t al);
@@ -1020,26 +1026,25 @@ void ReductionCodeGen::emitAggregateType(CodeGenFunction &CGF, unsigned N) {
   bool AsArraySection = isa<OMPArraySectionExpr>(ClausesData[N].Ref);
   if (!PrivateType->isVariablyModifiedType()) {
     Sizes.emplace_back(
-        CGF.getTypeSize(
-            SharedAddresses[N].first.getType().getNonReferenceType()),
+        CGF.getTypeSize(OrigAddresses[N].first.getType().getNonReferenceType()),
         nullptr);
     return;
   }
   llvm::Value *Size;
   llvm::Value *SizeInChars;
-  auto *ElemType = cast<llvm::PointerType>(
-                       SharedAddresses[N].first.getPointer(CGF)->getType())
-                       ->getElementType();
+  auto *ElemType =
+      cast<llvm::PointerType>(OrigAddresses[N].first.getPointer(CGF)->getType())
+          ->getElementType();
   auto *ElemSizeOf = llvm::ConstantExpr::getSizeOf(ElemType);
   if (AsArraySection) {
-    Size = CGF.Builder.CreatePtrDiff(SharedAddresses[N].second.getPointer(CGF),
-                                     SharedAddresses[N].first.getPointer(CGF));
+    Size = CGF.Builder.CreatePtrDiff(OrigAddresses[N].second.getPointer(CGF),
+                                     OrigAddresses[N].first.getPointer(CGF));
     Size = CGF.Builder.CreateNUWAdd(
         Size, llvm::ConstantInt::get(Size->getType(), /*V=*/1));
     SizeInChars = CGF.Builder.CreateNUWMul(Size, ElemSizeOf);
   } else {
-    SizeInChars = CGF.getTypeSize(
-        SharedAddresses[N].first.getType().getNonReferenceType());
+    SizeInChars =
+        CGF.getTypeSize(OrigAddresses[N].first.getType().getNonReferenceType());
     Size = CGF.Builder.CreateExactUDiv(SizeInChars, ElemSizeOf);
   }
   Sizes.emplace_back(SizeInChars, Size);
@@ -1459,6 +1464,8 @@ static llvm::Function *emitParallelOrTeamsOutlinedFunction(
   bool HasCancel = false;
   if (const auto *OPD = dyn_cast<OMPParallelDirective>(&D))
     HasCancel = OPD->hasCancel();
+  else if (const auto *OPD = dyn_cast<OMPTargetParallelDirective>(&D))
+    HasCancel = OPD->hasCancel();
   else if (const auto *OPSD = dyn_cast<OMPParallelSectionsDirective>(&D))
     HasCancel = OPSD->hasCancel();
   else if (const auto *OPFD = dyn_cast<OMPParallelForDirective>(&D))
@@ -1605,15 +1612,6 @@ Address CGOpenMPRuntime::getOrCreateDefaultLocation(unsigned Flags) {
           CGM.GetAddrOfConstantCString(";unknown;unknown;0;0;;").getPointer();
       DefaultOpenMPPSource =
           llvm::ConstantExpr::getBitCast(DefaultOpenMPPSource, CGM.Int8PtrTy);
-
-      if (CGM.getTriple().getArch() == llvm::Triple::amdgcn) {
-        // amdgcn llc rejects static initializers containing addrspace cast (and
-        // other things)
-        // LLVM ERROR: Unsupported expression in static initializer
-        // Emitting NULL instead of the string works around this. The real fix
-        // may involve extending llc
-        DefaultOpenMPPSource = llvm::ConstantInt::getNullValue(CGM.Int8PtrTy);
-      }
     }
 
     llvm::Constant *Data[] = {
@@ -1677,9 +1675,11 @@ llvm::Value *CGOpenMPRuntime::emitUpdateLocation(CodeGenFunction &CGF,
   // OpenMPLocThreadIDMap may have null DebugLoc and non-null ThreadID, if
   // GetOpenMPThreadID was called before this routine.
   if (!LocValue.isValid()) {
-    // AMDGCN does not handle static initializers of aggregate constants.
-    if (CGM.getTriple().getArch() == llvm::Triple::amdgcn)
+   // AMDGCN does not handle static initializers of aggregate constants.
+   // compiling -g will excercise this path.
+   if (CGM.getTriple().getArch() == llvm::Triple::amdgcn)
       return getOrCreateDefaultLocation(Flags).getPointer();
+
     // Generate "ident_t .kmpc_loc.addr;"
     Address AI = CGF.CreateMemTemp(IdentQTy, ".kmpc_loc.addr");
     auto &Elem = OpenMPLocThreadIDMap.FindAndConstruct(CGF.CurFn);
@@ -2355,6 +2355,28 @@ llvm::FunctionCallee CGOpenMPRuntime::createRuntimeFunction(unsigned Function) {
         llvm::FunctionType::get(CGM.VoidPtrTy, TypeParams, /*isVarArg=*/false);
     RTLFn = CGM.CreateRuntimeFunction(
         FnTy, /*Name=*/"__kmpc_task_reduction_get_th_data");
+    break;
+  }
+  case OMPRTL__kmpc_taskred_modifier_init: {
+    // Build void *__kmpc_taskred_modifier_init(ident_t *loc, int gtid, int
+    // is_ws, int num_data, void *data);
+    llvm::Type *TypeParams[] = {getIdentTyPointerTy(), CGM.IntTy, CGM.IntTy,
+                                CGM.IntTy, CGM.VoidPtrTy};
+    auto *FnTy =
+        llvm::FunctionType::get(CGM.VoidPtrTy, TypeParams, /*isVarArg=*/false);
+    RTLFn = CGM.CreateRuntimeFunction(FnTy,
+                                      /*Name=*/"__kmpc_taskred_modifier_init");
+    break;
+  }
+  case OMPRTL__kmpc_task_reduction_modifier_fini: {
+    // Build void __kmpc_task_reduction_modifier_fini(ident_t *loc, int gtid,
+    // int is_ws);
+    llvm::Type *TypeParams[] = {getIdentTyPointerTy(), CGM.IntTy, CGM.IntTy};
+    auto *FnTy =
+        llvm::FunctionType::get(CGM.VoidTy, TypeParams, /*isVarArg=*/false);
+    RTLFn = CGM.CreateRuntimeFunction(
+        FnTy,
+        /*Name=*/"__kmpc_task_reduction_modifier_fini");
     break;
   }
   case OMPRTL__kmpc_alloc: {
@@ -6855,7 +6877,7 @@ llvm::Value *CGOpenMPRuntime::emitTaskReductionInit(
       RDType, ArraySize, nullptr, ArrayType::Normal, /*IndexTypeQuals=*/0);
   // kmp_task_red_input_t .rd_input.[Size];
   Address TaskRedInput = CGF.CreateMemTemp(ArrayRDType, ".rd_input.");
-  ReductionCodeGen RCG(Data.ReductionVars, Data.ReductionVars,
+  ReductionCodeGen RCG(Data.ReductionVars, Data.ReductionOrigs,
                        Data.ReductionCopies, Data.ReductionOps);
   for (unsigned Cnt = 0; Cnt < Size; ++Cnt) {
     // kmp_task_red_input_t &ElemLVal = .rd_input.[Cnt];
@@ -6919,6 +6941,22 @@ llvm::Value *CGOpenMPRuntime::emitTaskReductionInit(
       CGF.EmitNullInitialization(FlagsLVal.getAddress(CGF),
                                  FlagsLVal.getType());
   }
+  if (Data.IsReductionWithTaskMod) {
+    // Build call void *__kmpc_taskred_modifier_init(ident_t *loc, int gtid, int
+    // is_ws, int num, void *data);
+    llvm::Value *IdentTLoc = emitUpdateLocation(CGF, Loc);
+    llvm::Value *GTid = CGF.Builder.CreateIntCast(getThreadID(CGF, Loc),
+                                                  CGM.IntTy, /*isSigned=*/true);
+    llvm::Value *Args[] = {
+        IdentTLoc, GTid,
+        llvm::ConstantInt::get(CGM.IntTy, Data.IsWorksharingReduction ? 1 : 0,
+                               /*isSigned=*/true),
+        llvm::ConstantInt::get(CGM.IntTy, Size, /*isSigned=*/true),
+        CGF.Builder.CreatePointerBitCastOrAddrSpaceCast(
+            TaskRedInput.getPointer(), CGM.VoidPtrTy)};
+    return CGF.EmitRuntimeCall(
+        createRuntimeFunction(OMPRTL__kmpc_taskred_modifier_init), Args);
+  }
   // Build call void *__kmpc_taskred_init(int gtid, int num_data, void *data);
   llvm::Value *Args[] = {
       CGF.Builder.CreateIntCast(getThreadID(CGF, Loc), CGM.IntTy,
@@ -6928,6 +6966,22 @@ llvm::Value *CGOpenMPRuntime::emitTaskReductionInit(
                                                       CGM.VoidPtrTy)};
   return CGF.EmitRuntimeCall(createRuntimeFunction(OMPRTL__kmpc_taskred_init),
                              Args);
+}
+
+void CGOpenMPRuntime::emitTaskReductionFini(CodeGenFunction &CGF,
+                                            SourceLocation Loc,
+                                            bool IsWorksharingReduction) {
+  // Build call void *__kmpc_taskred_modifier_init(ident_t *loc, int gtid, int
+  // is_ws, int num, void *data);
+  llvm::Value *IdentTLoc = emitUpdateLocation(CGF, Loc);
+  llvm::Value *GTid = CGF.Builder.CreateIntCast(getThreadID(CGF, Loc),
+                                                CGM.IntTy, /*isSigned=*/true);
+  llvm::Value *Args[] = {IdentTLoc, GTid,
+                         llvm::ConstantInt::get(CGM.IntTy,
+                                                IsWorksharingReduction ? 1 : 0,
+                                                /*isSigned=*/true)};
+  (void)CGF.EmitRuntimeCall(
+      createRuntimeFunction(OMPRTL__kmpc_task_reduction_modifier_fini), Args);
 }
 
 void CGOpenMPRuntime::emitTaskReductionFixups(CodeGenFunction &CGF,
@@ -9840,9 +9894,6 @@ void CGOpenMPRuntime::emitTargetNumIterationsCall(
     TD = getNestedDistributeDirective(CGM.getContext(), D);
   if (!TD)
     return;
-  const std::vector<llvm::Triple> &Devices = CGM.getLangOpts().OMPTargetTriples;
-  if (Devices.empty())
-    return;
   const auto *LD = cast<OMPLoopDirective>(TD);
   auto &&CodeGen = [LD, DeviceID, SizeEmitter, this](CodeGenFunction &CGF,
                                                      PrePostActionTy &) {
@@ -10531,6 +10582,7 @@ bool CGOpenMPRuntime::hasAllocateAttributeForGlobalVar(const VarDecl *VD,
     return false;
   const auto *A = VD->getAttr<OMPAllocateDeclAttr>();
   switch(A->getAllocatorType()) {
+  case OMPAllocateDeclAttr::OMPNullMemAlloc:
   case OMPAllocateDeclAttr::OMPDefaultMemAlloc:
   // Not supported, fallback to the default mem space.
   case OMPAllocateDeclAttr::OMPLargeCapMemAlloc:
@@ -11088,7 +11140,7 @@ emitX86DeclareSimdFunction(const FunctionDecl *FD, llvm::Function *Fn,
           break;
         case Linear:
           Out << 'l';
-          if (!!ParamAttr.StrideOrArg)
+          if (ParamAttr.StrideOrArg != 1)
             Out << ParamAttr.StrideOrArg;
           break;
         case Uniform:
@@ -11165,7 +11217,7 @@ static bool getAArch64PBV(QualType QT, ASTContext &C) {
 /// as defined by `LS(P)` in 3.2.1 of the AAVFABI.
 /// TODO: Add support for references, section 3.2.1, item 1.
 static unsigned getAArch64LS(QualType QT, ParamKindTy Kind, ASTContext &C) {
-  if (getAArch64MTV(QT, Kind) && QT.getCanonicalType()->isPointerType()) {
+  if (!getAArch64MTV(QT, Kind) && QT.getCanonicalType()->isPointerType()) {
     QualType PTy = QT.getCanonicalType()->getPointeeType();
     if (getAArch64PBV(PTy, C))
       return C.getTypeSize(PTy);
@@ -11228,7 +11280,7 @@ static std::string mangleVectorParameters(ArrayRef<ParamAttrTy> ParamAttrs) {
       Out << 'l';
       // Don't print the step value if it is not present or if it is
       // equal to 1.
-      if (!!ParamAttr.StrideOrArg && ParamAttr.StrideOrArg != 1)
+      if (ParamAttr.StrideOrArg != 1)
         Out << ParamAttr.StrideOrArg;
       break;
     case Uniform:
@@ -11466,15 +11518,24 @@ void CGOpenMPRuntime::emitDeclareSimdFunction(const FunctionDecl *FD,
       for (const Expr *E : Attr->linears()) {
         E = E->IgnoreParenImpCasts();
         unsigned Pos;
+        // Rescaling factor needed to compute the linear parameter
+        // value in the mangled name.
+        unsigned PtrRescalingFactor = 1;
         if (isa<CXXThisExpr>(E)) {
           Pos = ParamPositions[FD];
         } else {
           const auto *PVD = cast<ParmVarDecl>(cast<DeclRefExpr>(E)->getDecl())
                                 ->getCanonicalDecl();
           Pos = ParamPositions[PVD];
+          if (auto *P = dyn_cast<PointerType>(PVD->getType()))
+            PtrRescalingFactor = CGM.getContext()
+                                     .getTypeSizeInChars(P->getPointeeType())
+                                     .getQuantity();
         }
         ParamAttrTy &ParamAttr = ParamAttrs[Pos];
         ParamAttr.Kind = Linear;
+        // Assuming a stride of 1, for `linear` without modifiers.
+        ParamAttr.StrideOrArg = llvm::APSInt::getUnsigned(1);
         if (*SI) {
           Expr::EvalResult Result;
           if (!(*SI)->EvaluateAsInt(Result, C, Expr::SE_AllowSideEffects)) {
@@ -11490,6 +11551,11 @@ void CGOpenMPRuntime::emitDeclareSimdFunction(const FunctionDecl *FD,
             ParamAttr.StrideOrArg = Result.Val.getInt();
           }
         }
+        // If we are using a linear clause on a pointer, we need to
+        // rescale the value of linear_step with the byte size of the
+        // pointee type.
+        if (Linear == ParamAttr.Kind)
+          ParamAttr.StrideOrArg = ParamAttr.StrideOrArg * PtrRescalingFactor;
         ++SI;
         ++MI;
       }
@@ -11713,7 +11779,8 @@ Address CGOpenMPRuntime::getAddressOfLocalVariable(CodeGenFunction &CGF,
     return Address::invalid();
   const auto *AA = CVD->getAttr<OMPAllocateDeclAttr>();
   // Use the default allocation.
-  if (AA->getAllocatorType() == OMPAllocateDeclAttr::OMPDefaultMemAlloc &&
+  if ((AA->getAllocatorType() == OMPAllocateDeclAttr::OMPDefaultMemAlloc ||
+       AA->getAllocatorType() == OMPAllocateDeclAttr::OMPNullMemAlloc) &&
       !AA->getAllocator())
     return Address::invalid();
   llvm::Value *Size;
@@ -12435,6 +12502,12 @@ void CGOpenMPSIMDRuntime::emitReduction(
 llvm::Value *CGOpenMPSIMDRuntime::emitTaskReductionInit(
     CodeGenFunction &CGF, SourceLocation Loc, ArrayRef<const Expr *> LHSExprs,
     ArrayRef<const Expr *> RHSExprs, const OMPTaskDataTy &Data) {
+  llvm_unreachable("Not supported in SIMD-only mode");
+}
+
+void CGOpenMPSIMDRuntime::emitTaskReductionFini(CodeGenFunction &CGF,
+                                                SourceLocation Loc,
+                                                bool IsWorksharingReduction) {
   llvm_unreachable("Not supported in SIMD-only mode");
 }
 

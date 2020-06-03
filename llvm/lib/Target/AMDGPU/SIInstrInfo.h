@@ -219,11 +219,26 @@ public:
                     MachineBasicBlock::iterator I, const DebugLoc &DL,
                     Register SrcReg, int Value)  const;
 
+private:
+  void storeRegToStackSlotImpl(MachineBasicBlock &MBB,
+                               MachineBasicBlock::iterator MI, Register SrcReg,
+                               bool isKill, int FrameIndex,
+                               const TargetRegisterClass *RC,
+                               const TargetRegisterInfo *TRI,
+                               bool NeedsCFI) const;
+
+public:
   void storeRegToStackSlot(MachineBasicBlock &MBB,
                            MachineBasicBlock::iterator MI, Register SrcReg,
                            bool isKill, int FrameIndex,
                            const TargetRegisterClass *RC,
                            const TargetRegisterInfo *TRI) const override;
+
+  void storeRegToStackSlotCFI(MachineBasicBlock &MBB,
+                              MachineBasicBlock::iterator MI, Register SrcReg,
+                              bool isKill, int FrameIndex,
+                              const TargetRegisterClass *RC,
+                              const TargetRegisterInfo *TRI) const;
 
   void loadRegFromStackSlot(MachineBasicBlock &MBB,
                             MachineBasicBlock::iterator MI, Register DestReg,
@@ -827,11 +842,7 @@ public:
     const MachineOperand &MO = MI.getOperand(OpNo);
     if (MO.isReg()) {
       if (unsigned SubReg = MO.getSubReg()) {
-        assert(RI.getRegSizeInBits(*RI.getSubClassWithSubReg(
-                                   MI.getParent()->getParent()->getRegInfo().
-                                     getRegClass(MO.getReg()), SubReg)) >= 32 &&
-               "Sub-dword subregs are not supported");
-        return RI.getNumChannelsFromSubReg(SubReg) * 4;
+        return RI.getSubRegIdxSize(SubReg) / 8;
       }
     }
     return RI.getRegSizeInBits(*getOpRegClass(MI, OpNo)) / 8;

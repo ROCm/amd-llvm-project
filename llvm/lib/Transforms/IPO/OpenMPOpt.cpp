@@ -34,20 +34,20 @@ using namespace types;
 static cl::opt<bool> DisableOpenMPOptimizations(
     "openmp-opt-disable", cl::ZeroOrMore,
     cl::desc("Disable OpenMP specific optimizations."), cl::Hidden,
-    cl::init(true));
-
-// Disabled for AOMP branch.
-//
-// The deduplication logic looks for a good place to insert a call. This
-// sometimes chooses the start of the entry block.
-// Said entry block contains allocas which would be handled by llc.
-// When the inserted call is to a function with multiple basic blocks, the
-// inliner splices in multiple blocks above these alloca, thus moving them
-// out of the entry block. They then cause llc to raise errors.
-//
-// The right fix is going to be adjusting the insertion point to avoid
-// disturbing alloca in the entry block.
-// The quick fix is to disable this optimisation.
+    cl::init(false));
+    // Our amdgcn llc does not properly deal with alloca placement.
+    // Disable this pass for AMDGCN only (below)
+    //
+    // The deduplication logic looks for a good place to insert a call. This
+    // sometimes chooses the start of the entry block.
+    // Said entry block contains allocas which would be handled by llc.
+    // When the inserted call is to a function with multiple basic blocks, the
+    // inliner splices in multiple blocks above these alloca, thus moving them
+    // out of the entry block. They then cause llc to raise errors.
+    //
+    // The right fix is going to be adjusting the insertion point to avoid
+    // disturbing alloca in the entry block.
+    // The quick fix is to disable this optimisation.
 
 STATISTIC(NumOpenMPRuntimeCallsDeduplicated,
           "Number of OpenMP runtime calls deduplicated");
@@ -75,7 +75,6 @@ struct OpenMPOpt {
 
   /// Generic information that describes a runtime function
   struct RuntimeFunctionInfo {
-    ~RuntimeFunctionInfo() { DeleteContainerSeconds(UsesMap); }
 
     /// The kind, as described by the RuntimeFunction enum.
     RuntimeFunction Kind;
@@ -100,16 +99,19 @@ struct OpenMPOpt {
 
     /// Return the vector of uses in function \p F.
     UseVector &getOrCreateUseVector(Function *F) {
-      UseVector *&UV = UsesMap[F];
+      std::unique_ptr<UseVector> &UV = UsesMap[F];
       if (!UV)
-        UV = new UseVector();
+        UV = std::make_unique<UseVector>();
       return *UV;
     }
 
     /// Return the vector of uses in function \p F or `nullptr` if there are
     /// none.
     const UseVector *getUseVector(Function &F) const {
-      return UsesMap.lookup(&F);
+      auto I = UsesMap.find(&F);
+      if (I != UsesMap.end())
+        return I->second.get();
+      return nullptr;
     }
 
     /// Return how many functions contain uses of this runtime function.
@@ -147,7 +149,7 @@ struct OpenMPOpt {
   private:
     /// Map from functions to all uses of this runtime function contained in
     /// them.
-    DenseMap<Function *, UseVector *> UsesMap;
+    DenseMap<Function *, std::unique_ptr<UseVector>> UsesMap;
   };
 
   /// Run all OpenMP optimizations on the underlying SCC/ModuleSlice.
@@ -545,7 +547,11 @@ private:
 PreservedAnalyses OpenMPOptPass::run(LazyCallGraph::SCC &C,
                                      CGSCCAnalysisManager &AM,
                                      LazyCallGraph &CG, CGSCCUpdateResult &UR) {
+  Module &M = *C.begin()->getFunction().getParent();
   if (!containsOpenMP(*C.begin()->getFunction().getParent(), OMPInModule))
+    return PreservedAnalyses::all();
+
+  if (M.getTargetTriple() == std::string("amdgcn-amd-amdhsa"))
     return PreservedAnalyses::all();
 
   if (DisableOpenMPOptimizations)
@@ -592,7 +598,10 @@ struct OpenMPOptLegacyPass : public CallGraphSCCPass {
   }
 
   bool runOnSCC(CallGraphSCC &CGSCC) override {
-    if (!containsOpenMP(CGSCC.getCallGraph().getModule(), OMPInModule))
+    Module &M = CGSCC.getCallGraph().getModule();
+    if (!containsOpenMP(M, OMPInModule))
+      return false;
+    if (M.getTargetTriple() == std::string("amdgcn-amd-amdhsa"))
       return false;
     if (DisableOpenMPOptimizations || skipSCC(CGSCC))
       return false;
