@@ -686,6 +686,9 @@ namespace serialization {
 
       /// Record code for the Decls to be checked for deferred diags.
       DECLS_TO_CHECK_FOR_DEFERRED_DIAGS = 64,
+
+      /// Record code for \#pragma float_control options.
+      FLOAT_CONTROL_PRAGMA_OPTIONS = 65,
     };
 
     /// Record types used within a source manager block.
@@ -1054,7 +1057,10 @@ namespace serialization {
       /// The placeholder type for OpenMP iterator expression.
       PREDEF_TYPE_OMP_ITERATOR = 71,
 
-      /// OpenCL image types with auto numeration
+      /// A placeholder type for incomplete matrix index operations.
+      PREDEF_TYPE_INCOMPLETE_MATRIX_IDX = 72,
+
+    /// OpenCL image types with auto numeration
 #define IMAGE_TYPE(ImgType, Id, SingletonId, Access, Suffix) \
       PREDEF_TYPE_##Id##_ID,
 #include "clang/Basic/OpenCLImageTypes.def"
@@ -1594,6 +1600,9 @@ namespace serialization {
       /// An ArraySubscriptExpr record.
       EXPR_ARRAY_SUBSCRIPT,
 
+      /// An MatrixSubscriptExpr record.
+      EXPR_MATRIX_SUBSCRIPT,
+
       /// A CallExpr record.
       EXPR_CALL,
 
@@ -1787,6 +1796,9 @@ namespace serialization {
 
       /// A CXXConstCastExpr record.
       EXPR_CXX_CONST_CAST,
+
+      /// A CXXAddrspaceCastExpr record.
+      EXPR_CXX_ADDRSPACE_CAST,
 
       /// A CXXFunctionalCastExpr record.
       EXPR_CXX_FUNCTIONAL_CAST,

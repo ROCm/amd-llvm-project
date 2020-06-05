@@ -346,7 +346,7 @@ static Address castValueFromUintptr(CodeGenFunction &CGF, SourceLocation Loc,
   ASTContext &Ctx = CGF.getContext();
 
   Address Addr = AddrLV.getAddress(CGF);
-  if (Ctx.getTargetInfo().getTriple().getArch() == llvm::Triple::amdgcn &&
+  if (Ctx.getTargetInfo().getTriple().isAMDGCN() &&
       CGF.CGM.getLangOpts().OpenMPIsDevice) {
     auto *Ty = CGF.ConvertType(Ctx.getPointerType(DstType));
     auto *PTy = dyn_cast<llvm::PointerType>(Ty);
@@ -465,7 +465,7 @@ static llvm::Function *emitOutlinedFunctionPrologue(
 
     // Set the IPD QualType for kernel args to be in device AS (1)
     if (CapVar && CGM.getLangOpts().OpenMPIsDevice && argsNeedAddrSpace &&
-        (Ctx.getTargetInfo().getTriple().getArch() == llvm::Triple::amdgcn)) {
+        (Ctx.getTargetInfo().getTriple().isAMDGCN())) {
       const clang::Type *ty = ArgType.getTypePtr();
       if (ty->isAnyPointerType() || ty->isReferenceType()) {
         clang::LangAS LLVM_AS = CapVar->getType().getAddressSpace();
@@ -503,7 +503,7 @@ static llvm::Function *emitOutlinedFunctionPrologue(
 
   SmallVector<CanQualType, 16> argCanQualTypes;
   if (CGM.getLangOpts().OpenMPIsDevice && argsNeedAddrSpace &&
-      (Ctx.getTargetInfo().getTriple().getArch() == llvm::Triple::amdgcn)) {
+      (Ctx.getTargetInfo().getTriple().isAMDGCN())) {
     // We need Canonical Param Types WITH addrspace qualifier
     for (const auto &Arg : TargetArgs) {
       clang::LangAS address_space = Arg->getType().getAddressSpace();
@@ -519,7 +519,7 @@ static llvm::Function *emitOutlinedFunctionPrologue(
   // Create the function declaration.
   const CGFunctionInfo &FuncInfo =
       (CGM.getLangOpts().OpenMPIsDevice && argsNeedAddrSpace &&
-       (Ctx.getTargetInfo().getTriple().getArch() == llvm::Triple::amdgcn))
+       (Ctx.getTargetInfo().getTriple().isAMDGCN()))
           ? CGM.getTypes().arrangeLLVMFunctionInfo(
                 Ctx.VoidTy, false, false, argCanQualTypes,
                 FunctionType::ExtInfo(), {}, RequiredArgs::All)
@@ -629,7 +629,7 @@ CodeGenFunction::GenerateOpenMPCapturedStmtFunction(const CapturedStmt &S,
   llvm::MapVector<const Decl *, std::pair<const VarDecl *, Address>> LocalAddrs;
   llvm::DenseMap<const Decl *, std::pair<const Expr *, llvm::Value *>> VLASizes;
   // AMDGCN does not generate wrapper kernels properly, fails to launch kernel.
-  if (CGM.getTriple().getArch() == llvm::Triple::amdgcn)
+  if (CGM.getTriple().isAMDGCN())
     NeedWrapperFunction = false;
   SmallString<256> Buffer;
   llvm::raw_svector_ostream Out(Buffer);
@@ -642,7 +642,7 @@ CodeGenFunction::GenerateOpenMPCapturedStmtFunction(const CapturedStmt &S,
   llvm::Function *F = emitOutlinedFunctionPrologue(
       *this, Args, LocalAddrs, VLASizes, CXXThisValue, FO, isKernel);
   CodeGenFunction::OMPPrivateScope LocalScope(*this);
-  if ((CGM.getTriple().getArch() == llvm::Triple::amdgcn) && isKernel)
+  if ((CGM.getTriple().isAMDGCN()) && isKernel)
     F->setCallingConv(llvm::CallingConv::AMDGPU_KERNEL);
   for (const auto &LocalAddrPair : LocalAddrs) {
     if (LocalAddrPair.second.first) {
@@ -677,7 +677,7 @@ CodeGenFunction::GenerateOpenMPCapturedStmtFunction(const CapturedStmt &S,
   llvm::Function *WrapperF = emitOutlinedFunctionPrologue(
       WrapperCGF, Args, LocalAddrs, VLASizes, WrapperCGF.CXXThisValue,
       WrapperFO, isKernel);
-  if ((CGM.getTriple().getArch() == llvm::Triple::amdgcn) && isKernel)
+  if ((CGM.getTriple().isAMDGCN()) && isKernel)
     WrapperF->setCallingConv(llvm::CallingConv::AMDGPU_KERNEL);
 
   llvm::SmallVector<llvm::Value *, 4> CallArgs;
@@ -1198,7 +1198,7 @@ void CodeGenFunction::EmitOMPLastprivateClauseFinal(
         if (const auto *RefTy = PrivateVD->getType()->getAs<ReferenceType>())
           PrivateAddr =
               Address(Builder.CreateLoad(PrivateAddr),
-                      getNaturalTypeAlignment(RefTy->getPointeeType()));
+                      CGM.getNaturalTypeAlignment(RefTy->getPointeeType()));
         // Store the last value to the private copy in the last iteration.
         if (C->getKind() == OMPC_LASTPRIVATE_conditional)
           CGM.getOpenMPRuntime().emitLastprivateConditionalFinalUpdate(
@@ -1790,8 +1790,19 @@ void CodeGenFunction::EmitOMPInnerLoop(
   auto CondBlock = createBasicBlock("omp.inner.for.cond");
   EmitBlock(CondBlock);
   const SourceRange R = S.getSourceRange();
-  LoopStack.push(CondBlock, SourceLocToDebugLoc(R.getBegin()),
-                 SourceLocToDebugLoc(R.getEnd()));
+
+  // If attributes are attached, push to the basic block with them.
+  const auto &OMPED = cast<OMPExecutableDirective>(S);
+  const CapturedStmt *ICS = OMPED.getInnermostCapturedStmt();
+  const Stmt *SS = ICS->getCapturedStmt();
+  const AttributedStmt *AS = dyn_cast_or_null<AttributedStmt>(SS);
+  if (AS)
+    LoopStack.push(CondBlock, CGM.getContext(), CGM.getCodeGenOpts(),
+                   AS->getAttrs(), SourceLocToDebugLoc(R.getBegin()),
+                   SourceLocToDebugLoc(R.getEnd()));
+  else
+    LoopStack.push(CondBlock, SourceLocToDebugLoc(R.getBegin()),
+                   SourceLocToDebugLoc(R.getEnd()));
 
   // If there are any cleanups between here and the loop-exit scope,
   // create a block to stage a loop exit along.
@@ -3115,8 +3126,9 @@ void CodeGenFunction::EmitSections(const OMPExecutableDirective &S) {
         C, &IVRefExpr, &UBRefExpr, BO_LE, C.BoolTy, VK_RValue, OK_Ordinary,
         S.getBeginLoc(), FPOptions(C.getLangOpts()));
     // Increment for loop counter.
-    UnaryOperator Inc(&IVRefExpr, UO_PreInc, KmpInt32Ty, VK_RValue, OK_Ordinary,
-                      S.getBeginLoc(), true);
+    UnaryOperator *Inc = UnaryOperator::Create(
+        C, &IVRefExpr, UO_PreInc, KmpInt32Ty, VK_RValue, OK_Ordinary,
+        S.getBeginLoc(), true, FPOptions(C.getLangOpts()));
     auto &&BodyGen = [CapturedStmt, CS, &S, &IV](CodeGenFunction &CGF) {
       // Iterate through all sections and emit a switch construct:
       // switch (IV) {
@@ -3186,7 +3198,7 @@ void CodeGenFunction::EmitSections(const OMPExecutableDirective &S) {
     // IV = LB;
     CGF.EmitStoreOfScalar(CGF.EmitLoadOfScalar(LB, S.getBeginLoc()), IV);
     // while (idx <= UB) { BODY; ++idx; }
-    CGF.EmitOMPInnerLoop(S, /*RequiresCleanup=*/false, Cond, &Inc, BodyGen,
+    CGF.EmitOMPInnerLoop(S, /*RequiresCleanup=*/false, Cond, Inc, BodyGen,
                          [](CodeGenFunction &) {});
     // Tell the runtime we are done.
     auto &&CodeGen = [&S](CodeGenFunction &CGF) {
@@ -4778,6 +4790,7 @@ static void emitOMPAtomicExpr(CodeGenFunction &CGF, OpenMPClauseKind Kind,
   case OMPC_to:
   case OMPC_from:
   case OMPC_use_device_ptr:
+  case OMPC_use_device_addr:
   case OMPC_is_device_ptr:
   case OMPC_unified_address:
   case OMPC_unified_shared_memory:
@@ -4793,6 +4806,7 @@ static void emitOMPAtomicExpr(CodeGenFunction &CGF, OpenMPClauseKind Kind,
   case OMPC_inclusive:
   case OMPC_exclusive:
   case OMPC_uses_allocators:
+  case OMPC_affinity:
     llvm_unreachable("Clause is not allowed in 'omp atomic'.");
   }
 }

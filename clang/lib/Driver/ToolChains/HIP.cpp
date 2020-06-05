@@ -409,6 +409,7 @@ void HIPToolChain::addClangTargetOptions(
           DeviceOffloadingKind == Action::OFK_OpenMP) &&
          "Only HIP offloading kinds are supported for GPUs.");
   auto Kind = llvm::AMDGPU::parseArchAMDGCN(GpuArch);
+  const StringRef CanonArch = llvm::AMDGPU::getArchNameAMDGCN(Kind);
 
   CC1Args.push_back("-target-cpu");
   CC1Args.push_back(DriverArgs.MakeArgStringRef(GpuArch));
@@ -445,6 +446,7 @@ void HIPToolChain::addClangTargetOptions(
 
   addDirectoryList(DriverArgs, LibraryPaths, "", "HIP_DEVICE_LIB_PATH");
 
+#if 1
   if (DeviceOffloadingKind == Action::OFK_OpenMP) {
     // If device debugging turned on, add specially built bc files
     std::string lib_debug_path = FindDebugInLibraryPath();
@@ -463,45 +465,51 @@ void HIPToolChain::addClangTargetOptions(
       DriverArgs.MakeArgString(getDriver().Dir + "/../../lib/libdevice"));
   LibraryPaths.push_back(DriverArgs.MakeArgString(getDriver().Dir + "/../../lib"));
 
-  llvm::SmallVector<std::string, 10> BCLibs;
+#endif
+  // Maintain compatability with --hip-device-lib.
+  auto BCLibs = DriverArgs.getAllArgValues(options::OPT_hip_device_lib_EQ);
+  if (!BCLibs.empty()) {
+    for (auto Lib : BCLibs)
+      addBCLib(getDriver(), DriverArgs, CC1Args, LibraryPaths, Lib, true);
+  } else {
+    if (!RocmInstallation.isValid()) {
+      getDriver().Diag(diag::err_drv_no_rocm_installation);
+      return;
+    }
 
-  // Add bitcode library in --hip-device-lib.
-  for (auto Lib : DriverArgs.getAllArgValues(options::OPT_hip_device_lib_EQ)) {
-    BCLibs.push_back(DriverArgs.MakeArgString(Lib));
+    std::string LibDeviceFile = RocmInstallation.getLibDeviceFile(CanonArch);
+    if (LibDeviceFile.empty()) {
+      getDriver().Diag(diag::err_drv_no_rocm_device_lib) << GpuArch;
+      return;
+    }
+
+    // If --hip-device-lib is not set, add the default bitcode libraries.
+    // TODO: There are way too many flags that change this. Do we need to check
+    // them all?
+    bool DAZ = DriverArgs.hasFlag(options::OPT_fcuda_flush_denormals_to_zero,
+                                  options::OPT_fno_cuda_flush_denormals_to_zero,
+                                  getDefaultDenormsAreZeroForTarget(Kind));
+    // TODO: Check standard C++ flags?
+    bool FiniteOnly = false;
+    bool UnsafeMathOpt = false;
+    bool FastRelaxedMath = false;
+    bool CorrectSqrt = true;
+    bool Wave64 = isWave64(DriverArgs, Kind);
+
+    // Add the HIP specific bitcode library.
+    CC1Args.push_back("-mlink-builtin-bitcode");
+    CC1Args.push_back(DriverArgs.MakeArgString(RocmInstallation.getHIPPath()));
+
+    // Add the generic set of libraries.
+    RocmInstallation.addCommonBitcodeLibCC1Args(
+      DriverArgs, CC1Args, LibDeviceFile, Wave64, DAZ, FiniteOnly,
+      UnsafeMathOpt, FastRelaxedMath, CorrectSqrt);
   }
-
-  // If --hip-device-lib is not set, add the default bitcode libraries.
-  if (BCLibs.empty()) {
-    // Get the bc lib file name for ISA version. For example,
-    // gfx803 => oclc_isa_version_803.amdgcn.bc.
-    std::string GFXVersion = GpuArch.drop_front(3).str();
-    std::string ISAVerBC = "oclc_isa_version_" + GFXVersion + ".amdgcn.bc";
-
-    bool FTZDAZ = DriverArgs.hasFlag(
-      options::OPT_fcuda_flush_denormals_to_zero,
-      options::OPT_fno_cuda_flush_denormals_to_zero,
-      getDefaultDenormsAreZeroForTarget(Kind));
-
-    std::string FlushDenormalControlBC = FTZDAZ ?
-      "oclc_daz_opt_on.amdgcn.bc" :
-      "oclc_daz_opt_off.amdgcn.bc";
-
-    llvm::StringRef WaveFrontSizeBC;
-    if (stoi(GFXVersion) < 1000)
-      WaveFrontSizeBC = "oclc_wavefrontsize64_on.amdgcn.bc";
-    else
-      WaveFrontSizeBC = "oclc_wavefrontsize64_off.amdgcn.bc";
-
-    BCLibs.append({"hip.amdgcn.bc", "ocml.amdgcn.bc", "ockl.amdgcn.bc",
-                   "oclc_finite_only_off.amdgcn.bc",
-                   FlushDenormalControlBC,
-                   "oclc_correctly_rounded_sqrt_on.amdgcn.bc",
-                   "oclc_unsafe_math_off.amdgcn.bc", ISAVerBC,
-                   std::string(WaveFrontSizeBC)});
-  }
+#if 0
   for (auto Lib : BCLibs)
     addBCLib(getDriver(), DriverArgs, CC1Args, LibraryPaths, Lib,
              /* PostClang Link? */ true);
+#endif
 }
 
 llvm::opt::DerivedArgList *

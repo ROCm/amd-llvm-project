@@ -3662,9 +3662,10 @@ static unsigned getLoadStoreRegOpcode(unsigned Reg,
   }
 }
 
-bool X86InstrInfo::getMemOperandsWithOffset(
+bool X86InstrInfo::getMemOperandsWithOffsetWidth(
     const MachineInstr &MemOp, SmallVectorImpl<const MachineOperand *> &BaseOps,
-    int64_t &Offset, bool &OffsetIsScalable, const TargetRegisterInfo *TRI) const {
+    int64_t &Offset, bool &OffsetIsScalable, unsigned &Width,
+    const TargetRegisterInfo *TRI) const {
   const MCInstrDesc &Desc = MemOp.getDesc();
   int MemRefBegin = X86II::getMemoryOperandNo(Desc.TSFlags);
   if (MemRefBegin < 0)
@@ -3696,6 +3697,11 @@ bool X86InstrInfo::getMemOperandsWithOffset(
     return false;
 
   OffsetIsScalable = false;
+  // FIXME: Relying on memoperands() may not be right thing to do here. Check
+  // with X86 maintainers, and fix it accordingly. For now, it is ok, since
+  // there is no use of `Width` for X86 back-end at the moment.
+  Width =
+      !MemOp.memoperands_empty() ? MemOp.memoperands().front()->getSize() : 0;
   BaseOps.push_back(BaseOp);
   return true;
 }
@@ -4838,6 +4844,13 @@ static bool hasUndefRegUpdate(unsigned Opcode, unsigned OpNum,
                               bool ForLoadFold = false) {
   // Set the OpNum parameter to the first source operand.
   switch (Opcode) {
+  case X86::MMX_PUNPCKHBWirr:
+  case X86::MMX_PUNPCKHWDirr:
+  case X86::MMX_PUNPCKHDQirr:
+  case X86::MMX_PUNPCKLBWirr:
+  case X86::MMX_PUNPCKLWDirr:
+  case X86::MMX_PUNPCKLDQirr:
+  case X86::MOVHLPSrr:
   case X86::PACKSSWBrr:
   case X86::PACKUSWBrr:
   case X86::PACKSSDWrr:
@@ -4850,6 +4863,8 @@ static bool hasUndefRegUpdate(unsigned Opcode, unsigned OpNum,
   case X86::PUNPCKLDQrr:
   case X86::PUNPCKHQDQrr:
   case X86::PUNPCKLQDQrr:
+  case X86::SHUFPDrri:
+  case X86::SHUFPSrri:
     // These instructions are sometimes used with an undef first or second
     // source. Return true here so BreakFalseDeps will assign this source to the
     // same register as the first source to avoid a false dependency.
@@ -4857,6 +4872,8 @@ static bool hasUndefRegUpdate(unsigned Opcode, unsigned OpNum,
     // VEX counterparts.
     return OpNum == 2 && !ForLoadFold;
 
+  case X86::VMOVLHPSrr:
+  case X86::VMOVLHPSZrr:
   case X86::VPACKSSWBrr:
   case X86::VPACKUSWBrr:
   case X86::VPACKSSDWrr:
@@ -4865,6 +4882,16 @@ static bool hasUndefRegUpdate(unsigned Opcode, unsigned OpNum,
   case X86::VPACKUSWBZ128rr:
   case X86::VPACKSSDWZ128rr:
   case X86::VPACKUSDWZ128rr:
+  case X86::VPERM2F128rr:
+  case X86::VPERM2I128rr:
+  case X86::VSHUFF32X4Z256rri:
+  case X86::VSHUFF32X4Zrri:
+  case X86::VSHUFF64X2Z256rri:
+  case X86::VSHUFF64X2Zrri:
+  case X86::VSHUFI32X4Z256rri:
+  case X86::VSHUFI32X4Zrri:
+  case X86::VSHUFI64X2Z256rri:
+  case X86::VSHUFI64X2Zrri:
   case X86::VPUNPCKHBWrr:
   case X86::VPUNPCKLBWrr:
   case X86::VPUNPCKHBWYrr:
@@ -5978,21 +6005,25 @@ MachineInstr *X86InstrInfo::foldMemoryOperandImpl(
     else if (Opc == X86::FsFLD0F128 || Opc == X86::AVX512_FsFLD0F128)
       Ty = Type::getFP128Ty(MF.getFunction().getContext());
     else if (Opc == X86::AVX512_512_SET0 || Opc == X86::AVX512_512_SETALLONES)
-      Ty = VectorType::get(Type::getInt32Ty(MF.getFunction().getContext()),16);
+      Ty = FixedVectorType::get(Type::getInt32Ty(MF.getFunction().getContext()),
+                                16);
     else if (Opc == X86::AVX2_SETALLONES || Opc == X86::AVX_SET0 ||
              Opc == X86::AVX512_256_SET0 || Opc == X86::AVX1_SETALLONES)
-      Ty = VectorType::get(Type::getInt32Ty(MF.getFunction().getContext()), 8);
+      Ty = FixedVectorType::get(Type::getInt32Ty(MF.getFunction().getContext()),
+                                8);
     else if (Opc == X86::MMX_SET0)
-      Ty = VectorType::get(Type::getInt32Ty(MF.getFunction().getContext()), 2);
+      Ty = FixedVectorType::get(Type::getInt32Ty(MF.getFunction().getContext()),
+                                2);
     else
-      Ty = VectorType::get(Type::getInt32Ty(MF.getFunction().getContext()), 4);
+      Ty = FixedVectorType::get(Type::getInt32Ty(MF.getFunction().getContext()),
+                                4);
 
     bool IsAllOnes = (Opc == X86::V_SETALLONES || Opc == X86::AVX2_SETALLONES ||
                       Opc == X86::AVX512_512_SETALLONES ||
                       Opc == X86::AVX1_SETALLONES);
     const Constant *C = IsAllOnes ? Constant::getAllOnesValue(Ty) :
                                     Constant::getNullValue(Ty);
-    unsigned CPI = MCP.getConstantPoolIndex(C, Alignment.value());
+    unsigned CPI = MCP.getConstantPoolIndex(C, Alignment);
 
     // Create operands to load from the constant pool entry.
     MOs.push_back(MachineOperand::CreateReg(PICBase, false));

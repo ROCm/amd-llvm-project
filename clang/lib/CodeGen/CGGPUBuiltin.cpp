@@ -125,7 +125,7 @@ CodeGenFunction::EmitNVPTXDevicePrintfCallExpr(const CallExpr *E,
 RValue
 CodeGenFunction::EmitAMDGPUDevicePrintfCallExpr(const CallExpr *E,
                                                 ReturnValueSlot ReturnValue) {
-  assert(getTarget().getTriple().getArch() == llvm::Triple::amdgcn);
+  assert(getTarget().getTriple().isAMDGCN());
   assert(E->getBuiltinCallee() == Builtin::BIprintf ||
          E->getBuiltinCallee() == Builtin::BI__builtin_printf);
   assert(E->getNumArgs() >= 1); // printf always has at least one arg.
@@ -155,8 +155,8 @@ CodeGenFunction::EmitAMDGPUDevicePrintfCallExpr(const CallExpr *E,
   return RValue::get(Printf);
 }
 
-// For amdgcn, we build a struct of numerics where string pointers
-// are converted to their lengths and then all the strings are
+// For printf in OpenMP on amdgcn, we build a struct of numerics where string
+// pointers are converted to their lengths and then all the strings are
 // written after the struct. We write the length of the numerics struct
 // in the first eelement of the struct. For example
 //
@@ -185,32 +185,32 @@ CodeGenFunction::EmitAMDGPUDevicePrintfCallExpr(const CallExpr *E,
 // It does this by using the length of the format string. Subsequent strings
 // will be found by using previous string lengths.
 
-static llvm::Function *GetHipPrintfAllocDeclaration(CodeGenModule &CGM) {
+static llvm::Function *GetOmpPrintfAllocDeclaration(CodeGenModule &CGM) {
   auto &M = CGM.getModule();
   llvm::Type *ArgTypes[] = {CGM.Int32Ty};
-  llvm::FunctionType *HipPrintfAllocFuncType = llvm::FunctionType::get(
+  llvm::FunctionType *OmpPrintfAllocFuncType = llvm::FunctionType::get(
       llvm::PointerType::getUnqual(CGM.Int8Ty), ArgTypes, false);
   if (auto *F = M.getFunction("printf_alloc")) {
-    assert(F->getFunctionType() == HipPrintfAllocFuncType);
+    assert(F->getFunctionType() == OmpPrintfAllocFuncType);
     return F;
   }
   llvm::Function *FN = llvm::Function::Create(
-      HipPrintfAllocFuncType, llvm::GlobalVariable::ExternalLinkage,
+      OmpPrintfAllocFuncType, llvm::GlobalVariable::ExternalLinkage,
       "printf_alloc", &M);
   return FN;
 }
-static llvm::Function *GetHipPrintfExecuteDeclaration(CodeGenModule &CGM) {
+static llvm::Function *GetOmpPrintfExecuteDeclaration(CodeGenModule &CGM) {
   auto &M = CGM.getModule();
   llvm::Type *ArgTypes[] = {llvm::PointerType::getUnqual(CGM.Int8Ty),
                             CGM.Int32Ty};
-  llvm::FunctionType *HipPrintfExecuteFuncType =
+  llvm::FunctionType *OmpPrintfExecuteFuncType =
       llvm::FunctionType::get(CGM.Int32Ty, ArgTypes, false);
   if (auto *F = M.getFunction("printf_execute")) {
-    assert(F->getFunctionType() == HipPrintfExecuteFuncType);
+    assert(F->getFunctionType() == OmpPrintfExecuteFuncType);
     return F;
   }
   llvm::Function *FN = llvm::Function::Create(
-      HipPrintfExecuteFuncType, llvm::GlobalVariable::ExternalLinkage,
+      OmpPrintfExecuteFuncType, llvm::GlobalVariable::ExternalLinkage,
       "printf_execute", &M);
   return FN;
 }
@@ -267,7 +267,7 @@ static const StringLiteral *getSL(const clang::Expr *argX,
 
 RValue CodeGenFunction::EmitAMDGPUDevicePrintfCallExprOMP(
     const CallExpr *E, ReturnValueSlot ReturnValue) {
-  assert(getTarget().getTriple().getArch() == llvm::Triple::amdgcn);
+  assert(getTarget().getTriple().isAMDGCN());
   assert(E->getBuiltinCallee() == Builtin::BIprintf);
   assert(E->getNumArgs() >= 1); // printf always has at least one arg.
 
@@ -343,7 +343,7 @@ RValue CodeGenFunction::EmitAMDGPUDevicePrintfCallExprOMP(
           : llvm::ConstantInt::get(Int32Ty, AllStringsLen_CT + DataLen_CT);
 
   llvm::Value *DataStructPtr =
-      Builder.CreateCall(GetHipPrintfAllocDeclaration(CGM), {BufferLen});
+      Builder.CreateCall(GetOmpPrintfAllocDeclaration(CGM), {BufferLen});
 
   // cast the generic return pointer to be a struct in device global memory
   llvm::StructType *DataStructTy =
@@ -427,6 +427,6 @@ RValue CodeGenFunction::EmitAMDGPUDevicePrintfCallExprOMP(
       }
     }
   }
-  return RValue::get(Builder.CreateCall(GetHipPrintfExecuteDeclaration(CGM),
+  return RValue::get(Builder.CreateCall(GetOmpPrintfExecuteDeclaration(CGM),
                                         {DataStructPtr, BufferLen}));
 }

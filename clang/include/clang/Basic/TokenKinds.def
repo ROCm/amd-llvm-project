@@ -574,11 +574,12 @@ KEYWORD(__builtin_astype            , KEYOPENCLC | KEYOPENCLCXX)
 KEYWORD(vec_step                    , KEYOPENCLC | KEYALTIVEC | KEYZVECTOR)
 #define GENERIC_IMAGE_TYPE(ImgType, Id) KEYWORD(ImgType##_t, KEYOPENCLC | KEYOPENCLCXX)
 #include "clang/Basic/OpenCLImageTypes.def"
+KEYWORD(pipe                        , KEYOPENCLC | KEYOPENCLCXX)
+// C++ for OpenCL s2.3.1: addrspace_cast operator
+KEYWORD(addrspace_cast              , KEYOPENCLCXX)
 
 // OpenMP Type Traits
 KEYWORD(__builtin_omp_required_simd_align, KEYALL)
-
-KEYWORD(pipe                        , KEYOPENCLC | KEYOPENCLCXX)
 
 // Borland Extensions.
 KEYWORD(__pascal                    , KEYALL)
@@ -808,6 +809,11 @@ PRAGMA_ANNOTATION(pragma_fp_contract)
 // The lexer produces these so that they only take effect when the parser
 // handles them.
 PRAGMA_ANNOTATION(pragma_fenv_access)
+
+// Annotation for #pragma float_control
+// The lexer produces these so that they only take effect when the parser
+// handles them.
+PRAGMA_ANNOTATION(pragma_float_control)
 
 // Annotation for #pragma pointers_to_members...
 // The lexer produces these so that they only take effect when the parser

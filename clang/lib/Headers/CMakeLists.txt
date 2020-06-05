@@ -47,6 +47,7 @@ set(files
   __clang_cuda_runtime_wrapper.h
   __clang_openmp_runtime_wrapper.h
   cetintrin.h
+  cet.h
   cldemoteintrin.h
   clzerointrin.h
   cpuid.h

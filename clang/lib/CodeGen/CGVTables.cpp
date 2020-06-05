@@ -683,7 +683,7 @@ void CodeGenVTables::addVTableComponent(
       // otherwise linking ends up with unresolved references.
       if (CGM.getLangOpts().OpenMP && CGM.getLangOpts().OpenMPIsDevice &&
           (CGM.getTriple().isNVPTX() ||
-           (CGM.getTriple().getArch() == llvm::Triple::amdgcn)))
+           (CGM.getTriple().isAMDGCN())))
         return llvm::ConstantPointerNull::get(CGM.Int8PtrTy);
       llvm::FunctionType *fnTy =
           llvm::FunctionType::get(CGM.VoidTy, /*isVarArg=*/false);
