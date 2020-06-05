@@ -514,6 +514,9 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back(Args.MakeArgString("-L" + D.Dir + "/../lib"));
     CmdArgs.push_back(Args.MakeArgString("-L" + D.Dir + "/../../lib"));
   }
+  //FIXME: Added to resolve hip libraries for files that have no offloading for the ROCm AOMP build. This is no longer needed if clang is called from one directory higher than current AOMP setup aomp/bin.
+  CmdArgs.push_back(Args.MakeArgString("-L" + D.Dir + "/../../lib"));
+
   Args.AddAllArgs(CmdArgs, options::OPT_L);
   Args.AddAllArgs(CmdArgs, options::OPT_u);
 
