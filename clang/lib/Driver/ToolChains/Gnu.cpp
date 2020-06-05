@@ -514,6 +514,9 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back(Args.MakeArgString("-L" + D.Dir + "/../lib"));
     CmdArgs.push_back(Args.MakeArgString("-L" + D.Dir + "/../../lib"));
   }
+  //FIXME: This is no longer needed once AOMP is unified
+  CmdArgs.push_back(Args.MakeArgString("-L" + D.Dir + "/../../lib"));
+
   Args.AddAllArgs(CmdArgs, options::OPT_L);
   Args.AddAllArgs(CmdArgs, options::OPT_u);
 
