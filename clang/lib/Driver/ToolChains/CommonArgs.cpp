@@ -1511,7 +1511,6 @@ void tools::addMultilibFlag(bool Enabled, const char *const Flag,
   Flags.push_back(std::string(Enabled ? "+" : "-") + Flag);
 }
 
-#if 0
 /// SDLSearch: Search for Static Device Library
 bool tools::SDLSearch(const Driver &D, const llvm::opt::ArgList &DriverArgs,
                       llvm::opt::ArgStringList &CC1Args,
@@ -1735,7 +1734,8 @@ void tools::AddStaticDeviceLibs(Compilation *C, const Tool *T,
     llvm::sys::path::append(P, "/include/__clang_openmp_runtime_wrapper.h");
     CC1Args.push_back(DriverArgs.MakeArgString(P));
   }
-#else
+}
+
 void tools::addX86AlignBranchArgs(const Driver &D, const ArgList &Args,
                                   ArgStringList &CmdArgs, bool IsLTO) {
   auto addArg = [&, IsLTO](const Twine &Arg) {
@@ -1784,5 +1784,4 @@ void tools::addX86AlignBranchArgs(const Driver &D, const ArgList &Args,
       addArg("-x86-pad-max-prefix-size=" + Twine(PrefixSize));
     }
   }
-#endif
 }

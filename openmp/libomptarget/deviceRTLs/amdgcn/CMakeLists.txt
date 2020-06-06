@@ -110,6 +110,7 @@ macro(add_cuda_bc_library)
   set(cu_cmd ${AOMP_BINDIR}/clang++
     -std=c++14
     -fcuda-rdc
+    --rocm-path=${ROCM_DIR}
     -fvisibility=default
     --cuda-device-only
     -Wno-unused-value
