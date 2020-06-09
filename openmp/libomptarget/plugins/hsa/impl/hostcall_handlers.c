@@ -1,12 +1,12 @@
- 
-/*   
+
+/*
  *   hostcall_handlers.c:  These are the services for the hostcall system
  *
  *   Written by Greg Rodgers
 
 MIT License
 
-Copyright © 2019 Advanced Micro Devices, Inc.
+Copyright © 2020 Advanced Micro Devices, Inc.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -29,18 +29,58 @@ SOFTWARE.
 */
 
 #include "../../../src/hostrpc_service_id.h"
-#include "amd_hostcall.h"
+#include "amd_hostcall.h" // Only needed for amd_hostcall_consumer_t
 #include "atmi_runtime.h"
+#include "hostrpc.h"
 #include "hsa/hsa_ext_amd.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 void handler_HOSTCALL_SERVICE_PRINTF(void *cbdata, uint32_t service, uint64_t *payload) {
     size_t bufsz          = (size_t) payload[0];
     char* device_buffer   = (char*) payload[1];
-    amd_hostcall_error_t err = hostcall_printf(device_buffer,bufsz);
-    payload[0] = (uint64_t) err;
+    uint uint_value;
+    hostrpc_status_t rc = hostrpc_printf(device_buffer, bufsz, &uint_value);
+    payload[0] = (uint64_t)uint_value; // what the printf returns
+    payload[1] = (uint64_t)rc;         // Any errors in the service function
     atmi_free(device_buffer);
+}
+
+void handler_HOSTCALL_SERVICE_VARFNUINT(void *cbdata, uint32_t service,
+                                        uint64_t *payload) {
+  size_t bufsz = (size_t)payload[0];
+  char *device_buffer = (char *)payload[1];
+  uint uint_value;
+  hostrpc_status_t rc = hostrpc_varfn_uint_(device_buffer, bufsz, &uint_value);
+  payload[0] = (uint64_t)uint_value; // What the vargs function pointer returns
+  payload[1] = (uint64_t)rc;         // any errors in the service function
+  atmi_free(device_buffer);
+}
+
+void handler_HOSTCALL_SERVICE_VARFNUINT64(void *cbdata, uint32_t service,
+                                          uint64_t *payload) {
+  size_t bufsz = (size_t)payload[0];
+  char *device_buffer = (char *)payload[1];
+  uint64_t uint64_value;
+  hostrpc_status_t rc =
+      hostrpc_varfn_uint64_(device_buffer, bufsz, &uint64_value);
+  payload[0] =
+      (uint64_t)uint64_value; // What the vargs function pointer returns
+  payload[1] = (uint64_t)rc;  // any errors in the service function
+  atmi_free(device_buffer);
+}
+
+void handler_HOSTCALL_SERVICE_VARFNDOUBLE(void *cbdata, uint32_t service,
+                                          uint64_t *payload) {
+  size_t bufsz = (size_t)payload[0];
+  char *device_buffer = (char *)payload[1];
+  double double_value;
+  hostrpc_status_t rc =
+      hostrpc_varfn_double_(device_buffer, bufsz, (double *)&double_value);
+  memcpy(&payload[0], &double_value, 8);
+  payload[1] = (uint64_t)rc; // any errors in the service function
+  atmi_free(device_buffer);
 }
 
 void handler_HOSTCALL_SERVICE_MALLOC(void *cbdata, uint32_t service, uint64_t *payload) {
@@ -101,4 +141,10 @@ void hostcall_register_all_handlers(amd_hostcall_consumer_t * c, void * cbdata) 
     amd_hostcall_register_service(c,HOSTCALL_SERVICE_FREE, handler_HOSTCALL_SERVICE_FREE, cbdata);
     amd_hostcall_register_service(c,HOSTCALL_SERVICE_DEMO, handler_HOSTCALL_SERVICE_DEMO, cbdata);
     amd_hostcall_register_service(c,HOSTCALL_SERVICE_FUNCTIONCALL, handler_HOSTCALL_SERVICE_FUNCTIONCALL, cbdata);
+    amd_hostcall_register_service(c, HOSTCALL_SERVICE_VARFNUINT,
+                                  handler_HOSTCALL_SERVICE_VARFNUINT, cbdata);
+    amd_hostcall_register_service(c, HOSTCALL_SERVICE_VARFNUINT64,
+                                  handler_HOSTCALL_SERVICE_VARFNUINT64, cbdata);
+    amd_hostcall_register_service(c, HOSTCALL_SERVICE_VARFNDOUBLE,
+                                  handler_HOSTCALL_SERVICE_VARFNDOUBLE, cbdata);
 }

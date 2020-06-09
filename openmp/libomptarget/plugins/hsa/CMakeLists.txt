@@ -89,7 +89,7 @@ add_library(omptarget.rtl.hsa SHARED
       impl/atmi_hostcall.c
       impl/hostcall.cpp
       impl/hostcall_handlers.c
-      impl/hostcall_printf.c
+      impl/hostrpc_varfn.c
       src/rtl.cpp 
       )
 
