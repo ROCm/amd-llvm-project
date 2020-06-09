@@ -90,9 +90,9 @@ DEVICE bool __kmpc_impl_is_first_active_thread() {
   return (Sh == (unsigned long long)0);
 }
 
-EXTERN char * printf_alloc(uint32_t bufsz);
+EXTERN char * printf_allocate(uint32_t bufsz);
 
 // Memory
-DEVICE void *__kmpc_impl_malloc(size_t t) { return printf_alloc(t); }
+DEVICE void *__kmpc_impl_malloc(size_t t) { return printf_allocate(t); }
 
 DEVICE void __kmpc_impl_free(void *) {}
