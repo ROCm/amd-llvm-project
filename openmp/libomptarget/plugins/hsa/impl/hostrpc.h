@@ -23,6 +23,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 */
+#include <stddef.h>
+#include <stdint.h>
 
 // Need to get llvm typeID enum from Type.h but cant include LLVM headers in
 // runtime #include "../../../../../llvm/include/llvm/IR/Type.h" For now, we a
@@ -97,7 +99,7 @@ typedef uint32_t hostrpc_varfn_uint_t(void *, ...);
 typedef uint64_t hostrpc_varfn_uint64_t(void *, ...);
 typedef double hostrpc_varfn_double_t(void *, ...);
 
-hostrpc_status_t hostrpc_printf(char *buf, size_t bufsz, uint *rc);
-hostrpc_status_t hostrpc_varfn_uint_(char *buf, size_t bufsz, uint *rc);
+hostrpc_status_t hostrpc_printf(char *buf, size_t bufsz, uint32_t *rc);
+hostrpc_status_t hostrpc_varfn_uint_(char *buf, size_t bufsz, uint32_t *rc);
 hostrpc_status_t hostrpc_varfn_uint64_(char *buf, size_t bufsz, uint64_t *rc);
 hostrpc_status_t hostrpc_varfn_double_(char *buf, size_t bufsz, double *rc);
