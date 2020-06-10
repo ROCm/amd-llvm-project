@@ -4167,7 +4167,8 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
       if (getLangOpts().HIP)
         return EmitAMDGPUDevicePrintfCallExpr(E, ReturnValue);
       else
-        return EmitAMDGPUDevicePrintfCallExprOMP(E, ReturnValue);
+        return EmitHostrpcVargsFn(E, "printf_allocate", "printf_execute",
+                                  ReturnValue);
     }
     break;
   case Builtin::BI__builtin_canonicalize:

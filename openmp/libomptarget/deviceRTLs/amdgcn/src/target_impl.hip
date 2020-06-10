@@ -90,9 +90,14 @@ DEVICE bool __kmpc_impl_is_first_active_thread() {
   return (Sh == (unsigned long long)0);
 }
 
-EXTERN char * printf_alloc(uint32_t bufsz);
+// global_allocate is hostrpc service to return pointer to device memory
+// In the future, we will implement a heap allocation and minimize
+// host service calls. 
+EXTERN char * global_allocate(uint32_t bufsz);
 
 // Memory
-DEVICE void *__kmpc_impl_malloc(size_t t) { return printf_alloc(t); }
+DEVICE void *__kmpc_impl_malloc(size_t t) { return global_allocate(t); }
 
+// FIXME: when heap allocation implemented, switch this to global_free(ptr)
+// DEVICE void __kmpc_impl_free(void * ptr) {global_free(ptr)}
 DEVICE void __kmpc_impl_free(void *) {}

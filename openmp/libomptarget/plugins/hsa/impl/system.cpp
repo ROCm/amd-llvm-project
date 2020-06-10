@@ -299,7 +299,7 @@ void allow_access_to_all_gpu_agents(void *ptr) {
   std::vector<ATLGPUProcessor> &gpu_procs =
       g_atl_machine.processors<ATLGPUProcessor>();
   std::vector<hsa_agent_t> agents;
-  for (int i = 0; i < gpu_procs.size(); i++) {
+  for (uint32_t i = 0; i < gpu_procs.size(); i++) {
     agents.push_back(gpu_procs[i].agent());
   }
   err = hsa_amd_agents_allow_access(agents.size(), &agents[0], NULL, ptr);
@@ -309,11 +309,13 @@ void allow_access_to_all_gpu_agents(void *ptr) {
 atmi_status_t Runtime::Initialize(atmi_devtype_t devtype) {
   if (atl_is_atmi_initialized()) return ATMI_STATUS_SUCCESS;
 
-  if (devtype == ATMI_DEVTYPE_ALL || devtype & ATMI_DEVTYPE_GPU)
+  if (devtype == ATMI_DEVTYPE_ALL || devtype & ATMI_DEVTYPE_GPU) {
     ATMIErrorCheck(GPU context init, atl_init_gpu_context());
+  }
 
-  if (devtype == ATMI_DEVTYPE_ALL || devtype & ATMI_DEVTYPE_CPU)
+  if (devtype == ATMI_DEVTYPE_ALL || devtype & ATMI_DEVTYPE_CPU) {
     ATMIErrorCheck(CPU context init, atl_init_cpu_context());
+  }
 
   // create default taskgroup obj
   atmi_taskgroup_handle_t tghandle;
@@ -328,7 +330,7 @@ atmi_status_t Runtime::Finalize() {
   // regions
   hsa_status_t err;
 
-  for (int i = 0; i < g_executables.size(); i++) {
+  for (uint32_t i = 0; i < g_executables.size(); i++) {
     err = hsa_executable_destroy(g_executables[i]);
     ErrorCheck(Destroying executable, err);
   }
@@ -345,11 +347,11 @@ atmi_status_t Runtime::Finalize() {
     p.destroyQueues();
   }
 
-  for (int i = 0; i < SymbolInfoTable.size(); i++) {
+  for (uint32_t i = 0; i < SymbolInfoTable.size(); i++) {
     SymbolInfoTable[i].clear();
   }
   SymbolInfoTable.clear();
-  for (int i = 0; i < KernelInfoTable.size(); i++) {
+  for (uint32_t i = 0; i < KernelInfoTable.size(); i++) {
     KernelInfoTable[i].clear();
   }
   KernelInfoTable.clear();
@@ -462,6 +464,9 @@ static hsa_status_t get_agent_info(hsa_agent_t agent, void *data) {
       ErrorCheck(Iterate all memory pools, err);
       g_atl_machine.addProcessor(new_proc);
     } break;
+    case HSA_DEVICE_TYPE_DSP: {
+      err = HSA_STATUS_ERROR_INVALID_CODE_OBJECT;
+    } break;
   }
 
   return err;
@@ -567,7 +572,7 @@ hsa_status_t init_comute_and_memory() {
       malloc(num_procs * sizeof(atmi_device_t)));
   int num_iGPUs = 0;
   int num_dGPUs = 0;
-  for (int i = 0; i < gpu_procs.size(); i++) {
+  for (uint32_t i = 0; i < gpu_procs.size(); i++) {
     if (gpu_procs[i].type() == ATMI_DEVTYPE_iGPU)
       num_iGPUs++;
     else
@@ -681,8 +686,10 @@ hsa_status_t init_hsa() {
     int gpu_count = g_atl_machine.processorCount<ATLGPUProcessor>();
     KernelInfoTable.resize(gpu_count);
     SymbolInfoTable.resize(gpu_count);
-    for (int i = 0; i < SymbolInfoTable.size(); i++) SymbolInfoTable[i].clear();
-    for (int i = 0; i < KernelInfoTable.size(); i++) KernelInfoTable[i].clear();
+    for (uint32_t i = 0; i < SymbolInfoTable.size(); i++)
+      SymbolInfoTable[i].clear();
+    for (uint32_t i = 0; i < KernelInfoTable.size(); i++)
+      KernelInfoTable[i].clear();
     atlc.g_hsa_initialized = true;
     DEBUG_PRINT("done\n");
   }
