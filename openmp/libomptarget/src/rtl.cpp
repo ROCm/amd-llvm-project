@@ -39,6 +39,7 @@ static const char *RTLNames[] = {
 // This will avoid need for  MAX_PLATFORM_CHECK_FILES  in loop below
 static const char *RTLQuickCheckFiles[][MAX_PLATFORM_CHECK_FILES] = {
     /* ppc64 has multiple quick check files */
+    /* SX-Aurora VE target         */ {"fixme.so"},
     {"/sys/firmware/devicetree/base/ibm,firmware-versions/open-power",
      "/sys/firmware/devicetree/base/cpus/ibm,powerpc-cpu-features"},
     /* acpi is unique to x86       */ {"/sys/firmware/acpi"},

@@ -95,23 +95,23 @@ const char *AMDGCN::Linker::constructOmpExtraCmds(
   llvm::StringRef WaveFrontSizeBC;
   std::string GFXVersion = SubArchName.drop_front(3).str();
   if (stoi(GFXVersion) < 1000)
-    WaveFrontSizeBC = "oclc_wavefrontsize64_on.amdgcn.bc";
+    WaveFrontSizeBC = "oclc_wavefrontsize64_on.bc";
   else
-    WaveFrontSizeBC = "oclc_wavefrontsize64_off.amdgcn.bc";
+    WaveFrontSizeBC = "oclc_wavefrontsize64_off.bc";
 
   // FIXME: remove double link of hip aompextras, ockl, and WaveFrontSizeBC
   if (Args.hasArg(options::OPT_cuda_device_only))
     BCLibs.append(
         {Args.MakeArgString("libomptarget-amdgcn-" + SubArchName + ".bc"),
          Args.MakeArgString("libhostcall-amdgcn-" + SubArchName + ".bc"),
-         "hip.amdgcn.bc", "hc.amdgcn.bc", "ockl.amdgcn.bc",
+         "hip.bc", "hc.bc", "ockl.bc",
          std::string(WaveFrontSizeBC)});
   else {
     BCLibs.append(
         {Args.MakeArgString("libomptarget-amdgcn-" + SubArchName + ".bc"),
          Args.MakeArgString("libhostcall-amdgcn-" + SubArchName + ".bc"),
          Args.MakeArgString("libaompextras-amdgcn-" + SubArchName + ".bc"),
-         "hip.amdgcn.bc", "hc.amdgcn.bc", "ockl.amdgcn.bc",
+         "hip.bc", "hc.bc", "ockl.bc",
          std::string(WaveFrontSizeBC)});
 
     if (!Args.hasArg(options::OPT_nostdlibxx) &&

@@ -105,7 +105,6 @@ macro(add_hip_bc_library name dir)
 
   set(hip_cmd ${LLVM_INSTALL_PREFIX}/bin/clang++
     -x hip
-    --rocm-path=${ROCM_DIR}
     -std=c++11
     -fcuda-rdc
     -fvisibility=default

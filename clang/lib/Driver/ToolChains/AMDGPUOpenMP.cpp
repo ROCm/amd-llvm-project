@@ -86,6 +86,10 @@ const char *AMDGCN::OpenMPLinker::constructOmpExtraCmds(
 
   // Add compiler path libdevice last as lowest priority search
   LibraryPaths.push_back(
+      Args.MakeArgString(C.getDriver().Dir + "/../amdgcn/bitcode"));
+  LibraryPaths.push_back(
+      Args.MakeArgString(C.getDriver().Dir + "/../../amdgcn/bitcode"));
+  LibraryPaths.push_back(
       Args.MakeArgString(C.getDriver().Dir + "/../lib/libdevice"));
   LibraryPaths.push_back(Args.MakeArgString(C.getDriver().Dir + "/../lib"));
   LibraryPaths.push_back(
@@ -95,23 +99,23 @@ const char *AMDGCN::OpenMPLinker::constructOmpExtraCmds(
   llvm::StringRef WaveFrontSizeBC;
   std::string GFXVersion = SubArchName.drop_front(3).str();
   if (stoi(GFXVersion) < 1000)
-    WaveFrontSizeBC = "oclc_wavefrontsize64_on.amdgcn.bc";
+    WaveFrontSizeBC = "oclc_wavefrontsize64_on.bc";
   else
-    WaveFrontSizeBC = "oclc_wavefrontsize64_off.amdgcn.bc";
+    WaveFrontSizeBC = "oclc_wavefrontsize64_off.bc";
 
   // FIXME: remove double link of hip aompextras, ockl, and WaveFrontSizeBC
   if (Args.hasArg(options::OPT_cuda_device_only))
     BCLibs.append(
         {Args.MakeArgString("libomptarget-amdgcn-" + SubArchName + ".bc"),
          Args.MakeArgString("libhostcall-amdgcn-" + SubArchName + ".bc"),
-         "hip.amdgcn.bc", "hc.amdgcn.bc", "ockl.amdgcn.bc",
+         "hip.bc", "hc.bc", "ockl.bc",
          std::string(WaveFrontSizeBC)});
   else {
     BCLibs.append(
         {Args.MakeArgString("libomptarget-amdgcn-" + SubArchName + ".bc"),
          Args.MakeArgString("libhostcall-amdgcn-" + SubArchName + ".bc"),
          Args.MakeArgString("libaompextras-amdgcn-" + SubArchName + ".bc"),
-         "hip.amdgcn.bc", "hc.amdgcn.bc", "ockl.amdgcn.bc",
+         "hip.bc", "hc.bc", "ockl.bc",
          std::string(WaveFrontSizeBC)});
 
     if (!Args.hasArg(options::OPT_nostdlibxx) &&
@@ -419,6 +423,10 @@ void AMDGPUOpenMPToolChain::addClangTargetOptions(
 
   // Add compiler path libdevice last as lowest priority search
   LibraryPaths.push_back(
+      DriverArgs.MakeArgString(getDriver().Dir + "/../amdgcn/bitcode"));
+  LibraryPaths.push_back(
+      DriverArgs.MakeArgString(getDriver().Dir + "/../../amdgcn/bitcode"));
+  LibraryPaths.push_back(
       DriverArgs.MakeArgString(getDriver().Dir + "/../lib/libdevice"));
   LibraryPaths.push_back(DriverArgs.MakeArgString(getDriver().Dir + "/../lib"));
   LibraryPaths.push_back(
@@ -437,7 +445,7 @@ void AMDGPUOpenMPToolChain::addClangTargetOptions(
     // Get the bc lib file name for ISA version. For example,
     // gfx803 => oclc_isa_version_803.amdgcn.bc.
     std::string GFXVersion = GpuArch.drop_front(3).str();
-    std::string ISAVerBC = "oclc_isa_version_" + GFXVersion + ".amdgcn.bc";
+    std::string ISAVerBC = "oclc_isa_version_" + GFXVersion + ".bc";
 
     bool FTZDAZ = DriverArgs.hasFlag(
       options::OPT_fcuda_flush_denormals_to_zero,
@@ -445,32 +453,32 @@ void AMDGPUOpenMPToolChain::addClangTargetOptions(
       getDefaultDenormsAreZeroForTarget(Kind));
 
     std::string FlushDenormalControlBC = FTZDAZ ?
-      "oclc_daz_opt_on.amdgcn.bc" :
-      "oclc_daz_opt_off.amdgcn.bc";
+      "oclc_daz_opt_on.bc" :
+      "oclc_daz_opt_off.bc";
 
     llvm::StringRef WaveFrontSizeBC;
     if (stoi(GFXVersion) < 1000)
-      WaveFrontSizeBC = "oclc_wavefrontsize64_on.amdgcn.bc";
+      WaveFrontSizeBC = "oclc_wavefrontsize64_on.bc";
     else
-      WaveFrontSizeBC = "oclc_wavefrontsize64_off.amdgcn.bc";
+      WaveFrontSizeBC = "oclc_wavefrontsize64_off.bc";
 
     // FIXME remove double link of aompextras and hip
     if (DriverArgs.hasArg(options::OPT_cuda_device_only))
       // FIXME: when building aompextras, we need to skip aompextras
-      BCLibs.append({"hip.amdgcn.bc", "opencl.amdgcn.bc", "ocml.amdgcn.bc",
-                     "ockl.amdgcn.bc", "oclc_finite_only_off.amdgcn.bc",
+      BCLibs.append({"hip.bc", "opencl.bc", "ocml.bc",
+                     "ockl.bc", "oclc_finite_only_off.bc",
                      FlushDenormalControlBC,
-                     "oclc_correctly_rounded_sqrt_on.amdgcn.bc",
-                     "oclc_unsafe_math_off.amdgcn.bc", ISAVerBC,
+                     "oclc_correctly_rounded_sqrt_on.bc",
+                     "oclc_unsafe_math_off.bc", ISAVerBC,
                      std::string(WaveFrontSizeBC)});
 
     else
       BCLibs.append(
-          {"hip.amdgcn.bc", "opencl.amdgcn.bc", "ocml.amdgcn.bc",
-           "ockl.amdgcn.bc", "oclc_finite_only_off.amdgcn.bc",
+          {"hip.bc", "opencl.bc", "ocml.bc",
+           "ockl.bc", "oclc_finite_only_off.bc",
            FlushDenormalControlBC,
-           "oclc_correctly_rounded_sqrt_on.amdgcn.bc",
-           "oclc_unsafe_math_off.amdgcn.bc", ISAVerBC,
+           "oclc_correctly_rounded_sqrt_on.bc",
+           "oclc_unsafe_math_off.bc", ISAVerBC,
            DriverArgs.MakeArgString("libaompextras-amdgcn-" + GpuArch + ".bc"),
            std::string(WaveFrontSizeBC)});
   }
