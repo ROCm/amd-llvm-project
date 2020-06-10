@@ -190,18 +190,15 @@ void hostrpc_handler_SERVICE_MALLOC_PRINTF(void *cbdata, uint32_t service,
 
 void hostrpc_handler_SERVICE_MALLOC(void *cbdata, uint32_t service,
                                     uint64_t *payload) {
-  printf("WARNING SERVICE MALLOC CALLED FOR global_alloc\n");
   void *ptr = NULL;
   int device_id = 0;
   atmi_mem_place_t place = ATMI_MEM_PLACE_GPU_MEM(0, device_id, 0);
   atmi_status_t err = atmi_malloc(&ptr, payload[0], place);
-  printf("DONE with atmi_malloc err is %d ptr is %p\n", err, (void *)ptr);
   payload[0] = (uint64_t)err;
   payload[1] = (uint64_t)ptr;
 }
 void hostrpc_handler_SERVICE_FREE(void *cbdata, uint32_t service,
                                   uint64_t *payload) {
-  printf("WARNING SERVICE MALLOC CALLEDF\n");
   char *device_buffer = (char *)payload[1];
   atmi_free(device_buffer);
 }
