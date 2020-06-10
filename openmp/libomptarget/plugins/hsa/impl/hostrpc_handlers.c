@@ -1,8 +1,8 @@
-/*
 
-hostrpc_varfn.c : Service functions for hostrpc functions
-                  hostrpc_printf
-                  hostrpc_varfn_uint
+/*
+ *   hostrpc_handlers.c:  These are the services for the hostrpc system
+ *
+ *   Written by Greg Rodgers
 
 MIT License
 
@@ -28,21 +28,246 @@ SOFTWARE.
 
 */
 
-#include "hostrpc.h"
+#include "../../../src/hostrpc_service_id.h"
+#include "amd_hostcall.h" // Only needed for amd_hostcall_consumer_t, remove!
+#include "atmi_runtime.h"
+#include "hsa/hsa_ext_amd.h"
 #include <ctype.h>
 #include <stdarg.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-//------------------------------------------------------------------------
-//
-// hostrpc_printf:
+// Error codes for service handler functions used in this file
+// Some error codes may be returned to device stub functions.
+typedef enum hostrpc_status_t {
+  HOSTRPC_SUCCESS = 0,
+  HOSTRPC_STATUS_UNKNOWN = 1,
+  HOSTRPC_STATUS_ERROR = 2,
+  HOSTRPC_STATUS_TERMINATE = 3,
+  HOSTRPC_DATA_USED_ERROR = 4,
+  HOSTRPC_ADDINT_ERROR = 5,
+  HOSTRPC_ADDFLOAT_ERROR = 6,
+  HOSTRPC_ADDSTRING_ERROR = 7,
+  HOSTRPC_UNSUPPORTED_ID_ERROR = 8,
+  HOSTRPC_INVALID_ID_ERROR = 9,
+  HOSTRPC_ERROR_INVALID_REQUEST = 10,
+  HOSTRPC_EXCEED_MAXVARGS_ERROR = 11,
+} hostrpc_status_t;
 
-// These are the static helper functions to support hostrpc_printf
+// MAXVARGS is more than a static array size.
+// It is for user vargs functions only.
+// It does not apply to printf.
+#define MAXVARGS 32
 
-// Handle overflow when building va_list for vprintf
+// We would like to get llvm typeID enum from Type.h. e.g.
+// #include "../../../../../llvm/include/llvm/IR/Type.h"
+// But we cannot include LLVM headers in a runtime function.
+// So for now, we a have a manual copy of llvm TypeID enum.
+enum TypeID {
+  // PrimitiveTypes - make sure LastPrimitiveTyID stays up to date.
+  VoidTyID = 0,  ///<  0: type with no size
+  HalfTyID,      ///<  1: 16-bit floating point type
+  FloatTyID,     ///<  2: 32-bit floating point type
+  DoubleTyID,    ///<  3: 64-bit floating point type
+  X86_FP80TyID,  ///<  4: 80-bit floating point type (X87)
+  FP128TyID,     ///<  5: 128-bit floating point type (112-bit mantissa)
+  PPC_FP128TyID, ///<  6: 128-bit floating point type (two 64-bits, PowerPC)
+  LabelTyID,     ///<  7: Labels
+  MetadataTyID,  ///<  8: Metadata
+  X86_MMXTyID,   ///<  9: MMX vectors (64 bits, X86 specific)
+  TokenTyID,     ///< 10: Tokens
+
+  // Derived types... see DerivedTypes.h file.
+  // Make sure FirstDerivedTyID stays up to date!
+  IntegerTyID,       ///< 11: Arbitrary bit width integers
+  FunctionTyID,      ///< 12: Functions
+  StructTyID,        ///< 13: Structures
+  ArrayTyID,         ///< 14: Arrays
+  PointerTyID,       ///< 15: Pointers
+  FixedVectorTyID,   ///< 16: Fixed width SIMD vector type
+  ScalableVectorTyID ///< 17: Scalable SIMD vector type
+};
+
+#define NUMFPREGS 8
+#define FPREGSZ 16
+
+typedef int uint128_t __attribute__((mode(TI)));
+struct hostrpc_pfIntRegs {
+  uint64_t rdi, rsi, rdx, rcx, r8, r9;
+};
+typedef struct hostrpc_pfIntRegs hostrpc_pfIntRegs_t; // size = 48 bytes
+
+struct hostrpc_pfRegSaveArea {
+  hostrpc_pfIntRegs_t iregs;
+  uint128_t freg[NUMFPREGS];
+};
+typedef struct hostrpc_pfRegSaveArea
+    hostrpc_pfRegSaveArea_t; // size = 304 bytes
+
+struct hostrpc_ValistExt {
+  uint32_t gp_offset;      /* offset to next available gpr in reg_save_area */
+  uint32_t fp_offset;      /* offset to next available fpr in reg_save_area */
+  void *overflow_arg_area; /* args that are passed on the stack */
+  hostrpc_pfRegSaveArea_t *reg_save_area; /* int and fp registers */
+  size_t overflow_size;
+} __attribute__((packed));
+typedef struct hostrpc_ValistExt hostrpc_ValistExt_t;
+
+/// Prototype for host fallback function also stored in hostcall_stubs.h
+typedef uint32_t hostrpc_varfn_uint_t(void *, ...);
+typedef uint64_t hostrpc_varfn_uint64_t(void *, ...);
+typedef double hostrpc_varfn_double_t(void *, ...);
+
+static hostrpc_status_t hostrpc_printf(char *buf, size_t bufsz, uint32_t *rc);
+static hostrpc_status_t hostrpc_varfn_uint_(char *buf, size_t bufsz,
+                                            uint32_t *rc);
+static hostrpc_status_t hostrpc_varfn_uint64_(char *buf, size_t bufsz,
+                                              uint64_t *rc);
+static hostrpc_status_t hostrpc_varfn_double_(char *buf, size_t bufsz,
+                                              double *rc);
+
+void hostrpc_handler_SERVICE_PRINTF(void *cbdata, uint32_t service,
+                                    uint64_t *payload) {
+  size_t bufsz = (size_t)payload[0];
+  char *device_buffer = (char *)payload[1];
+  uint uint_value;
+  hostrpc_status_t rc = hostrpc_printf(device_buffer, bufsz, &uint_value);
+  payload[0] = (uint64_t)uint_value; // what the printf returns
+  payload[1] = (uint64_t)rc;         // Any errors in the service function
+  atmi_free(device_buffer);
+}
+
+void hostrpc_handler_SERVICE_VARFNUINT(void *cbdata, uint32_t service,
+                                       uint64_t *payload) {
+  size_t bufsz = (size_t)payload[0];
+  char *device_buffer = (char *)payload[1];
+  uint uint_value;
+  hostrpc_status_t rc = hostrpc_varfn_uint_(device_buffer, bufsz, &uint_value);
+  payload[0] = (uint64_t)uint_value; // What the vargs function pointer returns
+  payload[1] = (uint64_t)rc;         // any errors in the service function
+  atmi_free(device_buffer);
+}
+
+void hostrpc_handler_SERVICE_VARFNUINT64(void *cbdata, uint32_t service,
+                                         uint64_t *payload) {
+  size_t bufsz = (size_t)payload[0];
+  char *device_buffer = (char *)payload[1];
+  uint64_t uint64_value;
+  hostrpc_status_t rc =
+      hostrpc_varfn_uint64_(device_buffer, bufsz, &uint64_value);
+  payload[0] =
+      (uint64_t)uint64_value; // What the vargs function pointer returns
+  payload[1] = (uint64_t)rc;  // any errors in the service function
+  atmi_free(device_buffer);
+}
+
+void hostrpc_handler_SERVICE_VARFNDOUBLE(void *cbdata, uint32_t service,
+                                         uint64_t *payload) {
+  size_t bufsz = (size_t)payload[0];
+  char *device_buffer = (char *)payload[1];
+  double double_value;
+  hostrpc_status_t rc =
+      hostrpc_varfn_double_(device_buffer, bufsz, (double *)&double_value);
+  memcpy(&payload[0], &double_value, 8);
+  payload[1] = (uint64_t)rc; // any errors in the service function
+  atmi_free(device_buffer);
+}
+
+void hostrpc_handler_SERVICE_MALLOC_PRINTF(void *cbdata, uint32_t service,
+                                           uint64_t *payload) {
+  void *ptr = NULL;
+  // CPU device ID 0 is the fine grain memory
+  int cpu_device_id = 0;
+  size_t sz = (size_t)payload[0];
+  atmi_mem_place_t place = ATMI_MEM_PLACE_CPU_MEM(0, cpu_device_id, 0);
+  atmi_status_t err = atmi_malloc(&ptr, sz, place);
+  payload[0] = (uint64_t)err;
+  payload[1] = (uint64_t)ptr;
+}
+
+void hostrpc_handler_SERVICE_MALLOC(void *cbdata, uint32_t service,
+                                    uint64_t *payload) {
+  printf("WARNING SERVICE MALLOC CALLED FOR global_alloc\n");
+  void *ptr = NULL;
+  int device_id = 0;
+  atmi_mem_place_t place = ATMI_MEM_PLACE_GPU_MEM(0, device_id, 0);
+  atmi_status_t err = atmi_malloc(&ptr, payload[0], place);
+  printf("DONE with atmi_malloc err is %d ptr is %p\n", err, (void *)ptr);
+  payload[0] = (uint64_t)err;
+  payload[1] = (uint64_t)ptr;
+}
+void hostrpc_handler_SERVICE_FREE(void *cbdata, uint32_t service,
+                                  uint64_t *payload) {
+  printf("WARNING SERVICE MALLOC CALLEDF\n");
+  char *device_buffer = (char *)payload[1];
+  atmi_free(device_buffer);
+}
+
+void hostrpc_handler_SERVICE_FUNCTIONCALL(void *cbdata, uint32_t service,
+                                          uint64_t *payload) {
+  void (*fptr)() = (void *)payload[0];
+  (*fptr)();
+}
+
+// This is the host function for the demo vector_product_zeros
+int vector_product_zeros(int N, int *A, int *B, int *C) {
+  int zeros = 0;
+  for (int i = 0; i < N; i++) {
+    C[i] = A[i] * B[i];
+    if (C[i] == 0)
+      zeros++;
+  }
+  return zeros;
+}
+
+// This is the service for the demo of vector_product_zeros
+void hostrpc_handler_SERVICE_DEMO(void *cbdata, uint32_t service,
+                                  uint64_t *payload) {
+  atmi_status_t copyerr;
+  int N = (int)payload[0];
+  int *A_D = (int *)payload[1];
+  int *B_D = (int *)payload[2];
+  int *C_D = (int *)payload[3];
+
+  int *A = (int *)malloc(N * sizeof(int));
+  int *B = (int *)malloc(N * sizeof(int));
+  int *C = (int *)malloc(N * sizeof(int));
+  copyerr = atmi_memcpy(A, A_D, N * sizeof(int));
+  copyerr = atmi_memcpy(B, B_D, N * sizeof(int));
+
+  int num_zeros = vector_product_zeros(N, A, B, C);
+  copyerr = atmi_memcpy(C_D, C, N * sizeof(int));
+  payload[0] = (uint64_t)copyerr;
+  payload[1] = (uint64_t)num_zeros;
+}
+
+void hostcall_register_all_handlers(amd_hostcall_consumer_t *c, void *cbdata) {
+  amd_hostcall_register_service(c, HOSTCALL_SERVICE_PRINTF,
+                                hostrpc_handler_SERVICE_PRINTF, cbdata);
+  amd_hostcall_register_service(c, HOSTCALL_SERVICE_MALLOC_PRINTF,
+                                hostrpc_handler_SERVICE_MALLOC_PRINTF, cbdata);
+  amd_hostcall_register_service(c, HOSTCALL_SERVICE_MALLOC,
+                                hostrpc_handler_SERVICE_MALLOC, cbdata);
+  amd_hostcall_register_service(c, HOSTCALL_SERVICE_FREE,
+                                hostrpc_handler_SERVICE_FREE, cbdata);
+  amd_hostcall_register_service(c, HOSTCALL_SERVICE_DEMO,
+                                hostrpc_handler_SERVICE_DEMO, cbdata);
+  amd_hostcall_register_service(c, HOSTCALL_SERVICE_FUNCTIONCALL,
+                                hostrpc_handler_SERVICE_FUNCTIONCALL, cbdata);
+  amd_hostcall_register_service(c, HOSTCALL_SERVICE_VARFNUINT,
+                                hostrpc_handler_SERVICE_VARFNUINT, cbdata);
+  amd_hostcall_register_service(c, HOSTCALL_SERVICE_VARFNUINT64,
+                                hostrpc_handler_SERVICE_VARFNUINT64, cbdata);
+  amd_hostcall_register_service(c, HOSTCALL_SERVICE_VARFNDOUBLE,
+                                hostrpc_handler_SERVICE_VARFNDOUBLE, cbdata);
+}
+
+//---------------- Support for hostrpc_printf service ---------------------
+
+// Handle overflow when building the va_list for vprintf
 static hostrpc_status_t hostrpc_pfGetOverflow(hostrpc_ValistExt_t *valist,
                                               size_t needsize) {
   if (needsize < valist->overflow_size)
@@ -283,10 +508,8 @@ static hostrpc_status_t hostrpc_pfBuildValist(hostrpc_ValistExt_t *valist,
   return HOSTRPC_SUCCESS;
 } // end hostrpc_pfBuildValist
 
-// -----
-//  hostrpc_printf:  This the main service routine for printf
-// -----
-hostrpc_status_t hostrpc_printf(char *buf, size_t bufsz, uint *rc) {
+//  This the main service routine for printf
+static hostrpc_status_t hostrpc_printf(char *buf, size_t bufsz, uint *rc) {
   if (bufsz == 0)
     return HOSTRPC_SUCCESS;
 
@@ -336,16 +559,15 @@ hostrpc_status_t hostrpc_printf(char *buf, size_t bufsz, uint *rc) {
 
 //---------------- Support for hostrpc_varfn_* service ---------------------
 //
-#define MAXVARGS 32
 
 // These are the helper functions for hostrpc_varfn_uint_
-uint64_t getuint32(char *val) {
+static uint64_t getuint32(char *val) {
   uint32_t i32 = *(uint32_t *)val;
   return (uint64_t)i32;
 }
 uint64_t getuint64(char *val) { return *(uint64_t *)val; }
 
-void *getfnptr(char *val) {
+static void *getfnptr(char *val) {
   uint64_t ival = *(uint64_t *)val;
   return (void *)ival;
 }
@@ -614,7 +836,7 @@ static hostrpc_status_t hostrpc_call_fnptr_uint(uint32_t NumArgs, void *fnptr,
                  a[27], a[28], a[29], a[30], a[31]);
     break;
   default:
-    return HOSTRPC_EXCEED_MAX_ARGS_ERROR;
+    return HOSTRPC_EXCEED_MAXVARGS_ERROR;
   }
   return HOSTRPC_SUCCESS;
 }
@@ -771,7 +993,7 @@ static hostrpc_status_t hostrpc_call_fnptr_uint64(uint32_t NumArgs, void *fnptr,
                  a[27], a[28], a[29], a[30], a[31]);
     break;
   default:
-    return HOSTRPC_EXCEED_MAX_ARGS_ERROR;
+    return HOSTRPC_EXCEED_MAXVARGS_ERROR;
   }
   return HOSTRPC_SUCCESS;
 }
@@ -928,15 +1150,12 @@ static hostrpc_status_t hostrpc_call_fnptr_double(uint32_t NumArgs, void *fnptr,
                  a[27], a[28], a[29], a[30], a[31]);
     break;
   default:
-    return HOSTRPC_EXCEED_MAX_ARGS_ERROR;
+    return HOSTRPC_EXCEED_MAXVARGS_ERROR;
   }
   return HOSTRPC_SUCCESS;
 }
-// -----
-//  hostrpc_varfn_uint_:  This the main service routine for hostrpc_varfn_uint
-//                        Static helper functions are defined above
-// -----
-hostrpc_status_t hostrpc_varfn_uint_(char *buf, size_t bufsz, uint *rc) {
+//  This the main service routine for hostrpc_varfn_uint
+static hostrpc_status_t hostrpc_varfn_uint_(char *buf, size_t bufsz, uint *rc) {
   if (bufsz == 0)
     return HOSTRPC_SUCCESS;
 
@@ -974,7 +1193,9 @@ hostrpc_status_t hostrpc_varfn_uint_(char *buf, size_t bufsz, uint *rc) {
   return HOSTRPC_SUCCESS;
 }
 
-hostrpc_status_t hostrpc_varfn_uint64_(char *buf, size_t bufsz, uint64_t *rc) {
+//  This the main service routine for hostrpc_varfn_uint64
+static hostrpc_status_t hostrpc_varfn_uint64_(char *buf, size_t bufsz,
+                                              uint64_t *rc) {
   if (bufsz == 0)
     return HOSTRPC_SUCCESS;
 
@@ -1012,7 +1233,9 @@ hostrpc_status_t hostrpc_varfn_uint64_(char *buf, size_t bufsz, uint64_t *rc) {
   return HOSTRPC_SUCCESS;
 }
 
-hostrpc_status_t hostrpc_varfn_double_(char *buf, size_t bufsz, double *rc) {
+//  This the main service routine for hostrpc_varfn_double
+static hostrpc_status_t hostrpc_varfn_double_(char *buf, size_t bufsz,
+                                              double *rc) {
   if (bufsz == 0)
     return HOSTRPC_SUCCESS;
 

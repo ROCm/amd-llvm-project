@@ -10,9 +10,11 @@
 #include <stdint.h>
 
 //  These are the interfaces for the device stubs */
-EXTERN int printf( const char * , ...);
+EXTERN int printf(const char *, ...);
 EXTERN char *printf_allocate(uint32_t bufsz);
-EXTERN int     printf_execute(char * bufptr, uint32_t bufsz);
+EXTERN char *global_allocate(uint32_t bufsz);
+EXTERN int global_free(char *ptr);
+EXTERN int printf_execute(char *bufptr, uint32_t bufsz);
 
 EXTERN char *hostrpc_varfn_uint_allocate(uint32_t bufsz);
 EXTERN char *hostrpc_varfn_uint64_allocate(uint32_t bufsz);
@@ -20,7 +22,7 @@ EXTERN char *hostrpc_varfn_double_allocate(uint32_t bufsz);
 
 EXTERN uint32_t __strlen_max(char*instr, uint32_t maxstrlen);
 
-EXTERN int     vector_product_zeros(int N, int*A, int*B, int*C);
+EXTERN int vector_product_zeros(int N, int *A, int *B, int *C);
 
 typedef uint32_t hostrpc_varfn_uint_t(void *, ...);
 typedef uint64_t hostrpc_varfn_uint64_t(void *, ...);
