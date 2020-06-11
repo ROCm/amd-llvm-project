@@ -94,10 +94,9 @@ DEVICE bool __kmpc_impl_is_first_active_thread() {
 // In the future, we will implement a heap allocation and minimize
 // host service calls. 
 EXTERN char * global_allocate(uint32_t bufsz);
+EXTERN int global_free(void*);
 
 // Memory
 DEVICE void *__kmpc_impl_malloc(size_t t) { return global_allocate(t); }
 
-// FIXME: when heap allocation implemented, switch this to global_free(ptr)
-// DEVICE void __kmpc_impl_free(void * ptr) {global_free(ptr)}
-DEVICE void __kmpc_impl_free(void *) {}
+DEVICE void __kmpc_impl_free(void * ptr) {global_free(ptr);}
