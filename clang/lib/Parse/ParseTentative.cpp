@@ -432,9 +432,14 @@ bool Parser::isEnumBase(bool AllowSemi) {
   assert(Tok.is(tok::colon) && "should be looking at the ':'");
 
   RevertingTentativeParsingAction PA(*this);
+  // ':'
   ConsumeToken();
 
+  // type-specifier-seq
   bool InvalidAsDeclSpec = false;
+  // FIXME: We could disallow non-type decl-specifiers here, but it makes no
+  // difference: those specifiers are ill-formed regardless of the
+  // interpretation.
   TPResult R = isCXXDeclarationSpecifier(/*BracedCastResult*/ TPResult::True,
                                          &InvalidAsDeclSpec);
   if (R == TPResult::Ambiguous) {
@@ -445,12 +450,10 @@ bool Parser::isEnumBase(bool AllowSemi) {
 
     // If we get to the end of the enum-base, we hit either a '{' or a ';'.
     // Don't bother checking the enumerator-list.
-    if (Tok.is(tok::colon) || (AllowSemi && Tok.is(tok::semi)))
+    if (Tok.is(tok::l_brace) || (AllowSemi && Tok.is(tok::semi)))
       return true;
 
     // A second decl-specifier unambiguously indicatges an enum-base.
-    // The grammar permits an arbitrary type-name here, but we need an
-    // integral type, so no declarator pieces could ever work.
     R = isCXXDeclarationSpecifier(TPResult::True, &InvalidAsDeclSpec);
   }
 
@@ -1272,6 +1275,15 @@ Parser::isCXXDeclarationSpecifier(Parser::TPResult BracedCastResult,
       // this is ambiguous. Typo-correct to type and expression keywords and
       // to types and identifiers, in order to try to recover from errors.
       TentativeParseCCC CCC(Next);
+      // Tentative parsing may not be done in the right evaluation context
+      // for the ultimate expression.  Enter an unevaluated context to prevent
+      // Sema from immediately e.g. treating this lookup as a potential ODR-use.
+      // If we generate an expression annotation token and the parser actually
+      // claims it as an expression, we'll transform the expression to a
+      // potentially-evaluated one then.
+      EnterExpressionEvaluationContext Unevaluated(
+          Actions, Sema::ExpressionEvaluationContext::Unevaluated,
+          Sema::ReuseLambdaContextDecl);
       switch (TryAnnotateName(&CCC)) {
       case ANK_Error:
         return TPResult::Error;
@@ -1628,6 +1640,7 @@ Parser::isCXXDeclarationSpecifier(Parser::TPResult BracedCastResult,
   case tok::kw_half:
   case tok::kw_float:
   case tok::kw_double:
+  case tok::kw___bf16:
   case tok::kw__Float16:
   case tok::kw___float128:
   case tok::kw_void:
@@ -1741,6 +1754,7 @@ bool Parser::isCXXDeclarationSpecifierAType() {
   case tok::kw_half:
   case tok::kw_float:
   case tok::kw_double:
+  case tok::kw___bf16:
   case tok::kw__Float16:
   case tok::kw___float128:
   case tok::kw_void:

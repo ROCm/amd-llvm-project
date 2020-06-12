@@ -126,7 +126,7 @@ CodeGenFunction::EmitNVPTXDevicePrintfCallExpr(const CallExpr *E,
 RValue
 CodeGenFunction::EmitAMDGPUDevicePrintfCallExpr(const CallExpr *E,
                                                 ReturnValueSlot ReturnValue) {
-  assert(getTarget().getTriple().getArch() == llvm::Triple::amdgcn);
+  assert(getTarget().getTriple().isAMDGCN());
   assert(E->getBuiltinCallee() == Builtin::BIprintf ||
          E->getBuiltinCallee() == Builtin::BI__builtin_printf);
   assert(E->getNumArgs() >= 1); // printf always has at least one arg.

@@ -171,7 +171,6 @@ static std::unique_ptr<Module> loadArFile(const char *argv0,
              << "' of archive library to module.\n";
     SMDiagnostic ParseErr;
     StringRef DataLayoutString;
-    bool UpgradeDebugInfo = false;
     Expected<MemoryBufferRef> MemBuf = C.getMemoryBufferRef();
     if (Error E = MemBuf.takeError()) {
       errs() << argv0 << ": ";
@@ -181,8 +180,7 @@ static std::unique_ptr<Module> loadArFile(const char *argv0,
       return nullptr;
     };
 
-    std::unique_ptr<Module> M = parseIR(MemBuf.get(), ParseErr, Context,
-                                        UpgradeDebugInfo, DataLayoutString);
+    std::unique_ptr<Module> M = parseIR(MemBuf.get(), ParseErr, Context);
     if (!M.get()) {
       errs() << argv0 << ": ";
       WithColor::error() << " parsing member '" << goodname

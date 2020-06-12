@@ -13,12 +13,12 @@
 #include "AArch64Subtarget.h"
 
 #include "AArch64.h"
-#include "AArch64CallLowering.h"
 #include "AArch64InstrInfo.h"
-#include "AArch64LegalizerInfo.h"
 #include "AArch64PBQPRegAlloc.h"
 #include "AArch64RegisterBankInfo.h"
 #include "AArch64TargetMachine.h"
+#include "GISel/AArch64CallLowering.h"
+#include "GISel/AArch64LegalizerInfo.h"
 #include "MCTargetDesc/AArch64AddressingModes.h"
 #include "llvm/CodeGen/GlobalISel/InstructionSelect.h"
 #include "llvm/CodeGen/MachineScheduler.h"
@@ -167,6 +167,17 @@ void AArch64Subtarget::initializeProperties() {
     CacheLineSize = 64;
     PrefFunctionLogAlignment = 4;
     PrefLoopLogAlignment = 2;
+    break;
+  case ThunderX3T110:
+    CacheLineSize = 64;
+    PrefFunctionLogAlignment = 4;
+    PrefLoopLogAlignment = 2;
+    MaxInterleaveFactor = 4;
+    PrefetchDistance = 128;
+    MinPrefetchStride = 1024;
+    MaxPrefetchIterationsAhead = 4;
+    // FIXME: remove this to enable 64-bit SLP if performance looks good.
+    MinVectorRegisterBitWidth = 128;
     break;
   }
 }
