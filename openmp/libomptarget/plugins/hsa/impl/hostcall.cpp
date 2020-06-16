@@ -125,11 +125,8 @@ struct record_t {
     bool discarded;
 };
 
-typedef std::function<void(uint64_t *)> service_handler_t;
-
 struct critical_data_t {
     std::unordered_map<buffer_t *, record_t> buffers;
-    std::unordered_map<uint32_t, service_handler_t> handlers;
     std::mutex _mutex;
 };
 
@@ -145,15 +142,12 @@ struct amd_hostcall_consumer_t {
   private:
     signal_t doorbell;
     std::thread thread;
-    amd_hostcall_error_handler_t handle_error;
     void *error_callback_data;
     critical_data_t critical_data;
 
     amd_hostcall_consumer_t(signal_t _doorbell) : doorbell(_doorbell) {}
 
   public:
-    void register_service(uint32_t service,
-                          amd_hostcall_service_handler_t handler, void *cbdata);
 
     void register_buffer(void *buffer);
     amd_hostcall_error_t deregister_buffer(void *buffer);
@@ -165,9 +159,6 @@ struct amd_hostcall_consumer_t {
 
     amd_hostcall_error_t launch();
     amd_hostcall_error_t terminate();
-
-    amd_hostcall_error_t on_error(amd_hostcall_error_handler_t handler,
-                                  void *cbdata);
 
     static amd_hostcall_consumer_t *create();
     ~amd_hostcall_consumer_t();
@@ -193,6 +184,8 @@ get_payload(buffer_t *buffer, ulong ptr)
 }
 
 static bool hostcall_version_checked;
+
+extern "C" void handlePayload(uint32_t service, uint64_t *payload);
 
 void
 amd_hostcall_consumer_t::process_packets(buffer_t *buffer,
@@ -234,21 +227,6 @@ amd_hostcall_consumer_t::process_packets(buffer_t *buffer,
         WHEN_DEBUG(std::cout << "packet service: " << (uint32_t)service
                              << std::endl);
 
-        auto h_iter = critical_data.handlers.find(service);
-        if (h_iter == critical_data.handlers.end())
-            h_iter = critical_data.handlers.find(0);
-        if (h_iter == critical_data.handlers.end()) {
-            std::cerr
-                << std::endl
-                << "hostcall fatal error: no service found for service ID "
-                << (uint32_t)service << std::endl;
-            if (handle_error) {
-                handle_error(AMD_HOSTCALL_ERROR_SERVICE_UNKNOWN,
-                             error_callback_data);
-            }
-            std::quick_exit(EXIT_FAILURE);
-        }
-        auto handler = h_iter->second;
         auto payload = get_payload(buffer, iter);
         uint64_t activemask = header->activemask;
         WHEN_DEBUG(std::cout << "activemask: " << std::hex << activemask
@@ -260,7 +238,7 @@ amd_hostcall_consumer_t::process_packets(buffer_t *buffer,
             if (flag == 0)
                 continue;
             uint64_t *slot = payload->slots[wi];
-            handler(slot);
+            handlePayload(service, slot);
         }
         __atomic_store_n(&header->control, reset_ready_flag(header->control),
                          std::memory_order_release);
@@ -343,16 +321,6 @@ amd_hostcall_consumer_t::terminate()
 }
 
 void
-amd_hostcall_consumer_t::register_service(
-    uint32_t service, amd_hostcall_service_handler_t handler, void *cbdata)
-{
-    locked_critical_data_t data(critical_data);
-    using namespace std::placeholders;
-    // Silently over-ride an older entry if present.
-    data->handlers[service] = std::bind(handler, cbdata, service, _1);
-}
-
-void
 amd_hostcall_consumer_t::register_buffer(void *b)
 {
     locked_critical_data_t data(critical_data);
@@ -384,7 +352,6 @@ amd_hostcall_consumer_t::~amd_hostcall_consumer_t()
 {
     terminate();
     critical_data.buffers.clear();
-    critical_data.handlers.clear();
 #ifdef WITH_HSA
     GET_FUNCTION(hsd, hsa_signal_destroy);
     assert(hsd);
@@ -403,30 +370,10 @@ amd_hostcall_consumer_t::create()
     return new amd_hostcall_consumer_t(doorbell);
 }
 
-amd_hostcall_error_t
-amd_hostcall_consumer_t::on_error(amd_hostcall_error_handler_t handler,
-                                  void *cbdata)
-{
-    if (thread.joinable())
-        return AMD_HOSTCALL_ERROR_CONSUMER_ACTIVE;
-    handle_error = handler;
-    error_callback_data = cbdata;
-    return AMD_HOSTCALL_SUCCESS;
-}
-
 amd_hostcall_consumer_t *
 amd_hostcall_create_consumer()
 {
     return amd_hostcall_consumer_t::create();
-}
-
-void
-amd_hostcall_register_service(amd_hostcall_consumer_t *consumer,
-                              uint32_t service,
-                              amd_hostcall_service_handler_t handler,
-                              void *cbdata)
-{
-    consumer->register_service(service, handler, cbdata);
 }
 
 size_t
@@ -504,13 +451,6 @@ void
 amd_hostcall_destroy_consumer(amd_hostcall_consumer_t *consumer)
 {
     delete consumer;
-}
-
-amd_hostcall_error_t
-amd_hostcall_on_error(amd_hostcall_consumer_t *consumer,
-                      amd_hostcall_error_handler_t handler, void *cbdata)
-{
-    return consumer->on_error(handler, cbdata);
 }
 
 void

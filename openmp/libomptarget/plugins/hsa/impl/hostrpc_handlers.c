@@ -29,9 +29,7 @@ SOFTWARE.
 */
 
 #include "../../../src/hostrpc_service_id.h"
-#include "amd_hostcall.h" // Only needed for amd_hostcall_consumer_t, remove!
 #include "atmi_runtime.h"
-#include "hsa/hsa_ext_amd.h"
 #include <ctype.h>
 #include <stdarg.h>
 #include <stddef.h>
@@ -130,8 +128,7 @@ static hostrpc_status_t hostrpc_varfn_uint64_(char *buf, size_t bufsz,
 static hostrpc_status_t hostrpc_varfn_double_(char *buf, size_t bufsz,
                                               double *rc);
 
-void hostrpc_handler_SERVICE_PRINTF(void *cbdata, uint32_t service,
-                                    uint64_t *payload) {
+static void hostrpc_handler_SERVICE_PRINTF(uint64_t *payload) {
   size_t bufsz = (size_t)payload[0];
   char *device_buffer = (char *)payload[1];
   uint uint_value;
@@ -141,8 +138,7 @@ void hostrpc_handler_SERVICE_PRINTF(void *cbdata, uint32_t service,
   atmi_free(device_buffer);
 }
 
-void hostrpc_handler_SERVICE_VARFNUINT(void *cbdata, uint32_t service,
-                                       uint64_t *payload) {
+static void hostrpc_handler_SERVICE_VARFNUINT(uint64_t *payload) {
   size_t bufsz = (size_t)payload[0];
   char *device_buffer = (char *)payload[1];
   uint uint_value;
@@ -152,8 +148,7 @@ void hostrpc_handler_SERVICE_VARFNUINT(void *cbdata, uint32_t service,
   atmi_free(device_buffer);
 }
 
-void hostrpc_handler_SERVICE_VARFNUINT64(void *cbdata, uint32_t service,
-                                         uint64_t *payload) {
+static void hostrpc_handler_SERVICE_VARFNUINT64(uint64_t *payload) {
   size_t bufsz = (size_t)payload[0];
   char *device_buffer = (char *)payload[1];
   uint64_t uint64_value;
@@ -165,8 +160,7 @@ void hostrpc_handler_SERVICE_VARFNUINT64(void *cbdata, uint32_t service,
   atmi_free(device_buffer);
 }
 
-void hostrpc_handler_SERVICE_VARFNDOUBLE(void *cbdata, uint32_t service,
-                                         uint64_t *payload) {
+static void hostrpc_handler_SERVICE_VARFNDOUBLE(uint64_t *payload) {
   size_t bufsz = (size_t)payload[0];
   char *device_buffer = (char *)payload[1];
   double double_value;
@@ -177,8 +171,7 @@ void hostrpc_handler_SERVICE_VARFNDOUBLE(void *cbdata, uint32_t service,
   atmi_free(device_buffer);
 }
 
-void hostrpc_handler_SERVICE_MALLOC_PRINTF(void *cbdata, uint32_t service,
-                                           uint64_t *payload) {
+static void hostrpc_handler_SERVICE_MALLOC_PRINTF(uint64_t *payload) {
   void *ptr = NULL;
   // CPU device ID 0 is the fine grain memory
   int cpu_device_id = 0;
@@ -189,8 +182,7 @@ void hostrpc_handler_SERVICE_MALLOC_PRINTF(void *cbdata, uint32_t service,
   payload[1] = (uint64_t)ptr;
 }
 
-void hostrpc_handler_SERVICE_MALLOC(void *cbdata, uint32_t service,
-                                    uint64_t *payload) {
+static void hostrpc_handler_SERVICE_MALLOC(uint64_t *payload) {
   void *ptr = NULL;
   int device_id = 0;
   atmi_mem_place_t place = ATMI_MEM_PLACE_GPU_MEM(0, device_id, 0);
@@ -198,14 +190,12 @@ void hostrpc_handler_SERVICE_MALLOC(void *cbdata, uint32_t service,
   payload[0] = (uint64_t)err;
   payload[1] = (uint64_t)ptr;
 }
-void hostrpc_handler_SERVICE_FREE(void *cbdata, uint32_t service,
-                                  uint64_t *payload) {
+static void hostrpc_handler_SERVICE_FREE(uint64_t *payload) {
   char *device_buffer = (char *)payload[1];
   atmi_free(device_buffer);
 }
 
-void hostrpc_handler_SERVICE_FUNCTIONCALL(void *cbdata, uint32_t service,
-                                          uint64_t *payload) {
+static void hostrpc_handler_SERVICE_FUNCTIONCALL(uint64_t *payload) {
   void (*fptr)() = (void *)payload[0];
   (*fptr)();
 }
@@ -222,8 +212,7 @@ int vector_product_zeros(int N, int *A, int *B, int *C) {
 }
 
 // This is the service for the demo of vector_product_zeros
-void hostrpc_handler_SERVICE_DEMO(void *cbdata, uint32_t service,
-                                  uint64_t *payload) {
+static void hostrpc_handler_SERVICE_DEMO(uint64_t *payload) {
   atmi_status_t copyerr;
   int N = (int)payload[0];
   int *A_D = (int *)payload[1];
@@ -242,25 +231,41 @@ void hostrpc_handler_SERVICE_DEMO(void *cbdata, uint32_t service,
   payload[1] = (uint64_t)num_zeros;
 }
 
-void hostcall_register_all_handlers(amd_hostcall_consumer_t *c, void *cbdata) {
-  amd_hostcall_register_service(c, HOSTCALL_SERVICE_PRINTF,
-                                hostrpc_handler_SERVICE_PRINTF, cbdata);
-  amd_hostcall_register_service(c, HOSTCALL_SERVICE_MALLOC_PRINTF,
-                                hostrpc_handler_SERVICE_MALLOC_PRINTF, cbdata);
-  amd_hostcall_register_service(c, HOSTCALL_SERVICE_MALLOC,
-                                hostrpc_handler_SERVICE_MALLOC, cbdata);
-  amd_hostcall_register_service(c, HOSTCALL_SERVICE_FREE,
-                                hostrpc_handler_SERVICE_FREE, cbdata);
-  amd_hostcall_register_service(c, HOSTCALL_SERVICE_DEMO,
-                                hostrpc_handler_SERVICE_DEMO, cbdata);
-  amd_hostcall_register_service(c, HOSTCALL_SERVICE_FUNCTIONCALL,
-                                hostrpc_handler_SERVICE_FUNCTIONCALL, cbdata);
-  amd_hostcall_register_service(c, HOSTCALL_SERVICE_VARFNUINT,
-                                hostrpc_handler_SERVICE_VARFNUINT, cbdata);
-  amd_hostcall_register_service(c, HOSTCALL_SERVICE_VARFNUINT64,
-                                hostrpc_handler_SERVICE_VARFNUINT64, cbdata);
-  amd_hostcall_register_service(c, HOSTCALL_SERVICE_VARFNDOUBLE,
-                                hostrpc_handler_SERVICE_VARFNDOUBLE, cbdata);
+//  This is the only extern, when this is merged remove it
+//  TODO: rewrite hostcall.cpp as hostrpc.c and merge
+//  atmi_hostcall.c and hostrpc_handlers.c into a single hostrpc.c
+extern void handlePayload(uint32_t service, uint64_t *payload) {
+  switch (service) {
+  case HOSTCALL_SERVICE_PRINTF:
+    hostrpc_handler_SERVICE_PRINTF(payload);
+    break;
+  case HOSTCALL_SERVICE_VARFNUINT:
+    hostrpc_handler_SERVICE_VARFNUINT(payload);
+    break;
+  case HOSTCALL_SERVICE_VARFNUINT64:
+    hostrpc_handler_SERVICE_VARFNUINT64(payload);
+    break;
+  case HOSTCALL_SERVICE_VARFNDOUBLE:
+    hostrpc_handler_SERVICE_VARFNDOUBLE(payload);
+    break;
+  case HOSTCALL_SERVICE_MALLOC_PRINTF:
+    hostrpc_handler_SERVICE_MALLOC_PRINTF(payload);
+    break;
+  case HOSTCALL_SERVICE_MALLOC:
+    hostrpc_handler_SERVICE_MALLOC(payload);
+    break;
+  case HOSTCALL_SERVICE_FREE:
+    hostrpc_handler_SERVICE_FREE(payload);
+    break;
+  case HOSTCALL_SERVICE_FUNCTIONCALL:
+    hostrpc_handler_SERVICE_FUNCTIONCALL(payload);
+    break;
+  case HOSTCALL_SERVICE_DEMO:
+    hostrpc_handler_SERVICE_DEMO(payload);
+    break;
+  default:
+    printf("ERROR: hostrpc got a bad service id:%d\n", service);
+  }
 }
 
 //---------------- Support for hostrpc_printf service ---------------------
