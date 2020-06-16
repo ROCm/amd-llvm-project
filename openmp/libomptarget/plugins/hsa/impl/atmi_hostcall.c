@@ -139,8 +139,6 @@ hsa_status_t atmi_hostcall_version_check(unsigned int device_vrm) {
   return HSA_STATUS_SUCCESS;
 }
 
-void hostcall_register_all_handlers(amd_hostcall_consumer_t *c, void *cbdata);
-
 // These three external functions are called by atmi.
 // ATMI uses the header atmi_hostcall.h to reference these.
 //
@@ -152,8 +150,6 @@ unsigned long atmi_hostcall_assign_buffer(hsa_queue_t *this_Q,
     // May be the first call. Create consumer if so
     if (!atl_hcq_consumer) {
       atl_hcq_consumer = amd_hostcall_create_consumer();
-      // None of the handlers use the callback data at present
-      hostcall_register_all_handlers(atl_hcq_consumer, NULL);
       // Spawns a thread
       amd_hostcall_launch_consumer(atl_hcq_consumer);
     }
