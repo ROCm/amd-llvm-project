@@ -1,8 +1,6 @@
 #include "hostcall_impl.h"
 
-#ifdef WITH_HSA
 #include <hsa/hsa.h>
-#endif // WITH_HSA
 
 #include "amd_hostcall.h"
 #include <assert.h>
@@ -30,9 +28,7 @@ bool debug_mode;
 #define GET_FUNCTION(ptr, name)                                                \
     auto ptr = (decltype(name) *)dlsym(RTLD_DEFAULT, #name);
 
-#ifdef WITH_HSA
 GET_FUNCTION(my_hsa_signal_wait, hsa_signal_wait_acquire);
-#endif
 
 enum { SIGNAL_INIT = UINT64_MAX, SIGNAL_DONE = UINT64_MAX - 1 };
 
@@ -83,7 +79,6 @@ get_payload_start(uint32_t num_packets)
 static signal_t
 create_signal()
 {
-#ifdef WITH_HSA
     GET_FUNCTION(hsc, hsa_signal_create);
     if (!hsc) {
         return {0};
@@ -93,9 +88,6 @@ create_signal()
     if (status != HSA_STATUS_SUCCESS)
         return {0};
     return {hs.handle};
-#else
-    return {0};
-#endif
 }
 
 /** \brief Locked reference to critical data.
@@ -310,12 +302,10 @@ amd_hostcall_consumer_t::terminate()
 {
     if (!thread.joinable())
         return AMD_HOSTCALL_ERROR_CONSUMER_INACTIVE;
-#ifdef WITH_HSA
     hsa_signal_t signal = {doorbell.handle};
     GET_FUNCTION(hssr, hsa_signal_store_release);
     assert(hssr);
     hssr(signal, SIGNAL_DONE);
-#endif // WITH_HSA
     thread.join();
     return AMD_HOSTCALL_SUCCESS;
 }
@@ -352,12 +342,10 @@ amd_hostcall_consumer_t::~amd_hostcall_consumer_t()
 {
     terminate();
     critical_data.buffers.clear();
-#ifdef WITH_HSA
     GET_FUNCTION(hsd, hsa_signal_destroy);
     assert(hsd);
     hsa_signal_t hs{doorbell.handle};
     hsd(hs);
-#endif // WITH_HSA
 }
 
 amd_hostcall_consumer_t *

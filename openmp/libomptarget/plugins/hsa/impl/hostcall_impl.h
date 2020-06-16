@@ -2,7 +2,6 @@
 #define AMD_HOSTCALL_IMPL_H
 
 #include "amd_hostcall.h"
-#define WITH_HSA
 
 /** Opaque wrapper for signal */
 typedef struct {
