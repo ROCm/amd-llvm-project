@@ -13,16 +13,14 @@
 #include <algorithm>
 #include <assert.h>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <dlfcn.h>
 #include <elf.h>
 #include <ffi.h>
 #include <fstream>
-#include <gelf.h>
 #include <iostream>
 #include <list>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <vector>
 
 // Header from ATMI interface
@@ -575,12 +573,8 @@ __tgt_target_table *__tgt_rtl_load_binary(int32_t device_id,
   atmi_status_t err;
   {
     atmi_platform_type_t platform = AMDGCN;
-    void *new_img = malloc(img_size);
-    memcpy(new_img, image->ImageStart, img_size);
     err = atmi_module_register_from_memory_to_place(
-        (void **)&new_img, &img_size, &platform, 1, get_gpu_place(device_id));
-
-    free(new_img);
+        (void **)&image->ImageStart, &img_size, &platform, 1, get_gpu_place(device_id));
     check("Module registering", err);
     if (err != ATMI_STATUS_SUCCESS) {
       fprintf(stderr,
@@ -589,7 +583,6 @@ __tgt_target_table *__tgt_rtl_load_binary(int32_t device_id,
               GPUName);
       return NULL;
     }
-    new_img = NULL;
   }
 
   DP("ATMI module successfully loaded!\n");
@@ -609,15 +602,11 @@ __tgt_target_table *__tgt_rtl_load_binary(int32_t device_id,
   for (__tgt_offload_entry *e = HostBegin; e != HostEnd; ++e) {
 
     if (!e->addr) {
-      // FIXME: Probably we should fail when something like this happen, the
-      // host should have always something in the address to uniquely identify
-      // the target region.
-      DP("Analyzing host entry '<null>' (size = %lld)...\n",
+       // The host should have always something in the address to
+       // uniquely identify the target region.
+      fprintf(stderr, "Analyzing host entry '<null>' (size = %lld)...\n",
          (unsigned long long)e->size);
-
-      __tgt_offload_entry entry = *e;
-      DeviceInfo.addOffloadEntry(device_id, entry);
-      continue;
+      return NULL;
     }
 
     if (e->size) {
@@ -827,7 +816,7 @@ __tgt_target_table *__tgt_rtl_load_binary(int32_t device_id,
       }
       check("Loading computation property", err);
 
-      // Flag group size
+      // Flat group size
       std::string WGSizeNameStr(e->name);
       WGSizeNameStr += "_wg_size";
       const char *WGSizeName = WGSizeNameStr.c_str();
