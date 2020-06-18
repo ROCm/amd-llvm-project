@@ -71,6 +71,7 @@ include_directories(
   ${LIBOMPTARGET_DEP_LIBHSA_INCLUDE_DIRS}
   ${CLANG_INCLUDE_DIRS}
   ${CMAKE_CURRENT_SOURCE_DIR}/impl
+  ${CMAKE_CURRENT_SOURCE_DIR}/hostrpc
 )
 
 add_library(omptarget.rtl.hsa SHARED
@@ -89,6 +90,10 @@ add_library(omptarget.rtl.hsa SHARED
       impl/atmi_hostcall.c
       impl/hostcall.cpp
       impl/hostrpc_handlers.c
+      hostrpc/memory.cpp
+      hostrpc/hostcall.cpp
+      hostrpc/openmp_hostcall.cpp
+      hostrpc/hostcall_interface.cpp
       src/rtl.cpp 
       )
 

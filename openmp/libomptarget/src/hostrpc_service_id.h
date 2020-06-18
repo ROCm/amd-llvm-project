@@ -61,6 +61,7 @@ enum hostcall_service_id {
   HOSTCALL_SERVICE_VARFNUINT,
   HOSTCALL_SERVICE_VARFNUINT64,
   HOSTCALL_SERVICE_VARFNDOUBLE,
+  HOSTCALL_SERVICE_NO_OPERATION,
 };
 typedef enum hostcall_service_id hostcall_service_id_t;
 
