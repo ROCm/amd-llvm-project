@@ -54,7 +54,10 @@ set(optimization_level 2)
 # Only list the sources we want to compile.
 set(sources
   ${CMAKE_CURRENT_SOURCE_DIR}/src/hostcall_stubs.hip
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/hostcall_invoke.cl)
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/hostcall_invoke.cl
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/hostcall.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/openmp_hostcall.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/hostcall_interface.cpp)
 
 
 # for both in-tree and out-of-tree build
@@ -76,6 +79,7 @@ endif()
 separate_arguments(mcpus)
 
 macro(collect_sources name dir)
+  set(cxx_sources)
   set(hip_sources)
   set(ocl_sources)
   set(llvm_sources)
@@ -85,6 +89,10 @@ macro(collect_sources name dir)
     get_filename_component(fname ${rfile} NAME_WE)
     get_filename_component(fext ${rfile} EXT)
     #file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/${rdir})
+    if (fext STREQUAL ".cpp")
+      set(cfile ${CMAKE_CURRENT_BINARY_DIR}/${rdir}/${fname}.cpp)
+      list(APPEND cxx_sources ${cfile})
+    endif()
     if (fext STREQUAL ".hip")
       set(cfile ${CMAKE_CURRENT_BINARY_DIR}/${rdir}/${fname}.hip)
       list(APPEND hip_sources ${cfile})
@@ -99,6 +107,59 @@ macro(collect_sources name dir)
       list(APPEND llvm_sources ${cfile})
     endif()
   endforeach()
+endmacro()
+
+macro(add_cxx_bc_library name dir)
+
+  set(cxx_cmd ${LLVM_INSTALL_PREFIX}/bin/clang++
+    -std=c++11
+    -emit-llvm
+    -c
+    -nogpulib # otherwise looks for rocm
+    -ffreestanding
+    -fno-exceptions
+    --target=amdgcn-amd-amdhsa
+    -fvisibility=default
+    -Wno-unused-value
+    -O${optimization_level}
+    -march=${mcpu}
+    -I${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+
+  # -nogpulib is broken, trying this as a workaround
+  if(NOT ${AOMP_STANDALONE_BUILD})
+    set(hip_cmd "${cxx_cmd};--hip-device-lib-path=${ROCM_DIR}/lib/bitcode")
+  endif(NOT ${AOMP_STANDALONE_BUILD})
+
+  
+  set(bc1_files)
+
+  foreach(file ${ARGN})
+    file(RELATIVE_PATH rfile ${dir} ${file})
+    get_filename_component(rdir ${rfile} DIRECTORY)
+    get_filename_component(fname ${rfile} NAME_WE)
+    get_filename_component(fext ${rfile} EXT)
+
+    set(bc1_filename ${fname}.${mcpu}.bc)
+
+    # TODO: Fix this
+    file(GLOB h_files "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h")
+
+    add_custom_command(
+      OUTPUT ${bc1_filename}
+      COMMAND ${cxx_cmd} ${CMAKE_CURRENT_SOURCE_DIR}/src/${fname}.cpp -o ${bc1_filename}
+      DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/${fname}.cpp" ${h_files} )
+
+    list(APPEND bc1_files ${bc1_filename})
+  endforeach()
+
+  add_custom_command(
+    OUTPUT linkout.cxx.${mcpu}.bc
+    COMMAND ${LLVM_INSTALL_PREFIX}/bin/llvm-link ${bc1_files} -o linkout.cxx.${mcpu}.bc
+    DEPENDS ${bc1_files}
+    )
+
+  list(APPEND bc_files linkout.cxx.${mcpu}.bc)
 endmacro()
 
 macro(add_hip_bc_library name dir)
@@ -197,6 +258,7 @@ set(lastmcpu)
 foreach(mcpu ${mcpus})
   set(bc_files)
   add_hip_bc_library(${libname} ${CMAKE_CURRENT_SOURCE_DIR} ${hip_sources})
+  add_cxx_bc_library(${libname} ${CMAKE_CURRENT_SOURCE_DIR} ${cxx_sources})
   add_ocl_bc_library(${libname} ${CMAKE_CURRENT_SOURCE_DIR} ${ocl_sources})
   add_custom_command(
     OUTPUT lib${libname}-${mcpu}.bc
