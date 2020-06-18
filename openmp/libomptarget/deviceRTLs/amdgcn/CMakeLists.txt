@@ -77,7 +77,8 @@ set(hip_sources
   ${devicertl_base_directory}/common/src/task.cu)
 
 set(llvm_sources
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/atomic_inc.ll)
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/atomic_inc.ll
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/hostrpc_invoke.ll)
   
 set(h_files
   ${CMAKE_CURRENT_SOURCE_DIR}/src/amdgcn_interface.h

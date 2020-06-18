@@ -107,15 +107,14 @@ const char *AMDGCN::OpenMPLinker::constructOmpExtraCmds(
   if (Args.hasArg(options::OPT_cuda_device_only))
     BCLibs.append(
         {Args.MakeArgString("libomptarget-amdgcn-" + SubArchName + ".bc"),
-         Args.MakeArgString("libhostcall-amdgcn-" + SubArchName + ".bc"),
          "hip.bc", "hc.bc", "ockl.bc",
          std::string(WaveFrontSizeBC)});
   else {
     BCLibs.append(
         {Args.MakeArgString("libomptarget-amdgcn-" + SubArchName + ".bc"),
-         Args.MakeArgString("libhostcall-amdgcn-" + SubArchName + ".bc"),
          Args.MakeArgString("libaompextras-amdgcn-" + SubArchName + ".bc"),
          "hip.bc", "hc.bc", "ockl.bc",
+         Args.MakeArgString("libbc-hostrpc-amdgcn.a"),
          std::string(WaveFrontSizeBC)});
 
     if (!Args.hasArg(options::OPT_nostdlibxx) &&
