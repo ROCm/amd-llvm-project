@@ -15,5 +15,16 @@ entry:
   ret i32 %ret
 }
 
+declare i64 @llvm.amdgcn.set.inactive.i64(i64, i64)
+
+define i64 @__amdgcn_set_inactive_u64(i64 %0, i64 %1) {
+entry:
+  %res = call i64 @llvm.amdgcn.set.inactive.i64(i64 %0, i64 %1)
+  ret i64 %res
+}
+
 attributes #0 = { alwaysinline nounwind }
 attributes #1 = { nounwind argmemonly }
+
+; need to check these
+; attributes #2 = { nounwind readnone convergent }

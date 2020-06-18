@@ -239,6 +239,7 @@ static void hostrpc_handler_SERVICE_NO_OPERATION(uint64_t *payload) {
 //  TODO: rewrite hostcall.cpp as hostrpc.c and merge
 //  atmi_hostcall.c and hostrpc_handlers.c into a single hostrpc.c
 extern void handlePayload(uint32_t service, uint64_t *payload) {
+  if (service != 0) {  printf("handlePayload: %u\n", service);}
   switch (service) {
   case HOSTCALL_SERVICE_PRINTF:
     hostrpc_handler_SERVICE_PRINTF(payload);

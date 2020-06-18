@@ -36,6 +36,8 @@ SOFTWARE.
 #include "atmi_runtime.h"
 #include "hostcall_impl.h"
 #include "hsa/hsa_ext_amd.h"
+#include "../hostrpc/hostcall.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -142,8 +144,14 @@ hsa_status_t atmi_hostcall_version_check(unsigned int device_vrm) {
 // These three external functions are called by atmi.
 // ATMI uses the header atmi_hostcall.h to reference these.
 //
+
+void * get_client_symbol_address(uint32_t);
+
 unsigned long atmi_hostcall_assign_buffer(hsa_queue_t *this_Q,
                                           uint32_t device_id) {
+
+  printf("called assign buffer\n");
+  
   atl_hcq_element_t *llq_elem;
   llq_elem = atl_hcq_find_by_hsa_q(this_Q);
   if (!llq_elem) {
@@ -154,6 +162,7 @@ unsigned long atmi_hostcall_assign_buffer(hsa_queue_t *this_Q,
       amd_hostcall_launch_consumer(atl_hcq_consumer);
     }
 
+    
     hsa_agent_t agent;
     atmi_place_t place = ATMI_PLACE_GPU(0, device_id);
     // FIXME: error check for this function
@@ -177,9 +186,13 @@ unsigned long atmi_hostcall_assign_buffer(hsa_queue_t *this_Q,
     amd_hostcall_register_buffer(atl_hcq_consumer, hcb);
     // create element of linked list hcq.
     llq_elem = atl_hcq_push(hcb, this_Q, device_id);
+
+    // Also set up the alternative hostcall
+    spawn_hostcall_for_queue(device_id, agent, this_Q, get_client_symbol_address(device_id));    
   }
   return (unsigned long)llq_elem->hcb;
 }
+
 
 hsa_status_t atmi_hostcall_init() { return HSA_STATUS_SUCCESS; }
 
@@ -200,5 +213,6 @@ hsa_status_t atmi_hostcall_terminate() {
   }
   atl_hcq_count = 0;
   atl_hcq_front = atl_hcq_rear = NULL;
+  free_hostcall_state();
   return HSA_STATUS_SUCCESS;
 }

@@ -31,6 +31,8 @@
 // Header from hostcall
 #include "amd_hostcall.h"
 
+#include "../hostrpc/hostcall.hpp"
+
 #include "omptargetplugin.h"
 
 // Get static gpu grid values from clang target-specific constants managed
@@ -130,6 +132,20 @@ struct KernelTy {
 /// FIXME: we may need this to be per device and per library.
 std::list<KernelTy> KernelsList;
 
+static std::vector<void*> client_symbol_addresses;
+static void set_client_symbol_address(uint32_t device_id, void* p)
+{
+  if (device_id >= client_symbol_addresses.size())
+    {
+      client_symbol_addresses.resize(device_id+1);
+    }
+  client_symbol_addresses[device_id] = p;
+}
+extern "C" void * get_client_symbol_address(uint32_t device_id)
+{
+  return client_symbol_addresses[device_id];
+}
+
 // ATMI API to get gpu and gpu memory place
 static atmi_place_t get_gpu_place(int device_id) {
   return ATMI_PLACE_GPU(0, device_id);
@@ -177,7 +193,7 @@ public:
 
   // GPU devices
   std::vector<hsa_agent_t> HSAAgents;
-
+    
   // Device properties
   std::vector<int> ComputeUnits;
   std::vector<int> GroupsPerDevice;
@@ -430,6 +446,8 @@ int64_t __tgt_rtl_init_requires(int64_t RequiresFlags) {
 int32_t __tgt_rtl_init_device(int device_id) {
   hsa_status_t err;
 
+  printf("Initialize DEVICE!\n");
+  
   // this is per device id init
   DP("Initialize the device id: %d\n", device_id);
 
@@ -565,6 +583,7 @@ __tgt_target_table *__tgt_rtl_load_binary(int32_t device_id,
 
   DeviceInfo.clearOffloadEntriesTable(device_id);
 
+  printf("Loading binary\n");
   // We do not need to set the ELF version because the caller of this function
   // had to do that to decide the right runtime to use
 
@@ -593,6 +612,23 @@ __tgt_target_table *__tgt_rtl_load_binary(int32_t device_id,
   }
 
   DP("ATMI module successfully loaded!\n");
+
+  // Spawn hostcall
+  // TODO: Handle multiple binaries, presence/absence of hostcall data etc
+  {
+    hsa_agent_t &agent = DeviceInfo.HSAAgents[device_id];
+    void *client_symbol_address;
+    uint32_t var_size;
+    err = atmi_interop_hsa_get_symbol_info(
+        get_gpu_mem_place(device_id),
+        hostcall_client_symbol(), &client_symbol_address, &var_size);
+    if (err != ATMI_STATUS_SUCCESS) {
+      DP("Finding hostcall client array (Failed)\n");
+    } else {
+      printf("client_symbol[%u] at %lx\n", device_id, (uint64_t)client_symbol_address);
+      set_client_symbol_address(device_id, client_symbol_address);
+    }
+  }
 
   // TODO: Check with Guansong to understand the below comment more thoroughly.
   // Here, we take advantage of the data that is appended after img_end to get
@@ -743,6 +779,8 @@ __tgt_target_table *__tgt_rtl_load_binary(int32_t device_id,
       DP("KernDesc: HostServices: %x\n", KernDescVal.HostServices);
       DP("KernDesc: MaxParallelLevel: %x\n", KernDescVal.MaxParallelLevel);
 
+      
+      
       // gather location of callStack and size of struct
       MaxParLevVal = KernDescVal.MaxParallelLevel;
       if (MaxParLevVal > 0) {
