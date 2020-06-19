@@ -614,6 +614,7 @@ bool tools::addOpenMPRuntime(ArgStringList &CmdArgs, const ToolChain &TC,
 
   switch (RTKind) {
   case Driver::OMPRT_OMP:
+    CmdArgs.push_back("-lhostrpc");
     CmdArgs.push_back("-lomp");
     addOpenMPRuntimeSpecificRPath(TC, Args, CmdArgs);
     break;

@@ -12,4 +12,3 @@
 
 add_subdirectory(amdgcn)
 add_subdirectory(nvptx)
-add_subdirectory(hostcall)
