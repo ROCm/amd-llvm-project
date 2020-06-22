@@ -167,7 +167,7 @@ static std::vector<hsa_agent_t> find_gpu_agents() {
         hsa_status_t err =
             hsa_agent_get_info(agent, HSA_AGENT_INFO_DEVICE, &device_type);
         if (print_kernel_trace > 0 && err != HSA_STATUS_SUCCESS)
-          printf("rtl.cpp: err %d\n",err);
+          fprintf(stderr, "rtl.cpp: err %d\n",err);
         assert(err == HSA_STATUS_SUCCESS);
 
         if (device_type == HSA_DEVICE_TYPE_GPU) {
@@ -179,7 +179,7 @@ static std::vector<hsa_agent_t> find_gpu_agents() {
 
   // iterate_agents fails iff HSA runtime not yet initialized
   if (print_kernel_trace > 0 && err != HSA_STATUS_SUCCESS)
-    printf("rtl.cpp: err %d\n",err);
+    fprintf(stderr, "rtl.cpp: err %d\n",err);
   assert(err == HSA_STATUS_SUCCESS);
   return res;
 }
@@ -446,8 +446,6 @@ int64_t __tgt_rtl_init_requires(int64_t RequiresFlags) {
 int32_t __tgt_rtl_init_device(int device_id) {
   hsa_status_t err;
 
-  printf("Initialize DEVICE!\n");
-  
   // this is per device id init
   DP("Initialize the device id: %d\n", device_id);
 
@@ -583,7 +581,6 @@ __tgt_target_table *__tgt_rtl_load_binary(int32_t device_id,
 
   DeviceInfo.clearOffloadEntriesTable(device_id);
 
-  printf("Loading binary\n");
   // We do not need to set the ELF version because the caller of this function
   // had to do that to decide the right runtime to use
 
@@ -625,7 +622,6 @@ __tgt_target_table *__tgt_rtl_load_binary(int32_t device_id,
     if (err != ATMI_STATUS_SUCCESS) {
       DP("Finding hostcall client array (Failed)\n");
     } else {
-      printf("client_symbol[%u] at %lx\n", device_id, (uint64_t)client_symbol_address);
       set_client_symbol_address(device_id, client_symbol_address);
     }
   }

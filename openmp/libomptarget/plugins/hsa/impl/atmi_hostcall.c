@@ -149,9 +149,6 @@ void * get_client_symbol_address(uint32_t);
 
 unsigned long atmi_hostcall_assign_buffer(hsa_queue_t *this_Q,
                                           uint32_t device_id) {
-
-  printf("called assign buffer\n");
-  
   atl_hcq_element_t *llq_elem;
   llq_elem = atl_hcq_find_by_hsa_q(this_Q);
   if (!llq_elem) {
@@ -187,8 +184,9 @@ unsigned long atmi_hostcall_assign_buffer(hsa_queue_t *this_Q,
     // create element of linked list hcq.
     llq_elem = atl_hcq_push(hcb, this_Q, device_id);
 
-    // Also set up the alternative hostcall
-    spawn_hostcall_for_queue(device_id, agent, this_Q, get_client_symbol_address(device_id));    
+    // This should take a runtime value for array size
+    spawn_hostcall_for_queue(device_id, agent, this_Q,
+                             get_client_symbol_address(device_id));
   }
   return (unsigned long)llq_elem->hcb;
 }
