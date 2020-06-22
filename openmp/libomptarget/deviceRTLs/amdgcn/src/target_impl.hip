@@ -68,7 +68,7 @@ DEVICE int32_t __kmpc_impl_shfl_down_sync(__kmpc_impl_lanemask_t, int32_t var,
 }
 
 DEVICE int GetNumberOfBlocksInKernel() { return __kmpc_amd_grid_dim_x(); }
-DEVICE int GetNumberOfThreadsInBlock() { return __kmpc_amd_block_dim_x(); }
+DEVICE int GetNumberOfThreadsInBlock() { return __kmpc_amd_workgroup_dim_x(); }
 DEVICE unsigned GetWarpId() { return GetThreadIdInBlock() / WARPSIZE; }
 DEVICE unsigned GetLaneId() {
   return __builtin_amdgcn_mbcnt_hi(~0u, __builtin_amdgcn_mbcnt_lo(~0u, 0u));
