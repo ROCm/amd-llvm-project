@@ -232,8 +232,7 @@ std::map<std::string, std::string> KernelNameMap;
 std::vector<std::map<std::string, atl_kernel_info_t> > KernelInfoTable;
 std::vector<std::map<std::string, atl_symbol_info_t> > SymbolInfoTable;
 
-static atl_dep_sync_t g_dep_sync_type =
-    (atl_dep_sync_t)core::Runtime::getInstance().getDepSyncType();
+static atl_dep_sync_t g_dep_sync_type = ATL_SYNC_CALLBACK;
 
 RealTimer SignalAddTimer("Signal Time");
 RealTimer HandleSignalTimer("Handle Signal Time");

@@ -37,7 +37,6 @@ class Environment {
 
   void GetEnvAll();
 
-  int getDepSyncType() const { return dep_sync_type_; }
   int getMaxSignals() const { return max_signals_; }
   int getMaxQueueSize() const { return max_queue_size_; }
   int getMaxKernelTypes() const { return max_kernel_types_; }
@@ -58,7 +57,6 @@ class Environment {
     return ret;
   }
 
-  int dep_sync_type_;
   int max_signals_;
   int max_queue_size_;
   int max_kernel_types_;
@@ -114,7 +112,6 @@ class Runtime {
 
   // environment variables
   const Environment &getEnvironment() const { return env_; }
-  int getDepSyncType() const { return env_.getDepSyncType(); }
   int getMaxSignals() const { return env_.getMaxSignals(); }
   int getMaxQueueSize() const { return env_.getMaxQueueSize(); }
   int getMaxKernelTypes() const { return env_.getMaxKernelTypes(); }
