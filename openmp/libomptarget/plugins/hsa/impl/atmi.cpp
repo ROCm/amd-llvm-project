@@ -116,11 +116,6 @@ atmi_status_t atmi_memcpy(void *dest, const void *src, size_t size) {
   return core::Runtime::getInstance().Memcpy(dest, src, size);
 }
 
-atmi_task_handle_t atmi_memcpy_async(atmi_cparm_t *lparm, void *dest,
-                                     const void *src, size_t size) {
-  return core::Runtime::getInstance().MemcpyAsync(lparm, dest, src, size);
-}
-
 atmi_status_t atmi_free(void *ptr) {
   return core::Runtime::getInstance().Memfree(ptr);
 }

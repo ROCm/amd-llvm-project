@@ -500,37 +500,6 @@ atmi_status_t atmi_free(void *ptr);
  */
 atmi_status_t atmi_memcpy(void *dest, const void *src, size_t size);
 
-/**
- * @brief Asyncrhonously copy memory from the source to destination memory
- * locations.
- *
- * @detail This function assumes that the source and destination regions are
- * non-overlapping. The runtime determines the memory place of the source and
- * the
- * destination and executes the appropriate optimized data movement methodology.
- * This function is equivalent to an asynchronous task, which means that it can
- * be used to setup dependencies with other memory copy routines or compute
- * tasks. The @p cparm structure can be used to provide additional information
- * about the copy operation.
- *
- * @param[in] cparm The structure desribing how the copy task has to be managed.
- *
- * @param[in] dest The destination pointer previously allocated by a system
- * allocator or @p atmi_malloc.
- *
- * @param[in] src The source pointer previously allocated by a system
- * allocator or @p atmi_malloc.
- *
- * @param[in] size The size of the data to be copied in bytes.
- *
- * @return A handle to the ATMI task. The task handle may be used to setup
- * dependencies with other copy and compute tasks or for explicit
- * synchronization
- * by the host.
- *
- */
-atmi_task_handle_t atmi_memcpy_async(atmi_cparm_t *cparm, void *dest,
-                                     const void *src, size_t size);
 /** @} */
 
 /** \defgroup cpu_dev_runtime ATMI CPU Device Runtime
