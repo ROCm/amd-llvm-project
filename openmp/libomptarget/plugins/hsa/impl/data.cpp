@@ -171,8 +171,6 @@ atmi_status_t Runtime::Memfree(void *ptr) {
   return ret;
 }
 
-
-
 atmi_status_t Runtime::Memcpy(void *dest, const void *src, size_t size) {
   atmi_status_t ret;
   hsa_status_t err;
