@@ -109,7 +109,6 @@ class Runtime {
   atmi_status_t TaskGroupRelease(atmi_taskgroup_handle_t);
   // data
   atmi_status_t Memcpy(void *, const void *, size_t);
-  atmi_task_handle_t MemcpyAsync(atmi_cparm_t *, void *, const void *, size_t);
   atmi_status_t Memfree(void *);
   atmi_status_t Malloc(void **, size_t, atmi_mem_place_t);
 
