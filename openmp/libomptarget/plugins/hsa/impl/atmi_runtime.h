@@ -39,15 +39,13 @@ typedef void (*atmi_generic_fp)(void);
  * at least once. The user may initialize difference device types at different
  * regions in the program in order for optimization purposes.
  *
- * @param[in] type The types of devices that will be used by the application.
- *
  * @retval ::ATMI_STATUS_SUCCESS The function has executed successfully.
  *
  * @retval ::ATMI_STATUS_ERROR The function encountered errors.
  *
  * @retval ::ATMI_STATUS_UNKNOWN The function encountered errors.
  */
-atmi_status_t atmi_init(atmi_devtype_t type);
+atmi_status_t atmi_init();
 
 /**
  * @brief Finalize the ATMI runtime environment.
@@ -66,39 +64,6 @@ atmi_status_t atmi_finalize();
 /** \defgroup module_functions ATMI Module
  * @{
  */
-/**
- * @brief Register the ATMI code module from file on to a specific place
- * (device).
- *
- * @detail Currently, only GPU devices need explicit module registration because
- * of their specific ISAs that require a separate compilation phase. On the
- * other
- * hand, CPU devices execute regular x86 functions that are compiled with the
- * host program.
- *
- * @param[in] filenames A collection of files that contain the GPU modules
- * targeting ::AMDGCN platform types. Value cannot be NULL.
- *
- * @param[in] types A collection of platform types corresponding to the files.
- * Value cannot be NULL.
- *
- * @param[in] num_modules Size of @p filenames and @p types. Value should be
- * greater than 0.
- *
- * @param[in] place Denotes the execution place (device) on which the module
- * should be registered and loaded.
- *
- * @retval ::ATMI_STATUS_SUCCESS The function has executed successfully.
- *
- * @retval ::ATMI_STATUS_ERROR The function encountered errors.
- *
- * @retval ::ATMI_STATUS_UNKNOWN The function encountered errors.
- *
- */
-atmi_status_t atmi_module_register_to_place(const char **filenames,
-                                            atmi_platform_type_t *types,
-                                            const int num_modules,
-                                            atmi_place_t place);
 
 /**
  * @brief Register the ATMI code module from memory on to a specific place
@@ -136,35 +101,6 @@ atmi_status_t atmi_module_register_to_place(const char **filenames,
 atmi_status_t atmi_module_register_from_memory_to_place(
     void **modules, size_t *module_sizes, atmi_platform_type_t *types,
     const int num_modules, atmi_place_t place);
-
-/**
- * @brief Register the ATMI code module from file.
- *
- * @detail Currently, only GPU devices need explicit module registration because
- * of their specific ISAs that require a separate compilation phase. On the
- * other
- * hand, CPU devices execute regular x86 functions that are compiled with the
- * host program.
- *
- * @param[in] filenames A collection of files that contain the GPU modules
- * targeting ::AMDGCN platform types. Value cannot be NULL.
- *
- * @param[in] types A collection of platform types corresponding to the files.
- * Value cannot be NULL.
- *
- * @param[in] num_modules Size of @p filenames and @p types. Value should be
- * greater than 0.
- *
- * @retval ::ATMI_STATUS_SUCCESS The function has executed successfully.
- *
- * @retval ::ATMI_STATUS_ERROR The function encountered errors.
- *
- * @retval ::ATMI_STATUS_UNKNOWN The function encountered errors.
- *
- */
-atmi_status_t atmi_module_register(const char **filenames,
-                                   atmi_platform_type_t *types,
-                                   const int num_modules);
 
 /**
  * @brief Register the ATMI code module from memory.
@@ -336,34 +272,6 @@ atmi_status_t atmi_kernel_create_empty(atmi_kernel_t *kernel,
  */
 atmi_status_t atmi_kernel_add_gpu_impl(atmi_kernel_t atmi_kernel,
                                        const char *impl, const unsigned int ID);
-
-/**
- * @brief Add a CPU kernel implementation.
- *
- * @detail An ATMI CPU kernel implementation is identified by a function
- * pointer.
- * The implementation must have the same number of arguments as the kernel.
- * A unique user-specified identifier is associated with each implementation.
- * The advanced user may want to run the specific implementation of the kernel
- * by using the unique identifier in the launch parameter of task launch
- * functions.
- *
- * @param[in] kernel The opaque kernel handle.
- *
- * @param[in] impl The kernel implementation function pointer.
- *
- * @param[in] ID The user-specified unique kernel identifier.
- *
- * @retval ::ATMI_STATUS_SUCCESS The function has executed successfully.
- *
- * @retval ::ATMI_STATUS_ERROR The function encountered errors.
- *
- * @retval ::ATMI_STATUS_UNKNOWN The function encountered errors.
- *
- */
-atmi_status_t atmi_kernel_add_cpu_impl(atmi_kernel_t atmi_kernel,
-                                       atmi_generic_fp impl,
-                                       const unsigned int ID);
 
 /**
  * @brief Release the kernel and all of its implementations.

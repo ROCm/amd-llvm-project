@@ -74,7 +74,7 @@ class Runtime {
   }
 
   // init/finalize
-  virtual atmi_status_t Initialize(atmi_devtype_t);
+  virtual atmi_status_t Initialize();
   virtual atmi_status_t Finalize();
   // machine info
   atmi_machine_t *GetMachineInfo();
@@ -82,20 +82,14 @@ class Runtime {
   atmi_status_t RegisterModuleFromMemory(void **, size_t *,
                                          atmi_platform_type_t *, const int,
                                          atmi_place_t);
-  atmi_status_t RegisterModule(const char **, atmi_platform_type_t *, const int,
-                               atmi_place_t);
   atmi_status_t RegisterModuleFromMemory(void **, size_t *,
                                          atmi_platform_type_t *, const int);
-  atmi_status_t RegisterModule(const char **, atmi_platform_type_t *,
-                               const int);
   // kernels
   virtual atmi_status_t CreateKernel(atmi_kernel_t *, const int, const size_t *,
                                      const int, va_list);
   virtual atmi_status_t ReleaseKernel(atmi_kernel_t);
   atmi_status_t CreateEmptyKernel(atmi_kernel_t *, const int, const size_t *);
   atmi_status_t AddGPUKernelImpl(atmi_kernel_t, const char *,
-                                 const unsigned int);
-  atmi_status_t AddCPUKernelImpl(atmi_kernel_t, atmi_generic_fp,
                                  const unsigned int);
   // sync
   atmi_status_t TaskWait(atmi_task_handle_t);
