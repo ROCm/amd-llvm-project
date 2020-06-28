@@ -34,6 +34,8 @@
 #define BARRIER_COUNTER 0
 #define ORDERED_COUNTER 1
 
+#define DS_SLOT_SIZE 4
+
 // arguments needed for L0 parallelism only.
 class omptarget_nvptx_SharedArgs {
 public:
@@ -90,7 +92,7 @@ struct __kmpc_data_sharing_worker_slot_static {
   __kmpc_data_sharing_slot *Prev;
   void *PrevSlotStackPtr;
   void *DataEnd;
-  char Data[DS_Worker_Warp_Slot_Size];
+  char HugeData[DS_SLOT_SIZE];
 };
 // Additional master slot type which is initialized with the default master slot
 // size of 4 bytes.
@@ -99,7 +101,7 @@ struct __kmpc_data_sharing_master_slot_static {
   __kmpc_data_sharing_slot *Prev;
   void *PrevSlotStackPtr;
   void *DataEnd;
-  char Data[DS_Slot_Size];
+  char MasterData[DS_SLOT_SIZE];
 };
 extern DEVICE SHARED DataSharingStateTy DataSharingState;
 
@@ -211,11 +213,12 @@ public:
     // initialize it with a smaller slot.
     if (IsMasterThread) {
       // Do not initialize this slot again if it has already been initalized.
-      if (master_rootS[0].DataEnd == &master_rootS[0].Data[0] + DS_Slot_Size)
-        return 0;
+      if (master_rootS[0].DataEnd == &master_rootS[0].MasterData[0] + DS_SLOT_SIZE)
+        return (__kmpc_data_sharing_slot *)
+	       __kmpc_impl_malloc(sizeof(master_rootS[0].MasterData[0]));
       // Initialize the pointer to the end of the slot given the size of the
       // data section. DataEnd is non-inclusive.
-      master_rootS[0].DataEnd = &master_rootS[0].Data[0] + DS_Slot_Size;
+      master_rootS[0].DataEnd = &master_rootS[0].MasterData[0] + DS_SLOT_SIZE;
       // We currently do not have a next slot.
       master_rootS[0].Next = 0;
       master_rootS[0].Prev = 0;
@@ -224,12 +227,13 @@ public:
     }
     // Do not initialize this slot again if it has already been initalized.
     if (worker_rootS[wid].DataEnd ==
-        &worker_rootS[wid].Data[0] + DS_Worker_Warp_Slot_Size)
-      return 0;
+        &worker_rootS[wid].HugeData[0] + DS_SLOT_SIZE)
+      return (__kmpc_data_sharing_slot *)
+             __kmpc_impl_malloc(sizeof(worker_rootS[wid].HugeData[0]));
     // Initialize the pointer to the end of the slot given the size of the data
     // section. DataEnd is non-inclusive.
     worker_rootS[wid].DataEnd =
-        &worker_rootS[wid].Data[0] + DS_Worker_Warp_Slot_Size;
+        &worker_rootS[wid].HugeData[0] + DS_SLOT_SIZE;
     // We currently do not have a next slot.
     worker_rootS[wid].Next = 0;
     worker_rootS[wid].Prev = 0;
@@ -239,7 +243,7 @@ public:
 
   INLINE __kmpc_data_sharing_slot *GetPreallocatedSlotAddr(int wid) {
     worker_rootS[wid].DataEnd =
-        &worker_rootS[wid].Data[0] + DS_Worker_Warp_Slot_Size;
+        &worker_rootS[wid].HugeData[0] + DS_Worker_Warp_Slot_Size;
     // We currently do not have a next slot.
     worker_rootS[wid].Next = 0;
     worker_rootS[wid].Prev = 0;
