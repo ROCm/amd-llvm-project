@@ -84,6 +84,8 @@ const char *AMDGCN::OpenMPLinker::constructOmpExtraCmds(
     LibraryPaths.push_back(Args.MakeArgString(lib_debug_path));
   }
 
+  addDirectoryList(Args, LibraryPaths, "", "HIP_DEVICE_LIB_PATH");
+
   // Add compiler path libdevice last as lowest priority search
   LibraryPaths.push_back(
       Args.MakeArgString(C.getDriver().Dir + "/../amdgcn/bitcode"));
@@ -95,6 +97,11 @@ const char *AMDGCN::OpenMPLinker::constructOmpExtraCmds(
   LibraryPaths.push_back(
       Args.MakeArgString(C.getDriver().Dir + "/../../lib/libdevice"));
   LibraryPaths.push_back(Args.MakeArgString(C.getDriver().Dir + "/../../lib"));
+
+  // Add bitcode library in --hip-device-lib.
+  for (auto Lib : Args.getAllArgValues(options::OPT_hip_device_lib_EQ)) {
+    BCLibs.push_back(Args.MakeArgString(Lib));
+  }
 
   llvm::StringRef WaveFrontSizeBC;
   std::string GFXVersion = SubArchName.drop_front(3).str();
