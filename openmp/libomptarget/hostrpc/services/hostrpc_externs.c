@@ -26,8 +26,18 @@ SOFTWARE.
 
 */
 
+
 #include "hostrpc_internal.h"
 #include "hsa_ext_amd.h"
+
+#include "../../../hostrpc/src/hostrpc.h"
+#include "amd_hostcall.h"
+#include "atmi_interop_hsa.h"
+#include "atmi_runtime.h"
+#include "hostcall_impl.h"
+#include "hsa/hsa_ext_amd.h"
+#include "../hostrpc/hostcall.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -105,6 +115,8 @@ static buffer_t *atl_hcq_create_buffer(unsigned int num_packets) {
 
 // The following  three external functions are called by plugin.
 //
+void * get_client_symbol_address(uint32_t);
+
 unsigned long hostrpc_assign_buffer(hsa_agent_t agent,
                                     hsa_queue_t *this_Q,
                                     uint32_t device_id) {
@@ -136,6 +148,10 @@ unsigned long hostrpc_assign_buffer(hsa_agent_t agent,
     amd_hostcall_register_buffer(atl_hcq_consumer, hcb);
     // create element of linked list hcq.
     llq_elem = atl_hcq_push(hcb, this_Q, device_id);
+
+    // This should take a runtime value for array size
+    spawn_hostcall_for_queue(device_id, agent, this_Q,
+                             get_client_symbol_address(device_id));
   }
   return (unsigned long)llq_elem->hcb;
 }
@@ -159,5 +175,6 @@ hsa_status_t hostrpc_terminate() {
   }
   atl_hcq_count = 0;
   atl_hcq_front = atl_hcq_rear = NULL;
+  free_hostcall_state();
   return HSA_STATUS_SUCCESS;
 }

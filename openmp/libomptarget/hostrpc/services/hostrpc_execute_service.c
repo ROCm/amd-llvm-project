@@ -236,6 +236,10 @@ static void hostrpc_handler_SERVICE_DEMO(uint64_t *payload) {
   payload[1] = (uint64_t)num_zeros;
 }
 
+static void hostrpc_handler_SERVICE_NO_OPERATION(uint64_t *payload) {
+  (void)payload;
+}
+
 // FIXME: Clean up this diagnostic and die properly
 static bool hostrpc_version_checked;
 static hostrpc_status_t hostrpc_version_check(unsigned int device_vrm) {
@@ -290,6 +294,7 @@ extern void hostrpc_execute_service(uint32_t service, uint64_t *payload) {
   }
 
   switch (service_id) {
+
   case HOSTRPC_SERVICE_PRINTF:
     hostrpc_handler_SERVICE_PRINTF(payload);
     break;
@@ -316,6 +321,9 @@ extern void hostrpc_execute_service(uint32_t service, uint64_t *payload) {
     break;
   case HOSTRPC_SERVICE_DEMO:
     hostrpc_handler_SERVICE_DEMO(payload);
+    break;
+  case HOSTRPC_SERVICE_NO_OPERATION:
+    hostrpc_handler_SERVICE_NO_OPERATION(payload);
     break;
   default:
     hostrpc_abort(HOSTRPC_INVALIDSERVICE_ERROR);

@@ -5,7 +5,7 @@
 
 #if defined(__x86_64__)
 
-extern "C" void handlePayload(uint32_t service, uint64_t *payload);
+extern "C" void hostrpc_execute_service(uint32_t service, uint64_t *payload);
 
 #endif
 
@@ -26,7 +26,7 @@ void operate(hostrpc::page_t *page)
       // A bit dubious in that the existing code expects payload to have
       // length 8 and we're passing one of length 7, but nothing yet
       // implemented goes beyond [3]
-      handlePayload(static_cast<uint32_t>(service_id), payload);
+      hostrpc_execute_service(static_cast<uint32_t>(service_id), payload);
     }
 }
 void clear(hostrpc::page_t *page)
