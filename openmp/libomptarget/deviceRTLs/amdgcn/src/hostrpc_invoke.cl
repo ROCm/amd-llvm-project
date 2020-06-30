@@ -294,7 +294,7 @@ get_return_value(__global header_t *header, __global payload_t *payload)
  *  be linked into kernel objects that are loaded after this library.
  */
 __ockl_hostrpc_result_t
-hostrpc_invoke( uint service_id,
+hostrpc_invoke_old( uint service_id,
                        ulong arg0, ulong arg1, ulong arg2, ulong arg3,
                        ulong arg4, ulong arg5, ulong arg6, ulong arg7)
 {

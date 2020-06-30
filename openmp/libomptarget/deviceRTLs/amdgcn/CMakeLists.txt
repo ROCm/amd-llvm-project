@@ -97,7 +97,13 @@ set(llvm_sources
   ${CMAKE_CURRENT_SOURCE_DIR}/src/atomic_inc.ll)
 set(ocl_sources
   ${CMAKE_CURRENT_SOURCE_DIR}/src/hostrpc_invoke.cl)
-  
+
+set(cxx_sources
+  ${devicertl_base_directory}/../plugins/hsa/hostrpc/hostcall.cpp
+  ${devicertl_base_directory}/../plugins/hsa/hostrpc/openmp_hostcall.cpp
+  ${devicertl_base_directory}/../plugins/hsa/hostrpc/hostcall_interface.cpp
+)
+
 set(h_files
   ${CMAKE_CURRENT_SOURCE_DIR}/src/amdgcn_interface.h
   ${CMAKE_CURRENT_SOURCE_DIR}/src/hip_atomics.h
@@ -206,12 +212,61 @@ macro(add_cuda_bc_library)
   list(APPEND bc_files linkout.cuda.${mcpu}.bc)
 endmacro()
 
+
+macro(add_cxx_bc_library dir)
+
+  set(cxx_cmd ${LLVM_INSTALL_PREFIX}/bin/clang++
+    -std=c++11
+    -emit-llvm
+    -c
+    -nogpulib # otherwise looks for rocm
+    -ffreestanding
+    -fno-exceptions
+    --target=amdgcn-amd-amdhsa
+    -fvisibility=default
+    -Wno-unused-value
+    -O${optimization_level}
+    -march=${mcpu}
+    -I${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+  
+  set(bc1_files)
+
+  foreach(file ${ARGN})
+    file(RELATIVE_PATH rfile ${dir} ${file})
+    get_filename_component(rdir ${rfile} DIRECTORY)
+    get_filename_component(fname ${rfile} NAME_WE)
+    get_filename_component(fext ${rfile} EXT)
+
+    set(bc1_filename ${fname}.${mcpu}.bc)
+
+    # TODO: Fix this
+    file(GLOB h_files "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h")
+
+    add_custom_command(
+      OUTPUT ${bc1_filename}
+      COMMAND ${cxx_cmd} ${file} -o ${bc1_filename}
+      DEPENDS ${file} ${h_files} )
+
+    list(APPEND bc1_files ${bc1_filename})
+  endforeach()
+
+  add_custom_command(
+    OUTPUT linkout.cxx.${mcpu}.bc
+    COMMAND ${LLVM_INSTALL_PREFIX}/bin/llvm-link ${bc1_files} -o linkout.cxx.${mcpu}.bc
+    DEPENDS ${bc1_files}
+    )
+
+  list(APPEND bc_files linkout.cxx.${mcpu}.bc)
+endmacro()
+
 set(libname "omptarget-amdgcn")
 
 foreach(mcpu ${mcpus})
   set(bc_files)
   add_cuda_bc_library(${hip_sources})
   add_ocl_bc_library(${CMAKE_CURRENT_SOURCE_DIR} ${ocl_sources})
+  add_cxx_bc_library(${CMAKE_CURRENT_SOURCE_DIR} ${cxx_sources})
   list(APPEND bc_files ${llvm_sources})
 
   set(bc_libname lib${libname}-${mcpu}.bc)

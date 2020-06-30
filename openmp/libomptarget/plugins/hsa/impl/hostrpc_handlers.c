@@ -231,6 +231,10 @@ static void hostrpc_handler_SERVICE_DEMO(uint64_t *payload) {
   payload[1] = (uint64_t)num_zeros;
 }
 
+static void hostrpc_handler_SERVICE_NO_OPERATION(uint64_t *payload) {
+  (void)payload;
+}
+
 //  This is the only extern, when this is merged remove it
 //  TODO: rewrite hostcall.cpp as hostrpc.c and merge
 //  atmi_hostcall.c and hostrpc_handlers.c into a single hostrpc.c
@@ -262,6 +266,9 @@ extern void handlePayload(uint32_t service, uint64_t *payload) {
     break;
   case HOSTRPC_SERVICE_DEMO:
     hostrpc_handler_SERVICE_DEMO(payload);
+    break;
+  case HOSTRPC_SERVICE_NO_OPERATION:
+    hostrpc_handler_SERVICE_NO_OPERATION(payload);
     break;
   default:
     printf("ERROR: hostrpc got a bad service id:%d\n", service);

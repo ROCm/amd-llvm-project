@@ -52,6 +52,12 @@ set(sources
   ${CMAKE_CURRENT_SOURCE_DIR}/src/hostrpc.cpp
 )
 
+set(cxx_sources_list
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/hostcall.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/openmp_hostcall.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/hostcall_interface.cpp
+)
+
 # for both in-tree and out-of-tree build
 if (NOT CMAKE_ARCHIVE_OUTPUT_DIRECTORY)
   set(OUTPUTDIR ${CMAKE_CURRENT_BINARY_DIR})
@@ -76,6 +82,67 @@ macro(collect_sources dir)
       list(APPEND openmp_sources ${cfile})
     endif()
   endforeach()
+endmacro()
+
+macro(collect_sources_cxx name dir)
+  set(cxx_sources)
+  foreach(file ${ARGN})
+    file(RELATIVE_PATH rfile ${dir} ${file})
+    get_filename_component(rdir ${rfile} DIRECTORY)
+    get_filename_component(fname ${rfile} NAME_WE)
+    get_filename_component(fext ${rfile} EXT)
+    if (fext STREQUAL ".cpp")
+      set(cfile ${CMAKE_CURRENT_BINARY_DIR}/${rdir}/${fname}.cpp)
+      list(APPEND cxx_sources ${cfile})
+    endif()
+  endforeach()
+endmacro()
+
+macro(add_cxx_bc_library name dir)
+
+  set(cxx_cmd ${LLVM_INSTALL_PREFIX}/bin/clang++
+    -std=c++11
+    -emit-llvm
+    -c
+    -nogpulib # otherwise looks for rocm
+    -ffreestanding
+    -fno-exceptions
+    --target=amdgcn-amd-amdhsa
+    -fvisibility=default
+    -Wno-unused-value
+    -O${optimization_level}
+    -march=${mcpu}
+    -I${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+  
+  set(bc1_files)
+
+  foreach(file ${ARGN})
+    file(RELATIVE_PATH rfile ${dir} ${file})
+    get_filename_component(rdir ${rfile} DIRECTORY)
+    get_filename_component(fname ${rfile} NAME_WE)
+    get_filename_component(fext ${rfile} EXT)
+
+    set(bc1_filename ${fname}.${mcpu}.bc)
+
+    # TODO: Fix this
+    file(GLOB h_files "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h")
+
+    add_custom_command(
+      OUTPUT ${bc1_filename}
+      COMMAND ${cxx_cmd} ${CMAKE_CURRENT_SOURCE_DIR}/src/${fname}.cpp -o ${bc1_filename}
+      DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/${fname}.cpp" ${h_files} )
+
+    list(APPEND bc1_files ${bc1_filename})
+  endforeach()
+
+  add_custom_command(
+    OUTPUT linkout.cxx.${mcpu}.bc
+    COMMAND ${LLVM_INSTALL_PREFIX}/bin/llvm-link ${bc1_files} -o linkout.cxx.${mcpu}.bc
+    DEPENDS ${bc1_files}
+    )
+
+  list(APPEND bc_files linkout.cxx.${mcpu}.bc)
 endmacro()
 
 macro(add_openmp_library libname archname dir)
@@ -163,6 +230,8 @@ macro(add_openmp_library libname archname dir)
 endmacro()
 
 collect_sources(${CMAKE_CURRENT_SOURCE_DIR}/src ${sources})
+
+collect_sources_cxx(${CMAKE_CURRENT_SOURCE_DIR}/src ${cxx_sources_list})
 
 set(libname "hostrpc")
 set(archname "amdgcn")

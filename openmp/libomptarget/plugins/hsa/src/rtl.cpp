@@ -29,6 +29,8 @@
 // Header from hostcall
 #include "amd_hostcall.h"
 
+#include "../hostrpc/hostcall.hpp"
+
 #include "omptargetplugin.h"
 
 // Get static gpu grid values from clang target-specific constants managed
@@ -127,6 +129,20 @@ struct KernelTy {
 /// List that contains all the kernels.
 /// FIXME: we may need this to be per device and per library.
 std::list<KernelTy> KernelsList;
+
+static std::vector<void*> client_symbol_addresses;
+static void set_client_symbol_address(uint32_t device_id, void* p)
+{
+  if (device_id >= client_symbol_addresses.size())
+    {
+      client_symbol_addresses.resize(device_id+1);
+    }
+  client_symbol_addresses[device_id] = p;
+}
+extern "C" void * get_client_symbol_address(uint32_t device_id)
+{
+  return client_symbol_addresses[device_id];
+}
 
 // ATMI API to get gpu and gpu memory place
 static atmi_place_t get_gpu_place(int device_id) {
@@ -586,6 +602,22 @@ __tgt_target_table *__tgt_rtl_load_binary(int32_t device_id,
   }
 
   DP("ATMI module successfully loaded!\n");
+
+  // Spawn hostcall
+  // TODO: Handle multiple binaries, presence/absence of hostcall data etc
+  {
+    hsa_agent_t &agent = DeviceInfo.HSAAgents[device_id];
+    void *client_symbol_address;
+    uint32_t var_size;
+    err = atmi_interop_hsa_get_symbol_info(
+        get_gpu_mem_place(device_id),
+        hostcall_client_symbol(), &client_symbol_address, &var_size);
+    if (err != ATMI_STATUS_SUCCESS) {
+      DP("Finding hostcall client array (Failed)\n");
+    } else {
+      set_client_symbol_address(device_id, client_symbol_address);
+    }
+  }
 
   // TODO: Check with Guansong to understand the below comment more thoroughly.
   // Here, we take advantage of the data that is appended after img_end to get

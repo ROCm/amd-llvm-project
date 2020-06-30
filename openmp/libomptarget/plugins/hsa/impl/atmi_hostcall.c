@@ -36,6 +36,8 @@ SOFTWARE.
 #include "atmi_runtime.h"
 #include "hostcall_impl.h"
 #include "hsa/hsa_ext_amd.h"
+#include "../hostrpc/hostcall.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -142,6 +144,9 @@ hsa_status_t atmi_hostcall_version_check(unsigned int device_vrm) {
 // These three external functions are called by atmi.
 // ATMI uses the header atmi_hostcall.h to reference these.
 //
+
+void * get_client_symbol_address(uint32_t);
+
 unsigned long atmi_hostcall_assign_buffer(hsa_queue_t *this_Q,
                                           uint32_t device_id) {
   atl_hcq_element_t *llq_elem;
@@ -177,6 +182,10 @@ unsigned long atmi_hostcall_assign_buffer(hsa_queue_t *this_Q,
     amd_hostcall_register_buffer(atl_hcq_consumer, hcb);
     // create element of linked list hcq.
     llq_elem = atl_hcq_push(hcb, this_Q, device_id);
+
+    // This should take a runtime value for array size
+    spawn_hostcall_for_queue(device_id, agent, this_Q,
+                             get_client_symbol_address(device_id));
   }
   return (unsigned long)llq_elem->hcb;
 }
@@ -200,5 +209,6 @@ hsa_status_t atmi_hostcall_terminate() {
   }
   atl_hcq_count = 0;
   atl_hcq_front = atl_hcq_rear = NULL;
+  free_hostcall_state();
   return HSA_STATUS_SUCCESS;
 }
