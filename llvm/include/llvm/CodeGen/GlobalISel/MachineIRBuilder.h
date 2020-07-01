@@ -453,9 +453,15 @@ public:
                                                   const LLT ValueTy,
                                                   uint64_t Value);
 
-  /// Build and insert \p Res = G_PTR_MASK \p Op0, \p NumBits
+  /// Build and insert \p Res = G_PTRMASK \p Op0, \p Op1
+  MachineInstrBuilder buildPtrMask(const DstOp &Res, const SrcOp &Op0,
+                                   const SrcOp &Op1) {
+    return buildInstr(TargetOpcode::G_PTRMASK, {Res}, {Op0, Op1});
+  }
+
+  /// Build and insert \p Res = G_PTRMASK \p Op0, \p G_CONSTANT (1 << NumBits) - 1
   ///
-  /// G_PTR_MASK clears the low bits of a pointer operand without destroying its
+  /// This clears the low bits of a pointer operand without destroying its
   /// pointer properties. This has the effect of rounding the address *down* to
   /// a specified alignment in bits.
   ///
@@ -466,8 +472,8 @@ public:
   ///      be cleared in \p Op0.
   ///
   /// \return a MachineInstrBuilder for the newly created instruction.
-  MachineInstrBuilder buildPtrMask(const DstOp &Res, const SrcOp &Op0,
-                                   uint32_t NumBits);
+  MachineInstrBuilder buildMaskLowPtrBits(const DstOp &Res, const SrcOp &Op0,
+                                          uint32_t NumBits);
 
   /// Build and insert \p Res, \p CarryOut = G_UADDO \p Op0, \p Op1
   ///
@@ -797,6 +803,14 @@ public:
   /// \return a MachineInstrBuilder for the newly created instruction.
   MachineInstrBuilder buildLoadInstr(unsigned Opcode, const DstOp &Res,
                                      const SrcOp &Addr, MachineMemOperand &MMO);
+
+  /// Helper to create a load from a constant offset given a base address. Load
+  /// the type of \p Dst from \p Offset from the given base address and memory
+  /// operand.
+  MachineInstrBuilder buildLoadFromOffset(const DstOp &Dst,
+                                          const SrcOp &BasePtr,
+                                          MachineMemOperand &BaseMMO,
+                                          int64_t Offset);
 
   /// Build and insert `G_STORE Val, Addr, MMO`.
   ///

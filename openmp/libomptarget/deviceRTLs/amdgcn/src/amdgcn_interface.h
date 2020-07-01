@@ -84,8 +84,8 @@ EXTERN void __kmpc_amd_master_terminate(kmp_Ident *loc_ref, int32_t tid);
 EXTERN uint32_t __kmpc_amd_grid_dim_x();
 EXTERN uint32_t __kmpc_amd_grid_dim_y();
 EXTERN uint32_t __kmpc_amd_grid_dim_z();
-EXTERN uint32_t __kmpc_amd_block_dim_x();
-EXTERN uint32_t __kmpc_amd_block_dim_y();
-EXTERN uint32_t __kmpc_amd_block_dim_z();
+EXTERN uint32_t __kmpc_amd_workgroup_dim_x();
+EXTERN uint32_t __kmpc_amd_workgroup_dim_y();
+EXTERN uint32_t __kmpc_amd_workgroup_dim_z();
 
 #endif

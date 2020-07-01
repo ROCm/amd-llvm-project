@@ -131,7 +131,6 @@ static bool loadArFile(const char *argv0, const std::string ArchiveName,
                << "' of archive library to module.\n";
       SMDiagnostic ParseErr;
       StringRef DataLayoutString;
-      bool UpgradeDebugInfo = false;
       Expected<MemoryBufferRef> MemBuf = C.getMemoryBufferRef();
       if (Error E = MemBuf.takeError()) {
         errs() << argv0 << ": ";
@@ -141,8 +140,7 @@ static bool loadArFile(const char *argv0, const std::string ArchiveName,
         return false;
       };
 
-      std::unique_ptr<Module> M = parseIR(MemBuf.get(), ParseErr, Context,
-                                          UpgradeDebugInfo, DataLayoutString);
+      std::unique_ptr<Module> M = parseIR(MemBuf.get(), ParseErr, Context);
       if (!M.get()) {
         errs() << argv0 << ": ";
         WithColor::error() << " parsing member '" << goodname
@@ -152,9 +150,11 @@ static bool loadArFile(const char *argv0, const std::string ArchiveName,
       }
       if (Verbose)
         errs() << "Linking member '" << goodname << "' of archive library.\n";
-      bool Err = L.linkInModule(std::move(M), ApplicableFlags);
-      if (Err)
-        return false;
+      if (M.get()->getTargetTriple() != "") {
+        bool Err = L.linkInModule(std::move(M), ApplicableFlags);
+        if (Err)
+          return false;
+      }
       ApplicableFlags = OrigFlags;
     } // end for each child
     failIfError(std::move(Err));
@@ -207,9 +207,11 @@ static bool linkFiles(const char *argv0, LLVMContext &Context, Linker &L,
       }
       if (Verbose)
         errs() << "Linking bc File'" << File << "' to module.\n";
-      bool Err = L.linkInModule(std::move(M), ApplicableFlags);
-      if (Err)
-        return false;
+      if (M.get()->getTargetTriple() != "") {
+        bool Err = L.linkInModule(std::move(M), ApplicableFlags);
+        if (Err)
+          return false;
+      }
     }
     // All linker flags apply to linking of subsequent files.
     ApplicableFlags = Flags;

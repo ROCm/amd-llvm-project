@@ -637,7 +637,7 @@ public:
 
 /// Get the GPU warp size.
 static llvm::Value *getNVPTXWarpSize(CodeGenFunction &CGF) {
-  if (CGF.getTarget().getTriple().getArch() == llvm::Triple::amdgcn) {
+  if (CGF.getTarget().getTriple().isAMDGCN()) {
     CGBuilderTy &Bld = CGF.Builder;
     // return constant compile-time target-specific warp size
     int TargetWarpSize = CGF.getTarget().getGridValue(GPU::GVIDX::GV_Warp_Size);
@@ -655,7 +655,7 @@ static llvm::Value *getNVPTXThreadID(CodeGenFunction &CGF) {
   CGBuilderTy &Bld = CGF.Builder;
   llvm::Module *M = &CGF.CGM.getModule();
   llvm::Function *F;
-  if (CGF.getTarget().getTriple().getArch() == llvm::Triple::amdgcn) {
+  if (CGF.getTarget().getTriple().isAMDGCN()) {
     F = CGF.CGM.getIntrinsic(llvm::Intrinsic::amdgcn_workitem_id_x);
   } else {
     F = llvm::Intrinsic::getDeclaration(
@@ -689,7 +689,7 @@ static llvm::Value *getNVPTXLaneID(CodeGenFunction &CGF) {
 static llvm::Value *getNVPTXNumThreads(CodeGenFunction &CGF) {
   CGBuilderTy &Bld = CGF.Builder;
   llvm::Module *M = &CGF.CGM.getModule();
-  if (CGF.getTarget().getTriple().getArch() == llvm::Triple::amdgcn) {
+  if (CGF.getTarget().getTriple().isAMDGCN()) {
     const char *n = "__ockl_get_local_size";
     llvm::Function *F = M->getFunction(n);
     if (!F) {
@@ -1219,7 +1219,7 @@ static bool supportsLightweightRuntime(ASTContext &Ctx,
 static void setPropertyWorkGroupSize(CodeGenModule &CGM, StringRef Name,
                                      int WGSize) {
   auto *GVMode =
-      (CGM.getTriple().getArch() == llvm::Triple::amdgcn)
+      (CGM.getTriple().isAMDGCN())
           ? new llvm::GlobalVariable(
                 CGM.getModule(), CGM.Int16Ty, /*isConstant=*/true,
                 llvm::GlobalValue::ExternalLinkage, // FIXME: will
@@ -1242,16 +1242,9 @@ void CGOpenMPRuntimeNVPTX::GenerateMetaData(CodeGenModule &CGM,
                                             const OMPExecutableDirective &D,
                                             llvm::Function *&OutlinedFn,
                                             bool IsGeneric) {
-  // If constant ThreadLimit(), set reqd_work_group_size metadata
-  // Emitting Metadata for thread_limit causes an issue in ISEL, due to
-  // an optimization in OPT.
-  // See line 230 lib/Target/AMDGPU/AMDGPULowerKernelAttributes.cpp
-  bool flatAttrEmitted = false;
   int FlatAttr = 0;
-  int DefaultWorkGroupSz =
-      CGM.getTarget().getGridValue(GPU::GVIDX::GV_Default_WG_Size);
 
-  if ((CGM.getTriple().getArch() == llvm::Triple::amdgcn) &&
+  if ((CGM.getTriple().isAMDGCN()) &&
       (isOpenMPTeamsDirective(D.getDirectiveKind()) ||
        isOpenMPParallelDirective(D.getDirectiveKind()))) {
     llvm::LLVMContext &Ctx = CGM.getLLVMContext();
@@ -1260,6 +1253,8 @@ void CGOpenMPRuntimeNVPTX::GenerateMetaData(CodeGenModule &CGM,
     const auto *NumThreadsClause = D.getSingleClause<OMPNumThreadsClause>();
     int MaxWorkGroupSz =
         CGM.getTarget().getGridValue(GPU::GVIDX::GV_Max_WG_Size);
+    int DefaultWorkGroupSz =
+        CGM.getTarget().getGridValue(GPU::GVIDX::GV_Default_WG_Size);
     int compileTimeThreadLimit = 0;
     // Only one of thread_limit or num_threads is used, cant do it for both
     if (ThreadLimitClause && !NumThreadsClause) {
@@ -1298,7 +1293,6 @@ void CGOpenMPRuntimeNVPTX::GenerateMetaData(CodeGenModule &CGM,
       FlatAttr = compileTimeThreadLimit;
       OutlinedFn->addFnAttr("amdgpu-flat-work-group-size",
                             AttrVal + "," + AttrVal);
-      flatAttrEmitted = true;
       wgs_is_constant = true;
       setPropertyWorkGroupSize(CGM, OutlinedFn->getName(),
                                compileTimeThreadLimit);
@@ -1317,12 +1311,6 @@ void CGOpenMPRuntimeNVPTX::GenerateMetaData(CodeGenModule &CGM,
     }
   } // end of amdgcn teams or parallel directive
 
-  // emit amdgpu-flat-work-group-size if not emitted already.
-  if (!flatAttrEmitted) {
-    std::string FlatAttrVal = llvm::utostr(DefaultWorkGroupSz);
-    OutlinedFn->addFnAttr("amdgpu-flat-work-group-size",
-                            FlatAttrVal + "," + FlatAttrVal);
-  }
   // Emit a kernel descriptor for runtime.
   StringRef KernDescName = OutlinedFn->getName();
   CGOpenMPRuntime::emitStructureKernelDesc(CGM, KernDescName, FlatAttr,
@@ -1374,7 +1362,7 @@ void CGOpenMPRuntimeNVPTX::emitNonSPMDKernel(const OMPExecutableDirective &D,
   GlobalizedRecords.emplace_back();
   if (!KernelStaticGlobalized) {
     KernelStaticGlobalized =
-        (CGM.getTriple().getArch() == llvm::Triple::amdgcn)
+        (CGM.getTriple().isAMDGCN())
             ? new llvm::GlobalVariable(
                   CGM.getModule(), CGM.VoidPtrTy, /*isConstant=*/false,
                   llvm::GlobalValue::WeakAnyLinkage,
@@ -1436,7 +1424,7 @@ void CGOpenMPRuntimeNVPTX::emitNonSPMDEntryHeader(CodeGenFunction &CGF,
   // Initialize the state of the OpenMP runtime library on the GPU.
   // TODO: Optimize runtime initialization and pass in correct value.
   //
-  if (CGF.getTarget().getTriple().getArch() == llvm::Triple::amdgcn)
+  if (CGF.getTarget().getTriple().isAMDGCN())
     syncCTAThreads(CGF, CGOpenMPRuntimeNVPTX::CTA_AmdMasterStart);
   llvm::Value *Args[] = {getThreadLimit(CGF),
                          Bld.getInt16(/*RequiresOMPRuntime=*/1)};
@@ -1519,7 +1507,7 @@ void CGOpenMPRuntimeNVPTX::emitSPMDKernel(const OMPExecutableDirective &D,
   GlobalizedRecords.emplace_back();
   if (!KernelStaticGlobalized) {
     KernelStaticGlobalized =
-        (CGM.getTriple().getArch() == llvm::Triple::amdgcn)
+        (CGM.getTriple().isAMDGCN())
             ? new llvm::GlobalVariable(
                   CGM.getModule(), CGM.VoidPtrTy, /*isConstant=*/false,
                   llvm::GlobalValue::WeakAnyLinkage,
@@ -1606,7 +1594,7 @@ void CGOpenMPRuntimeNVPTX::emitSPMDEntryFooter(CodeGenFunction &CGF,
 static void setPropertyExecutionMode(CodeGenModule &CGM, StringRef Name,
                                      bool Mode) {
   auto *GVMode =
-      (CGM.getTriple().getArch() == llvm::Triple::amdgcn)
+      (CGM.getTriple().isAMDGCN())
           ? new llvm::GlobalVariable(
                 CGM.getModule(), CGM.Int8Ty, /*isConstant=*/true,
                 llvm::GlobalValue::ExternalLinkage, // FIXME: will
@@ -1666,6 +1654,7 @@ void CGOpenMPRuntimeNVPTX::emitWorkerLoop(CodeGenFunction &CGF,
       CGF.CreateDefaultAlignTempAlloca(CGF.Int8PtrTy, /*Name=*/"work_fn");
   Address ExecStatus =
       CGF.CreateDefaultAlignTempAlloca(CGF.Int8Ty, /*Name=*/"exec_status");
+
   CGF.InitTempAlloca(ExecStatus, Bld.getInt8(/*C=*/0));
   CGF.InitTempAlloca(WorkFn, llvm::Constant::getNullValue(CGF.Int8PtrTy));
 
@@ -1696,7 +1685,7 @@ void CGOpenMPRuntimeNVPTX::emitWorkerLoop(CodeGenFunction &CGF,
   for (llvm::Function *W : Work) {
     // Try to match this outlined function.
     llvm::Value *ID =
-        (CGM.getTriple().getArch() == llvm::Triple::amdgcn)
+        (CGM.getTriple().isAMDGCN())
             ? Bld.CreateIntToPtr(
                   llvm::ConstantInt::get(CGM.SizeTy,
                                          llvm::hash_value(W->getName())),
@@ -1713,7 +1702,7 @@ void CGOpenMPRuntimeNVPTX::emitWorkerLoop(CodeGenFunction &CGF,
     // Execute this outlined function.
     CGF.EmitBlock(ExecuteFNBB);
 
-    if (CGM.getTriple().getArch() == llvm::Triple::amdgcn) {
+    if (CGM.getTriple().isAMDGCN()) {
       // For amdgcn, insert call to select_outline_wrapper function
       // select_outline_wrapper is generated by clang-build-select
       // as first step in the HIP TC device link phase for OpenMP.
@@ -1883,11 +1872,12 @@ CGOpenMPRuntimeNVPTX::createNVPTXRuntimeFunction(unsigned Function) {
   case OMPRTL_NVPTX__kmpc_serialized_parallel: {
     // Build void __kmpc_serialized_parallel(ident_t *loc, kmp_int32
     // global_tid);
-    unsigned DiagID = CGM.getDiags().getCustomDiagID(
+    if (CGM.getTriple().isAMDGCN()) {
+      unsigned DiagID = CGM.getDiags().getCustomDiagID(
         DiagnosticsEngine::Remark,
         "Nested parallel pragma, this will be serialized on device");
-    CGM.getDiags().Report(DiagID);
-
+      CGM.getDiags().Report(DiagID);
+    }
     llvm::Type *TypeParams[] = {getIdentTyPointerTy(), CGM.Int32Ty};
     auto *FnTy =
         llvm::FunctionType::get(CGM.VoidTy, TypeParams, /*isVarArg*/ false);
@@ -2854,6 +2844,7 @@ void CGOpenMPRuntimeNVPTX::emitNonSPMDParallelCall(
   Address ZeroAddr = CGF.CreateDefaultAlignTempAlloca(CGF.Int32Ty,
                                                       /*Name=*/".zero.addr");
   CGF.InitTempAlloca(ZeroAddr, CGF.Builder.getInt32(/*C*/ 0));
+
   // ThreadId for serialized parallels is 0.
   Address ThreadIDAddr = ZeroAddr;
   auto &&CodeGen = [this, Fn, CapturedVars, Loc, &ThreadIDAddr](
@@ -2863,7 +2854,11 @@ void CGOpenMPRuntimeNVPTX::emitNonSPMDParallelCall(
     Address ZeroAddr =
         CGF.CreateDefaultAlignTempAlloca(CGF.Int32Ty,
                                          /*Name=*/".bound.zero.addr");
-    CGF.InitTempAlloca(ZeroAddr, CGF.Builder.getInt32(/*C*/ 0));
+    if (CGM.getTriple().isAMDGCN()) {
+      CGF.Builder.CreateStore(CGF.Builder.getInt32(/*C*/ 0), ZeroAddr);
+    } else {
+      CGF.InitTempAlloca(ZeroAddr, CGF.Builder.getInt32(/*C*/ 0));
+    }
     llvm::SmallVector<llvm::Value *, 16> OutlinedFnArgs;
     OutlinedFnArgs.push_back(ThreadIDAddr.getPointer());
     OutlinedFnArgs.push_back(ZeroAddr.getPointer());
@@ -2887,13 +2882,15 @@ void CGOpenMPRuntimeNVPTX::emitNonSPMDParallelCall(
     RCG(CGF);
   };
 
-  auto &&L0ParallelGen = [this, CapturedVars, Fn, Is_amdgcn](
+  bool IsAmdgcn = (CGM.getTriple().isAMDGCN()) ? true : false;
+
+  auto &&L0ParallelGen = [this, CapturedVars, Fn, IsAmdgcn](
                              CodeGenFunction &CGF, PrePostActionTy &Action) {
     CGBuilderTy &Bld = CGF.Builder;
     llvm::Function *WFn = WrapperFunctionsMap[Fn];
     assert(WFn && "Wrapper function does not exist!");
 
-    if (Is_amdgcn) {
+    if (IsAmdgcn) {
       auto &CGM = CGF.CGM;
       // For amdgcn, replace fctptr with hash code of function name
       auto HashCode = llvm::hash_value(WFn->getName());
@@ -3034,6 +3031,7 @@ void CGOpenMPRuntimeNVPTX::emitSPMDParallelCall(
   Address ZeroAddr = CGF.CreateDefaultAlignTempAlloca(CGF.Int32Ty,
                                                       /*Name=*/".zero.addr");
   CGF.InitTempAlloca(ZeroAddr, CGF.Builder.getInt32(/*C*/ 0));
+
   // ThreadId for serialized parallels is 0.
   Address ThreadIDAddr = ZeroAddr;
   auto &&CodeGen = [this, OutlinedFn, CapturedVars, Loc, &ThreadIDAddr](
@@ -3623,7 +3621,7 @@ static llvm::Value *emitInterWarpCopyFunction(CodeGenModule &CGM,
     unsigned SharedAddressSpace = C.getTargetAddressSpace(LangAS::cuda_shared);
     // amdgcn cannot zeroinitialize LDS
     TransferMedium =
-        (CGM.getTriple().getArch() == llvm::Triple::amdgcn)
+        (CGM.getTriple().isAMDGCN())
             ? new llvm::GlobalVariable(
                   M, Ty,
                   /*isConstant=*/false, llvm::GlobalVariable::WeakAnyLinkage,
@@ -4987,7 +4985,7 @@ llvm::Function *CGOpenMPRuntimeNVPTX::createParallelDataSharingWrapper(
       CGM.getTypes().GetFunctionType(CGFI), llvm::GlobalValue::InternalLinkage,
       Twine(OutlinedParallelFn->getName(), "_wrapper"), &CGM.getModule());
   CGM.SetInternalFunctionAttributes(GlobalDecl(), Fn, CGFI);
-  if (CGM.getTriple().getArch() == llvm::Triple::amdgcn) {
+  if (CGM.getTriple().isAMDGCN()) {
     Fn->setName(CGM.getModule().getName() + Fn->getName());
     DotToUnderbar(Fn);
     Fn->setLinkage(llvm::GlobalValue::ExternalLinkage);
@@ -5022,6 +5020,7 @@ llvm::Function *CGOpenMPRuntimeNVPTX::createParallelDataSharingWrapper(
   Address ZeroAddr = CGF.CreateDefaultAlignTempAlloca(CGF.Int32Ty,
                                                       /*Name=*/".zero.addr");
   CGF.InitTempAlloca(ZeroAddr, CGF.Builder.getInt32(/*C*/ 0));
+
   // Get the array of arguments.
   SmallVector<llvm::Value *, 8> Args;
 
@@ -5380,7 +5379,7 @@ static CudaArch getCudaArch(CodeGenModule &CGM) {
   if (!CGM.getTarget().hasFeature("ptx") &&
       (CGM.getTriple().getArch() != llvm::Triple::amdgcn))
     return CudaArch::UNKNOWN;
-  if (CGM.getTriple().getArch() == llvm::Triple::amdgcn)
+  if (CGM.getTriple().isAMDGCN())
     return StringToCudaArch(CGM.getTarget().getTargetOpts().CPU);
   // FIXME: Can we always just regurn StringToCudaArch(...CPU) here?
   llvm::StringMap<bool> Features;
@@ -5505,12 +5504,14 @@ static std::pair<unsigned, unsigned> getSMsBlocksPerSM(CodeGenModule &CGM) {
   case CudaArch::GFX902:
   case CudaArch::GFX904:
   case CudaArch::GFX906:
+    return {64, 64};
   case CudaArch::GFX908:
   case CudaArch::GFX909:
   case CudaArch::GFX1010:
   case CudaArch::GFX1011:
   case CudaArch::GFX1012:
-    return {64, 64};
+    // New GFX* need to be verified for the correct # SM's
+    return {120, 64};
   case CudaArch::UNKNOWN:
     break;
   case CudaArch::LAST:
@@ -5587,7 +5588,7 @@ void CGOpenMPRuntimeNVPTX::clear() {
       QualType StaticTy = C.getRecordType(SharedStaticRD);
       llvm::Type *LLVMStaticTy = CGM.getTypes().ConvertTypeForMem(StaticTy);
       auto *GV =
-          (CGM.getTriple().getArch() == llvm::Triple::amdgcn)
+          (CGM.getTriple().isAMDGCN())
               ? new llvm::GlobalVariable(
                     CGM.getModule(), LLVMStaticTy,
                     /*isConstant=*/false, llvm::GlobalValue::WeakAnyLinkage,
@@ -5624,7 +5625,7 @@ void CGOpenMPRuntimeNVPTX::clear() {
                                  /*IndexTypeQuals=*/0);
       llvm::Type *LLVMArr2Ty = CGM.getTypes().ConvertTypeForMem(Arr2Ty);
       llvm::GlobalValue::LinkageTypes Linkage =
-          (CGM.getTriple().getArch() == llvm::Triple::amdgcn)
+          (CGM.getTriple().isAMDGCN())
               ? llvm::GlobalValue::PrivateLinkage
               : llvm::GlobalValue::InternalLinkage;
       // FIXME: nvlink does not handle weak linkage correctly (object with the
@@ -5632,9 +5633,9 @@ void CGOpenMPRuntimeNVPTX::clear() {
       // Restore CommonLinkage as soon as nvlink is fixed.
       auto *GV =
           new llvm::GlobalVariable(CGM.getModule(), LLVMArr2Ty,
-                                   /*isConstant=*/false, Linkage,
-                                   llvm::Constant::getNullValue(LLVMArr2Ty),
-                                   "_openmp_static_glob_rd_$_");
+          /*isConstant=*/false, Linkage,
+          llvm::Constant::getNullValue(LLVMArr2Ty),
+          "_openmp_static_glob_rd_$_");
       auto *Replacement = llvm::ConstantExpr::getPointerBitCastOrAddrSpaceCast(
           GV, CGM.VoidPtrTy);
       for (const GlobalPtrSizeRecsTy *Rec : GlobalRecs) {
@@ -5663,7 +5664,7 @@ void CGOpenMPRuntimeNVPTX::clear() {
     llvm::Type *LLVMReductionsBufferTy =
         CGM.getTypes().ConvertTypeForMem(StaticTy);
     llvm::GlobalValue::LinkageTypes Linkage =
-        (CGM.getTriple().getArch() == llvm::Triple::amdgcn)
+        (CGM.getTriple().isAMDGCN())
             ? llvm::GlobalValue::PrivateLinkage
             : llvm::GlobalValue::InternalLinkage;
     // FIXME: nvlink does not handle weak linkage correctly (object with the
