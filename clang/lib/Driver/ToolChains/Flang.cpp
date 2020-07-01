@@ -142,15 +142,15 @@ void Flang::ConstructJob(Compilation &C, const JobAction &JA,
     CommonCmdArgs.push_back("warn");
   }
    // AOCC Begin
-  for (auto Arg : Args.filtered(options::OPT_func_args_alias_f)) {
+  for (auto Arg : Args.filtered(options::OPT_ffunc_args_alias)) {
     Arg->claim();
     CommonCmdArgs.push_back("-func_args_alias");
   }
-  for (auto Arg : Args.filtered(options::OPT_use_flang_math_libs_f)) {
+  for (auto Arg : Args.filtered(options::OPT_fuse_flang_math_libs)) {
     Arg->claim();
     LowerCmdArgs.push_back("-nouse_llvm_math_intrin");
   }
-  for (auto Arg : Args.filtered(options::OPT_fortran_gnu_ext_f)) {
+  for (auto Arg : Args.filtered(options::OPT_ffortran_gnu_ext)) {
     Arg->claim();
     UpperCmdArgs.push_back("-allow_gnu_extensions");
   }
@@ -407,19 +407,19 @@ void Flang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Handle -fdefault-real-8 (and its alias, -r8) and -fno-default-real-8
   if (Arg *A = Args.getLastArg(options::OPT_r8,
-                               options::OPT_default_real_8_f,
-                               options::OPT_default_real_8_fno)) {
+                               options::OPT_fdefault_real_8,
+                               options::OPT_fno_default_real_8)) {
     const char * fl;
     // For -f version add -x flag, for -fno add -y
-    if (A->getOption().matches(options::OPT_default_real_8_fno)) {
+    if (A->getOption().matches(options::OPT_fno_default_real_8)) {
       fl = "-y";
     } else {
       fl = "-x";
     }
 
     for (Arg *A : Args.filtered(options::OPT_r8,
-                                options::OPT_default_real_8_f,
-                                options::OPT_default_real_8_fno)) {
+                                options::OPT_fdefault_real_8,
+                                options::OPT_fno_default_real_8)) {
       A->claim();
     }
 
@@ -433,19 +433,19 @@ void Flang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Process and claim -i8/-fdefault-integer-8/-fno-default-integer-8 argument
   if (Arg *A = Args.getLastArg(options::OPT_i8,
-                               options::OPT_default_integer_8_f,
-                               options::OPT_default_integer_8_fno)) {
+                               options::OPT_fdefault_integer_8,
+                               options::OPT_fno_default_integer_8)) {
     const char * fl;
 
-    if (A->getOption().matches(options::OPT_default_integer_8_fno)) {
+    if (A->getOption().matches(options::OPT_fno_default_integer_8)) {
       fl = "-y";
     } else {
       fl = "-x";
     }
 
     for (Arg *A : Args.filtered(options::OPT_i8,
-                                options::OPT_default_integer_8_f,
-                                options::OPT_default_integer_8_fno)) {
+                                options::OPT_fdefault_integer_8,
+                                options::OPT_fno_default_integer_8)) {
       A->claim();
     }
 

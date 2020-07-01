@@ -10,6 +10,7 @@
 #include "InputInfo.h"
 #include "ToolChains/AIX.h"
 #include "ToolChains/AMDGPU.h"
+#include "ToolChains/AMDGPUOpenMP.h"
 #include "ToolChains/AVR.h"
 #include "ToolChains/Ananas.h"
 #include "ToolChains/BareMetal.h"
@@ -739,7 +740,7 @@ void Driver::CreateOffloadingDeviceToolChains(Compilation &C,
               auto &HIPTC =
                   ToolChains[HIPTriple.str() + "/" + HostTriple.str()];
               if (!HIPTC) {
-                HIPTC = std::make_unique<toolchains::HIPToolChain>(
+                HIPTC = std::make_unique<toolchains::AMDGPUOpenMPToolChain>(
                     *this, HIPTriple, *HostTC, C.getInputArgs(),
                     Action::OFK_OpenMP);
               }
@@ -1855,6 +1856,11 @@ bool Driver::HandleImmediateArgs(const Compilation &C) {
   if (C.getArgs().hasArg(options::OPT_print_effective_triple)) {
     const llvm::Triple Triple(TC.ComputeEffectiveClangTriple(C.getArgs()));
     llvm::outs() << Triple.getTriple() << "\n";
+    return false;
+  }
+
+  if (C.getArgs().hasArg(options::OPT_print_targets)) {
+    llvm::TargetRegistry::printRegisteredTargetsForVersion(llvm::outs());
     return false;
   }
 

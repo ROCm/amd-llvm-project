@@ -33,14 +33,6 @@
 //  Is this a device pass
 #if defined(__AMDGCN__) || defined(__NVPTX__)
 
-// Make the __NVPTX__ macro have useful information about which GPU this
-// device pass is for. We don't want to encourage the use of the __CUDA_ARCH__
-// macro because this is an OpenMP device pass.
-#if defined(__NVPTX__)
-#undef __NVPTX__
-#define __NVPTX__ __CUDA_ARCH__
-#endif
-
 #define __forceinline__ __attribute__((always_inline))
 
 // Add any macro definitions here that prevent standard header

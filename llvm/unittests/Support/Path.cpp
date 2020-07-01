@@ -204,6 +204,71 @@ TEST(Support, Path) {
   }
 }
 
+TEST(Support, PathRoot) {
+  ASSERT_EQ(path::root_name("//net/hello", path::Style::posix).str(), "//net");
+  ASSERT_EQ(path::root_name("c:/hello", path::Style::posix).str(), "");
+  ASSERT_EQ(path::root_name("c:/hello", path::Style::windows).str(), "c:");
+  ASSERT_EQ(path::root_name("/hello", path::Style::posix).str(), "");
+
+  ASSERT_EQ(path::root_directory("/goo/hello", path::Style::posix).str(), "/");
+  ASSERT_EQ(path::root_directory("c:/hello", path::Style::windows).str(), "/");
+  ASSERT_EQ(path::root_directory("d/file.txt", path::Style::posix).str(), "");
+  ASSERT_EQ(path::root_directory("d/file.txt", path::Style::windows).str(), "");
+
+  SmallVector<StringRef, 40> paths;
+  paths.push_back("");
+  paths.push_back(".");
+  paths.push_back("..");
+  paths.push_back("foo");
+  paths.push_back("/");
+  paths.push_back("/foo");
+  paths.push_back("foo/");
+  paths.push_back("/foo/");
+  paths.push_back("foo/bar");
+  paths.push_back("/foo/bar");
+  paths.push_back("//net");
+  paths.push_back("//net/");
+  paths.push_back("//net/foo");
+  paths.push_back("///foo///");
+  paths.push_back("///foo///bar");
+  paths.push_back("/.");
+  paths.push_back("./");
+  paths.push_back("/..");
+  paths.push_back("../");
+  paths.push_back("foo/.");
+  paths.push_back("foo/..");
+  paths.push_back("foo/./");
+  paths.push_back("foo/./bar");
+  paths.push_back("foo/..");
+  paths.push_back("foo/../");
+  paths.push_back("foo/../bar");
+  paths.push_back("c:");
+  paths.push_back("c:/");
+  paths.push_back("c:foo");
+  paths.push_back("c:/foo");
+  paths.push_back("c:foo/");
+  paths.push_back("c:/foo/");
+  paths.push_back("c:/foo/bar");
+  paths.push_back("prn:");
+  paths.push_back("c:\\");
+  paths.push_back("c:foo");
+  paths.push_back("c:\\foo");
+  paths.push_back("c:foo\\");
+  paths.push_back("c:\\foo\\");
+  paths.push_back("c:\\foo/");
+  paths.push_back("c:/foo\\bar");
+
+  for (StringRef p : paths) {
+    ASSERT_EQ(
+      path::root_name(p, path::Style::posix).str() + path::root_directory(p, path::Style::posix).str(),
+      path::root_path(p, path::Style::posix).str());
+
+    ASSERT_EQ(
+      path::root_name(p, path::Style::windows).str() + path::root_directory(p, path::Style::windows).str(),
+      path::root_path(p, path::Style::windows).str());
+  }
+}
+
 TEST(Support, FilenameParent) {
   EXPECT_EQ("/", path::filename("/"));
   EXPECT_EQ("", path::parent_path("/"));
@@ -1311,48 +1376,73 @@ TEST(Support, ReplacePathPrefix) {
   SmallString<64> Path1("/foo");
   SmallString<64> Path2("/old/foo");
   SmallString<64> Path3("/oldnew/foo");
+  SmallString<64> Path4("C:\\old/foo\\bar");
   SmallString<64> OldPrefix("/old");
   SmallString<64> OldPrefixSep("/old/");
+  SmallString<64> OldPrefixWin("c:/oLD/F");
   SmallString<64> NewPrefix("/new");
   SmallString<64> NewPrefix2("/longernew");
   SmallString<64> EmptyPrefix("");
+  bool Found;
 
   SmallString<64> Path = Path1;
-  path::replace_path_prefix(Path, OldPrefix, NewPrefix);
+  Found = path::replace_path_prefix(Path, OldPrefix, NewPrefix);
+  EXPECT_FALSE(Found);
   EXPECT_EQ(Path, "/foo");
   Path = Path2;
-  path::replace_path_prefix(Path, OldPrefix, NewPrefix);
+  Found = path::replace_path_prefix(Path, OldPrefix, NewPrefix);
+  EXPECT_TRUE(Found);
   EXPECT_EQ(Path, "/new/foo");
   Path = Path2;
-  path::replace_path_prefix(Path, OldPrefix, NewPrefix2);
+  Found = path::replace_path_prefix(Path, OldPrefix, NewPrefix2);
+  EXPECT_TRUE(Found);
   EXPECT_EQ(Path, "/longernew/foo");
   Path = Path1;
-  path::replace_path_prefix(Path, EmptyPrefix, NewPrefix);
+  Found = path::replace_path_prefix(Path, EmptyPrefix, NewPrefix);
+  EXPECT_TRUE(Found);
   EXPECT_EQ(Path, "/new/foo");
   Path = Path2;
-  path::replace_path_prefix(Path, OldPrefix, EmptyPrefix);
+  Found = path::replace_path_prefix(Path, OldPrefix, EmptyPrefix);
+  EXPECT_TRUE(Found);
   EXPECT_EQ(Path, "/foo");
   Path = Path2;
-  path::replace_path_prefix(Path, OldPrefixSep, EmptyPrefix);
+  Found = path::replace_path_prefix(Path, OldPrefixSep, EmptyPrefix);
+  EXPECT_TRUE(Found);
   EXPECT_EQ(Path, "foo");
   Path = Path3;
-  path::replace_path_prefix(Path, OldPrefix, NewPrefix);
+  Found = path::replace_path_prefix(Path, OldPrefix, NewPrefix);
+  EXPECT_TRUE(Found);
   EXPECT_EQ(Path, "/newnew/foo");
   Path = Path3;
-  path::replace_path_prefix(Path, OldPrefix, NewPrefix2);
+  Found = path::replace_path_prefix(Path, OldPrefix, NewPrefix2);
+  EXPECT_TRUE(Found);
   EXPECT_EQ(Path, "/longernewnew/foo");
   Path = Path1;
-  path::replace_path_prefix(Path, EmptyPrefix, NewPrefix);
+  Found = path::replace_path_prefix(Path, EmptyPrefix, NewPrefix);
+  EXPECT_TRUE(Found);
   EXPECT_EQ(Path, "/new/foo");
   Path = OldPrefix;
-  path::replace_path_prefix(Path, OldPrefix, NewPrefix);
+  Found = path::replace_path_prefix(Path, OldPrefix, NewPrefix);
+  EXPECT_TRUE(Found);
   EXPECT_EQ(Path, "/new");
   Path = OldPrefixSep;
-  path::replace_path_prefix(Path, OldPrefix, NewPrefix);
+  Found = path::replace_path_prefix(Path, OldPrefix, NewPrefix);
+  EXPECT_TRUE(Found);
   EXPECT_EQ(Path, "/new/");
   Path = OldPrefix;
-  path::replace_path_prefix(Path, OldPrefixSep, NewPrefix);
+  Found = path::replace_path_prefix(Path, OldPrefixSep, NewPrefix);
+  EXPECT_FALSE(Found);
   EXPECT_EQ(Path, "/old");
+  Path = Path4;
+  Found = path::replace_path_prefix(Path, OldPrefixWin, NewPrefix,
+                                    path::Style::windows);
+  EXPECT_TRUE(Found);
+  EXPECT_EQ(Path, "/newoo\\bar");
+  Path = Path4;
+  Found = path::replace_path_prefix(Path, OldPrefixWin, NewPrefix,
+                                    path::Style::posix);
+  EXPECT_FALSE(Found);
+  EXPECT_EQ(Path, "C:\\old/foo\\bar");
 }
 
 TEST_F(FileSystemTest, OpenFileForRead) {

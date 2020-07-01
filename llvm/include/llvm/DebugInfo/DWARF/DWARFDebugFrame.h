@@ -33,7 +33,7 @@ namespace dwarf {
 /// manual, "6.4.1 Structure of Call Frame Information".
 class CFIProgram {
 public:
-  typedef SmallVector<uint64_t, 2> Operands;
+  typedef SmallVector<uint64_t, 3> Operands;
 
   /// An instruction consists of a DWARF CFI opcode and an optional sequence of
   /// operands. If it refers to an expression, then this expression has its own
@@ -300,7 +300,7 @@ public:
 
   /// Parse the section from raw data. \p Data is assumed to contain the whole
   /// frame section contents to be parsed.
-  void parse(DWARFDataExtractor Data);
+  Error parse(DWARFDataExtractor Data);
 
   /// Return whether the section has any entries.
   bool empty() const { return Entries.empty(); }

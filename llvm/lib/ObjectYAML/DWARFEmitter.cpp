@@ -15,6 +15,7 @@
 #include "DWARFVisitor.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/ObjectYAML/DWARFYAML.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/Host.h"
@@ -94,7 +95,11 @@ void DWARFYAML::EmitDebugAbbrev(raw_ostream &OS, const DWARFYAML::Data &DI) {
 void DWARFYAML::EmitDebugAranges(raw_ostream &OS, const DWARFYAML::Data &DI) {
   for (auto Range : DI.ARanges) {
     auto HeaderStart = OS.tell();
-    writeInitialLength(Range.Length, OS, DI.IsLittleEndian);
+    if (Range.Format == dwarf::DWARF64) {
+      writeInteger((uint32_t)dwarf::DW_LENGTH_DWARF64, OS, DI.IsLittleEndian);
+      writeInteger((uint64_t)Range.Length, OS, DI.IsLittleEndian);
+    } else
+      writeInteger((uint32_t)Range.Length, OS, DI.IsLittleEndian);
     writeInteger((uint16_t)Range.Version, OS, DI.IsLittleEndian);
     writeInteger((uint32_t)Range.CuOffset, OS, DI.IsLittleEndian);
     writeInteger((uint8_t)Range.AddrSize, OS, DI.IsLittleEndian);
@@ -111,6 +116,23 @@ void DWARFYAML::EmitDebugAranges(raw_ostream &OS, const DWARFYAML::Data &DI) {
                                 DI.IsLittleEndian);
     }
     ZeroFillBytes(OS, Range.AddrSize * 2);
+  }
+}
+
+void DWARFYAML::EmitDebugRanges(raw_ostream &OS, const DWARFYAML::Data &DI) {
+  const size_t RangesOffset = OS.tell();
+  for (auto DebugRanges : DI.DebugRanges) {
+    const size_t CurrOffset = OS.tell() - RangesOffset;
+    assert(DebugRanges.Offset <= CurrOffset);
+    if (DebugRanges.Offset > CurrOffset)
+      ZeroFillBytes(OS, DebugRanges.Offset - CurrOffset);
+    for (auto Entry : DebugRanges.Entries) {
+      writeVariableSizedInteger(Entry.LowOffset, DebugRanges.AddrSize, OS,
+                                DI.IsLittleEndian);
+      writeVariableSizedInteger(Entry.HighOffset, DebugRanges.AddrSize, OS,
+                                DI.IsLittleEndian);
+    }
+    ZeroFillBytes(OS, DebugRanges.AddrSize * 2);
   }
 }
 
@@ -376,6 +398,8 @@ DWARFYAML::EmitDebugSections(StringRef YAMLString, bool ApplyFixups,
   EmitDebugSectionImpl(DI, &DWARFYAML::EmitDebugAbbrev, "debug_abbrev",
                        DebugSections);
   EmitDebugSectionImpl(DI, &DWARFYAML::EmitDebugAranges, "debug_aranges",
+                       DebugSections);
+  EmitDebugSectionImpl(DI, &DWARFYAML::EmitDebugRanges, "debug_ranges",
                        DebugSections);
   return std::move(DebugSections);
 }

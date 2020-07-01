@@ -449,10 +449,9 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("-export-dynamic");
 
     if (!Args.hasArg(options::OPT_shared) && !IsStaticPIE) {
-      const std::string Loader =
-          D.DyldPrefix + ToolChain.getDynamicLinker(Args);
       CmdArgs.push_back("-dynamic-linker");
-      CmdArgs.push_back(Args.MakeArgString(Loader));
+      CmdArgs.push_back(Args.MakeArgString(Twine(D.DyldPrefix) +
+                                           ToolChain.getDynamicLinker(Args)));
     }
   }
 
@@ -514,7 +513,7 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back(Args.MakeArgString("-L" + D.Dir + "/../lib"));
     CmdArgs.push_back(Args.MakeArgString("-L" + D.Dir + "/../../lib"));
   }
-  //FIXME: This is no longer needed once AOMP is unified
+  //FIXME: Added to resolve hip libraries for files that have no offloading for the ROCm AOMP build. This is no longer needed if clang is called from one directory higher than current AOMP setup aomp/bin.
   CmdArgs.push_back(Args.MakeArgString("-L" + D.Dir + "/../../lib"));
 
   Args.AddAllArgs(CmdArgs, options::OPT_L);
@@ -668,6 +667,8 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
                          : use_alt_LTO_linker
                                ? Args.MakeArgString(alt_lld)
                                : Args.MakeArgString(D.Dir + "/ld.lld");
+
+  Args.AddAllArgs(CmdArgs, options::OPT_T);
 
   C.addCommand(std::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
 }
