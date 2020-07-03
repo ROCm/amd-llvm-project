@@ -7107,7 +7107,6 @@ static void createUnbundleArchiveCommand(Compilation &C,
   InputInfo Input = Inputs.front();
   StringRef ArchiveOfBundles = Input.getFilename();
 
-  std::string gpuname;
   std::string OutputLib;
   std::string HostOutputArchive;
 
@@ -7115,11 +7114,10 @@ static void createUnbundleArchiveCommand(Compilation &C,
     auto &Dep = DepInfo[I];
     auto &Triple = Dep.DependentToolChain->getTriple();
     if (Triple.isNVPTX() || Triple.getArch() == llvm::Triple::amdgcn) {
-      gpuname = Dep.DependentBoundArch.str();
       OutputLib = DepInfo[I].DependentToolChain->getInputFilename(Outputs[I]);
 
       const char *UBProgram = C.getArgs().MakeArgString(
-          T.getToolChain().GetProgramPath("clang-unbundle-archive"));
+          T.getToolChain().GetProgramPath("clang-offload-bundler"));
 
       llvm::SmallString<128> TmpDirString;
       llvm::sys::path::system_temp_directory(true, TmpDirString);
@@ -7127,20 +7125,26 @@ static void createUnbundleArchiveCommand(Compilation &C,
 
       ArgStringList CmdArgs;
 
-      std::string InputArg("-input=");
+      SmallString<128> DeviceTriple;
+      DeviceTriple += Action::GetOffloadKindName(Dep.DependentOffloadKind);
+      DeviceTriple += '-';
+      DeviceTriple += Triple.normalize();
+      DeviceTriple += '-';
+      DeviceTriple += Dep.DependentBoundArch;
+
+      std::string UnbundleArg("-unbundle");
+      std::string TypeArg("-type=a");
+      std::string InputArg("-inputs=");
       InputArg += ArchiveOfBundles;
-      std::string OffloadArg("-offload-arch=" + gpuname);
-      std::string OutputArg("-output=" + OutputLib);
-      std::string HostOutputArg;
-      if (!HostOutputArchive.empty()) {
-        HostOutputArg = ("-host-output=" + HostOutputArchive);
-      }
+      std::string OffloadArg("-targets=" + std::string(DeviceTriple));
+      std::string OutputArg("-outputs=" + OutputLib);
 
       ArgStringList UBArgs;
+      UBArgs.push_back(C.getArgs().MakeArgString(UnbundleArg.c_str()));
+      UBArgs.push_back(C.getArgs().MakeArgString(TypeArg.c_str()));
       UBArgs.push_back(C.getArgs().MakeArgString(InputArg.c_str()));
       UBArgs.push_back(C.getArgs().MakeArgString(OffloadArg.c_str()));
       UBArgs.push_back(C.getArgs().MakeArgString(OutputArg.c_str()));
-      UBArgs.push_back(C.getArgs().MakeArgString(HostOutputArg.c_str()));
       C.addCommand(std::make_unique<Command>(UA, T, UBProgram, UBArgs, Inputs));
       // Prevent host file being written multiple times.
       HostOutputArchive.clear();

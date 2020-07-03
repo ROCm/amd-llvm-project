@@ -1589,7 +1589,6 @@ bool tools::SDLSearch(Compilation &C, const Driver &D, const Tool &T,
                       std::string libname, StringRef ArchName,
                       StringRef GpuArch, bool isBitCodeSDL,
                       bool postClangLink) {
-
   // Try the basic stuff first before looking into archives.
   if (SDLSearch(D, DriverArgs, CC1Args, LibraryPaths, libname, ArchName,
                 GpuArch, isBitCodeSDL, postClangLink))
@@ -1617,8 +1616,6 @@ bool tools::SDLSearch(Compilation &C, const Driver &D, const Tool &T,
         break;
       }
     }
-    const char *UBProgram = DriverArgs.MakeArgString(
-        T.getToolChain().GetProgramPath("clang-unbundle-archive"));
 
     if (ArchiveOfBundles != "") {
       std::string Err;
@@ -1635,12 +1632,25 @@ bool tools::SDLSearch(Compilation &C, const Driver &D, const Tool &T,
       C.addTempFile(C.getArgs().MakeArgString(OutputLib.c_str()));
 
       ArgStringList CmdArgs;
+      SmallString<128> DeviceTriple;
+      DeviceTriple += Action::GetOffloadKindName(JA.getOffloadingDeviceKind());
+      DeviceTriple += '-';
+      DeviceTriple += T.getToolChain().getTriple().normalize();
+      DeviceTriple += '-';
+      DeviceTriple += gpuname;
 
-      std::string InputArg("-input=" + ArchiveOfBundles);
-      std::string OffloadArg("-offload-arch=" + gpuname);
-      std::string OutputArg("-output=" + OutputLib);
+      std::string UnbundleArg("-unbundle");
+      std::string TypeArg("-type=a");
+      std::string InputArg("-inputs=" + ArchiveOfBundles);
+      std::string OffloadArg("-targets=" + std::string(DeviceTriple));
+      std::string OutputArg("-outputs=" + OutputLib);
+
+      const char *UBProgram = DriverArgs.MakeArgString(
+          T.getToolChain().GetProgramPath("clang-offload-bundler"));
 
       ArgStringList UBArgs;
+      UBArgs.push_back(C.getArgs().MakeArgString(UnbundleArg.c_str()));
+      UBArgs.push_back(C.getArgs().MakeArgString(TypeArg.c_str()));
       UBArgs.push_back(C.getArgs().MakeArgString(InputArg.c_str()));
       UBArgs.push_back(C.getArgs().MakeArgString(OffloadArg.c_str()));
       UBArgs.push_back(C.getArgs().MakeArgString(OutputArg.c_str()));

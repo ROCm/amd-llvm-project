@@ -1028,7 +1028,11 @@ static Error UnbundleArchive() {
     if (!CurTripleOrErr)
       return  CurTripleOrErr.takeError();
 
-    StringRef CurKindTriple = **CurTripleOrErr;
+    Optional<StringRef> OptionalCurKindTriple = *CurTripleOrErr;
+    // No device code in this child, skip
+    if(!OptionalCurKindTriple.hasValue())
+      continue;
+    StringRef CurKindTriple = *OptionalCurKindTriple;
     assert(!CurKindTriple.empty());
 
     while (!CurKindTriple.empty()) {
