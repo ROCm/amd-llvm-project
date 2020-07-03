@@ -7108,7 +7108,6 @@ static void createUnbundleArchiveCommand(Compilation &C,
   StringRef ArchiveOfBundles = Input.getFilename();
 
   std::string OutputLib;
-  std::string HostOutputArchive;
 
   for (unsigned I = 0; I < DepInfo.size(); ++I) {
     auto &Dep = DepInfo[I];
@@ -7147,10 +7146,6 @@ static void createUnbundleArchiveCommand(Compilation &C,
       UBArgs.push_back(C.getArgs().MakeArgString(OutputArg.c_str()));
       C.addCommand(std::make_unique<Command>(UA, T, UBProgram, UBArgs, Inputs));
       // Prevent host file being written multiple times.
-      HostOutputArchive.clear();
-    } else {
-      HostOutputArchive =
-          DepInfo[I].DependentToolChain->getInputFilename(Outputs[I]);
     }
   }
 }
