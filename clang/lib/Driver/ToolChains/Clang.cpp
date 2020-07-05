@@ -15,6 +15,7 @@
 #include "Arch/RISCV.h"
 #include "Arch/Sparc.h"
 #include "Arch/SystemZ.h"
+#include "Arch/VE.h"
 #include "Arch/X86.h"
 #include "CommonArgs.h"
 #include "Hexagon.h"
@@ -368,6 +369,9 @@ static void getTargetFeatures(const Driver &D, const llvm::Triple &Triple,
     break;
   case llvm::Triple::msp430:
     msp430::getMSP430TargetFeatures(D, Args, Features);
+    break;
+  case llvm::Triple::ve:
+    ve::getVETargetFeatures(D, Args, Features);
   }
 
   // Find the last of each feature.
@@ -1202,12 +1206,14 @@ void Clang::AddPreprocessingOptions(Compilation &C, const JobAction &JA,
   Args.AddLastArg(CmdArgs, options::OPT_MP);
   Args.AddLastArg(CmdArgs, options::OPT_MV);
 
-  // Add offload include arguments specific for CUDA.  This must happen before
-  // we -I or -include anything else, because we must pick up the CUDA headers
-  // from the particular CUDA installation, rather than from e.g.
-  // /usr/local/include.
+  // Add offload include arguments specific for CUDA/HIP.  This must happen
+  // before we -I or -include anything else, because we must pick up the
+  // CUDA/HIP headers from the particular CUDA/ROCm installation, rather than
+  // from e.g. /usr/local/include.
   if (JA.isOffloading(Action::OFK_Cuda))
     getToolChain().AddCudaIncludeArgs(Args, CmdArgs);
+  if (JA.isOffloading(Action::OFK_HIP))
+    getToolChain().AddHIPIncludeArgs(Args, CmdArgs);
 
   // If we are offloading to a target via OpenMP we need to include the
   // openmp_wrappers folder which contains alternative system headers.
@@ -1244,6 +1250,7 @@ void Clang::AddPreprocessingOptions(Compilation &C, const JobAction &JA,
     if (YcArg && JA.getKind() >= Action::PrecompileJobClass &&
         JA.getKind() <= Action::AssembleJobClass) {
       CmdArgs.push_back(Args.MakeArgString("-building-pch-with-obj"));
+      CmdArgs.push_back(Args.MakeArgString("-fpch-instantiate-templates"));
     }
     if (YcArg || YuArg) {
       StringRef ThroughHeader = YcArg ? YcArg->getValue() : YuArg->getValue();
@@ -1664,6 +1671,10 @@ void Clang::RenderTargetOptions(const llvm::Triple &EffectiveTriple,
   case llvm::Triple::wasm32:
   case llvm::Triple::wasm64:
     AddWebAssemblyTargetArgs(Args, CmdArgs);
+    break;
+
+  case llvm::Triple::ve:
+    AddVETargetArgs(Args, CmdArgs);
     break;
   }
 }
@@ -2160,6 +2171,12 @@ void Clang::AddWebAssemblyTargetArgs(const ArgList &Args,
     CmdArgs.push_back("-fvisibility");
     CmdArgs.push_back("hidden");
   }
+}
+
+void Clang::AddVETargetArgs(const ArgList &Args, ArgStringList &CmdArgs) const {
+  // Floating point operations and argument passing are hard.
+  CmdArgs.push_back("-mfloat-abi");
+  CmdArgs.push_back("hard");
 }
 
 void Clang::DumpCompilationDatabase(Compilation &C, StringRef Filename,
@@ -3002,7 +3019,7 @@ static void RenderSCPOptions(const ToolChain &TC, const ArgList &Args,
   if (!EffectiveTriple.isOSLinux())
     return;
 
-  if (!EffectiveTriple.isX86())
+  if (!EffectiveTriple.isX86() && !EffectiveTriple.isSystemZ())
     return;
 
   if (Args.hasFlag(options::OPT_fstack_clash_protection,
@@ -3051,6 +3068,21 @@ static void RenderTrivialAutoVarInitOptions(const Driver &D,
       D.Diag(diag::err_drv_trivial_auto_var_init_zero_disabled);
     CmdArgs.push_back(
         Args.MakeArgString("-ftrivial-auto-var-init=" + TrivialAutoVarInit));
+  }
+
+  if (Arg *A =
+          Args.getLastArg(options::OPT_ftrivial_auto_var_init_stop_after)) {
+    if (!Args.hasArg(options::OPT_ftrivial_auto_var_init) ||
+        StringRef(
+            Args.getLastArg(options::OPT_ftrivial_auto_var_init)->getValue()) ==
+            "uninitialized")
+      D.Diag(diag::err_drv_trivial_auto_var_init_stop_after_missing_dependency);
+    A->claim();
+    StringRef Val = A->getValue();
+    if (std::stoi(Val.str()) <= 0)
+      D.Diag(diag::err_drv_trivial_auto_var_init_stop_after_invalid_value);
+    CmdArgs.push_back(
+        Args.MakeArgString("-ftrivial-auto-var-init-stop-after=" + Val));
   }
 }
 
@@ -3694,17 +3726,11 @@ static void RenderDebugOptions(const ToolChain &TC, const Driver &D,
         DebuggerTuning = llvm::DebuggerKind::SCE;
       else {
         DebuggerTuning = llvm::DebuggerKind::GDB;
-        if (T.getArch() == llvm::Triple::amdgcn) {
-          CmdArgs.push_back("-disable-O0-optnone");
-          CmdArgs.push_back("-disable-O0-noinline");
+        if (T.isAMDGCN()) {
           CmdArgs.push_back("-mllvm");
           CmdArgs.push_back("-amdgpu-spill-cfi-saved-regs");
-          // -ggdb with AMDGCN does not currently compose with options that
-          // affect the debug info kind. The behavior of commands like `-ggdb
-          // -g` may be surprising (the -g is effectively ignored).
-          DebugInfoKind = codegenoptions::DebugLineTablesOnly;
-          if (SplitDWARFInlining)
-            DwarfFission = DwarfFissionKind::None;
+          CmdArgs.push_back("-mllvm");
+          CmdArgs.push_back("-disable-dwarf-locations");
         }
       }
     }
@@ -4463,15 +4489,20 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     if (RelocationModel != llvm::Reloc::Static && !IsPIE)
       A->render(Args, CmdArgs);
 
-  CmdArgs.push_back("-mthread-model");
-  if (Arg *A = Args.getLastArg(options::OPT_mthread_model)) {
-    if (!TC.isThreadModelSupported(A->getValue()))
-      D.Diag(diag::err_drv_invalid_thread_model_for_target)
-          << A->getValue() << A->getAsString(Args);
-    CmdArgs.push_back(A->getValue());
+  {
+    std::string Model;
+    if (Arg *A = Args.getLastArg(options::OPT_mthread_model)) {
+      if (!TC.isThreadModelSupported(A->getValue()))
+        D.Diag(diag::err_drv_invalid_thread_model_for_target)
+            << A->getValue() << A->getAsString(Args);
+      Model = A->getValue();
+    } else
+      Model = TC.getThreadModel();
+    if (Model != "posix") {
+      CmdArgs.push_back("-mthread-model");
+      CmdArgs.push_back(Args.MakeArgString(Model));
+    }
   }
-  else
-    CmdArgs.push_back(Args.MakeArgString(TC.getThreadModel()));
 
   Args.AddLastArg(CmdArgs, options::OPT_fveclib);
 
@@ -4678,7 +4709,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-fforbid-guard-variables");
 
   if (Args.hasFlag(options::OPT_mms_bitfields, options::OPT_mno_ms_bitfields,
-                   false)) {
+                   Triple.isWindowsGNUEnvironment())) {
     CmdArgs.push_back("-mms-bitfields");
   }
 
@@ -5497,7 +5528,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // -fuse-cxa-atexit is default.
   if (!Args.hasFlag(
           options::OPT_fuse_cxa_atexit, options::OPT_fno_use_cxa_atexit,
-          !RawTriple.isOSWindows() &&
+          !RawTriple.isOSAIX() && !RawTriple.isOSWindows() &&
               TC.getArch() != llvm::Triple::xcore &&
               ((RawTriple.getVendor() != llvm::Triple::MipsTechnologies) ||
                RawTriple.hasEnvironment())) ||
@@ -5633,6 +5664,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if (Args.hasFlag(options::OPT_fpch_validate_input_files_content,
                    options::OPT_fno_pch_validate_input_files_content, false))
     CmdArgs.push_back("-fvalidate-ast-input-files-content");
+  if (Args.hasFlag(options::OPT_fpch_instantiate_templates,
+                   options::OPT_fno_pch_instantiate_templates, false))
+    CmdArgs.push_back("-fpch-instantiate-templates");
 
   Args.AddLastArg(CmdArgs, options::OPT_fexperimental_new_pass_manager,
                   options::OPT_fno_experimental_new_pass_manager);
@@ -7088,12 +7122,14 @@ static bool isArchiveOfBundlesFileName(StringRef FilePath) {
   if (!FileName.endswith(".a"))
     return false;
 
-  if (FileName.startswith("lib")) {
-    if (FileName.contains("amdgcn") && FileName.contains("gfx"))
-      return false;
-    if (FileName.contains("nvptx") && FileName.contains("sm_"))
-      return false;
-  }
+  if (!FileName.startswith("lib"))
+    return false;
+
+  if (FileName.contains("amdgcn") && FileName.contains("gfx"))
+    return false;
+
+  if (FileName.contains("nvptx") && FileName.contains("sm_"))
+    return false;
 
   return true;
 }
@@ -7114,7 +7150,7 @@ static void createUnbundleArchiveCommand(Compilation &C,
   for (unsigned I = 0; I < DepInfo.size(); ++I) {
     auto &Dep = DepInfo[I];
     auto &Triple = Dep.DependentToolChain->getTriple();
-    if (Triple.isNVPTX() || Triple.getArch() == llvm::Triple::amdgcn) {
+    if (Triple.isNVPTX() || Triple.isAMDGCN()) {
       gpuname = Dep.DependentBoundArch.str();
       OutputLib = DepInfo[I].DependentToolChain->getInputFilename(Outputs[I]);
 

@@ -12,3 +12,7 @@
 
 add_subdirectory(amdgcn)
 add_subdirectory(nvptx)
+if (OPENMP_ENABLE_LIBOMPTARGET_HSA)
+  add_subdirectory(amdgcn)
+  add_subdirectory(hostcall)
+endif()

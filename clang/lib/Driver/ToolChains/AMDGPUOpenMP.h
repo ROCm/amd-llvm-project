@@ -19,10 +19,13 @@ namespace driver {
 namespace tools {
 
 namespace AMDGCN {
+  // Construct command for creating HIP fatbin.
+  void constructHIPFatbinCommand(Compilation &C, const JobAction &JA,
+                  StringRef OutputFileName, const InputInfoList &Inputs,
+                  const llvm::opt::ArgList &TCArgs, const Tool& T);
+
 // Runs llvm-link/opt/llc/lld, which links multiple LLVM bitcode, together with
 // device library, then compiles it to ISA in a shared object.
-
-// TODO: Work out where the hip one is called from
 class LLVM_LIBRARY_VISIBILITY OpenMPLinker : public Tool {
 public:
   OpenMPLinker(const ToolChain &TC) : Tool("AMDGCN::OpenMPLinker", "amdgcn-link", TC) {}
@@ -47,8 +50,7 @@ private:
                                        const InputInfoList &Inputs,
                                        const llvm::opt::ArgList &Args,
                                        llvm::StringRef SubArchName,
-                                       llvm::StringRef OutputFilePrefix,
-                                       llvm::StringRef overrideInputs) const;
+                                       llvm::StringRef OutputFilePrefix) const;
 
   /// \return opt output file name.
   const char *constructOptCommand(Compilation &C, const JobAction &JA,
@@ -64,7 +66,8 @@ private:
                                   const llvm::opt::ArgList &Args,
                                   llvm::StringRef SubArchName,
                                   llvm::StringRef OutputFilePrefix,
-                                  const char *InputFileName) const;
+                                  const char *InputFileName,
+                                  bool OutputIsAsm = false) const;
 
   void constructLldCommand(Compilation &C, const JobAction &JA,
                            const InputInfoList &Inputs, const InputInfo &Output,
@@ -110,11 +113,11 @@ public:
   void AddClangCXXStdlibIncludeArgs(
       const llvm::opt::ArgList &Args,
       llvm::opt::ArgStringList &CC1Args) const override;
+  void AddIAMCUIncludeArgs(const llvm::opt::ArgList &DriverArgs,
+                           llvm::opt::ArgStringList &CC1Args) const override;
   void
   AddFlangSystemIncludeArgs(const llvm::opt::ArgList &DriverArgs,
                             llvm::opt::ArgStringList &FlangArgs) const override;
-  void AddIAMCUIncludeArgs(const llvm::opt::ArgList &DriverArgs,
-                           llvm::opt::ArgStringList &CC1Args) const override;
 
   SanitizerMask getSupportedSanitizers() const override;
 
@@ -122,7 +125,7 @@ public:
   computeMSVCVersion(const Driver *D,
                      const llvm::opt::ArgList &Args) const override;
 
-  unsigned GetDefaultDwarfVersion() const override { return 2; }
+  unsigned GetDefaultDwarfVersion() const override { return 4; }
 
   const ToolChain &HostTC;
 

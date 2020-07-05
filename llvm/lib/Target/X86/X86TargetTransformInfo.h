@@ -144,7 +144,7 @@ public:
   int getMaskedMemoryOpCost(unsigned Opcode, Type *Src, unsigned Alignment,
                             unsigned AddressSpace,
                             TTI::TargetCostKind CostKind = TTI::TCK_SizeAndLatency);
-  int getGatherScatterOpCost(unsigned Opcode, Type *DataTy, Value *Ptr,
+  int getGatherScatterOpCost(unsigned Opcode, Type *DataTy, const Value *Ptr,
                              bool VariableMask, unsigned Alignment,
                              TTI::TargetCostKind CostKind,
                              const Instruction *I);
@@ -191,6 +191,8 @@ public:
 
   int getIntImmCost(const APInt &Imm, Type *Ty, TTI::TargetCostKind CostKind);
 
+  unsigned getCFInstrCost(unsigned Opcode, TTI::TargetCostKind CostKind);
+
   int getIntImmCostInst(unsigned Opcode, unsigned Idx, const APInt &Imm, Type *Ty,
                         TTI::TargetCostKind CostKind);
   int getIntImmCostIntrin(Intrinsic::ID IID, unsigned Idx, const APInt &Imm,
@@ -228,7 +230,7 @@ public:
 private:
   int getGSScalarCost(unsigned Opcode, Type *DataTy, bool VariableMask,
                       unsigned Alignment, unsigned AddressSpace);
-  int getGSVectorCost(unsigned Opcode, Type *DataTy, Value *Ptr,
+  int getGSVectorCost(unsigned Opcode, Type *DataTy, const Value *Ptr,
                       unsigned Alignment, unsigned AddressSpace);
 
   /// @}

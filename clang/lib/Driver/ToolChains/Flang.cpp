@@ -40,7 +40,6 @@
 // THE SOFTWARE.
 //===----------------------------------------------------------------------===//
 
-
 #include "Flang.h"
 #include "CommonArgs.h"
 #include "InputInfo.h"
@@ -66,6 +65,7 @@
 #ifdef LLVM_ON_UNIX
 #include <unistd.h> // For getuid().
 #endif
+#include <cassert>
 
 using namespace clang::driver;
 using namespace clang::driver::tools;

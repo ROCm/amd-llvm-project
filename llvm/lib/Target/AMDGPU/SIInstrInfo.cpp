@@ -63,6 +63,8 @@
 
 using namespace llvm;
 
+#define DEBUG_TYPE "si-instr-info"
+
 #define GET_INSTRINFO_CTOR_DTOR
 #include "AMDGPUGenInstrInfo.inc"
 
@@ -382,6 +384,24 @@ bool SIInstrInfo::getMemOperandsWithOffsetWidth(
     return true;
   }
 
+  if (isMIMG(LdSt)) {
+    int SRsrcIdx = AMDGPU::getNamedOperandIdx(Opc, AMDGPU::OpName::srsrc);
+    BaseOps.push_back(&LdSt.getOperand(SRsrcIdx));
+    int VAddr0Idx = AMDGPU::getNamedOperandIdx(Opc, AMDGPU::OpName::vaddr0);
+    if (VAddr0Idx >= 0) {
+      // GFX10 possible NSA encoding.
+      for (int I = VAddr0Idx; I < SRsrcIdx; ++I)
+        BaseOps.push_back(&LdSt.getOperand(I));
+    } else {
+      BaseOps.push_back(getNamedOperand(LdSt, AMDGPU::OpName::vaddr));
+    }
+    Offset = 0;
+    // Get appropriate operand, and compute width accordingly.
+    DataOpIdx = AMDGPU::getNamedOperandIdx(Opc, AMDGPU::OpName::vdata);
+    Width = getOpSize(LdSt, DataOpIdx);
+    return true;
+  }
+
   if (isSMRD(LdSt)) {
     BaseOp = getNamedOperand(LdSt, AMDGPU::OpName::sbase);
     if (!BaseOp) // e.g. S_MEMTIME
@@ -415,22 +435,14 @@ bool SIInstrInfo::getMemOperandsWithOffsetWidth(
   return false;
 }
 
-static bool
-memOpsHaveSameBaseOperands(ArrayRef<const MachineOperand *> BaseOps1,
-                           ArrayRef<const MachineOperand *> BaseOps2) {
-  if (BaseOps1.size() != BaseOps2.size())
-    return false;
-  for (size_t I = 0, E = BaseOps1.size(); I < E; ++I)
-    if (!BaseOps1[I]->isIdenticalTo(*BaseOps2[I]))
-      return false;
-  return true;
-}
-
 static bool memOpsHaveSameBasePtr(const MachineInstr &MI1,
                                   ArrayRef<const MachineOperand *> BaseOps1,
                                   const MachineInstr &MI2,
                                   ArrayRef<const MachineOperand *> BaseOps2) {
-  if (memOpsHaveSameBaseOperands(BaseOps1, BaseOps2))
+  // Only examine the first "base" operand of each instruction, on the
+  // assumption that it represents the real base address of the memory access.
+  // Other operands are typically offsets or indices from this base address.
+  if (BaseOps1.front()->isIdenticalTo(*BaseOps2.front()))
     return true;
 
   if (!MI1.hasOneMemOperand() || !MI2.hasOneMemOperand())
@@ -460,64 +472,27 @@ bool SIInstrInfo::shouldClusterMemOps(ArrayRef<const MachineOperand *> BaseOps1,
                                       ArrayRef<const MachineOperand *> BaseOps2,
                                       unsigned NumLoads,
                                       unsigned NumBytes) const {
+  // If current mem ops pair do not have same base pointer, then they cannot be
+  // clustered.
   assert(!BaseOps1.empty() && !BaseOps2.empty());
   const MachineInstr &FirstLdSt = *BaseOps1.front()->getParent();
   const MachineInstr &SecondLdSt = *BaseOps2.front()->getParent();
-
   if (!memOpsHaveSameBasePtr(FirstLdSt, BaseOps1, SecondLdSt, BaseOps2))
     return false;
 
-  const MachineOperand *FirstDst = nullptr;
-  const MachineOperand *SecondDst = nullptr;
-
-  if ((isMUBUF(FirstLdSt) && isMUBUF(SecondLdSt)) ||
-      (isMTBUF(FirstLdSt) && isMTBUF(SecondLdSt)) ||
-      (isFLAT(FirstLdSt) && isFLAT(SecondLdSt))) {
-    const unsigned MaxGlobalLoadCluster = 7;
-    if (NumLoads > MaxGlobalLoadCluster)
-      return false;
-
-    FirstDst = getNamedOperand(FirstLdSt, AMDGPU::OpName::vdata);
-    if (!FirstDst)
-      FirstDst = getNamedOperand(FirstLdSt, AMDGPU::OpName::vdst);
-    SecondDst = getNamedOperand(SecondLdSt, AMDGPU::OpName::vdata);
-    if (!SecondDst)
-      SecondDst = getNamedOperand(SecondLdSt, AMDGPU::OpName::vdst);
-  } else if (isSMRD(FirstLdSt) && isSMRD(SecondLdSt)) {
-    FirstDst = getNamedOperand(FirstLdSt, AMDGPU::OpName::sdst);
-    SecondDst = getNamedOperand(SecondLdSt, AMDGPU::OpName::sdst);
-  } else if (isDS(FirstLdSt) && isDS(SecondLdSt)) {
-    FirstDst = getNamedOperand(FirstLdSt, AMDGPU::OpName::vdst);
-    SecondDst = getNamedOperand(SecondLdSt, AMDGPU::OpName::vdst);
+  // Compute max cluster size based on average number bytes clustered till now,
+  // and decide based on it, if current mem ops pair can be clustered or not.
+  assert((NumLoads > 0) && (NumBytes > 0) && (NumBytes >= NumLoads) &&
+         "Invalid NumLoads/NumBytes values");
+  unsigned MaxNumLoads;
+  if (NumBytes <= 4 * NumLoads) {
+    // Loads are dword or smaller (on average).
+    MaxNumLoads = 5;
+  } else {
+    // Loads are bigger than a dword (on average).
+    MaxNumLoads = 4;
   }
-
-  if (!FirstDst || !SecondDst)
-    return false;
-
-  // Try to limit clustering based on the total number of bytes loaded
-  // rather than the number of instructions.  This is done to help reduce
-  // register pressure.  The method used is somewhat inexact, though,
-  // because it assumes that all loads in the cluster will load the
-  // same number of bytes as FirstLdSt.
-
-  // The unit of this value is bytes.
-  // FIXME: This needs finer tuning.
-  unsigned LoadClusterThreshold = 16;
-
-  const MachineRegisterInfo &MRI =
-      FirstLdSt.getParent()->getParent()->getRegInfo();
-
-  const Register Reg = FirstDst->getReg();
-
-  const TargetRegisterClass *DstRC = Register::isVirtualRegister(Reg)
-                                         ? MRI.getRegClass(Reg)
-                                         : RI.getPhysRegClass(Reg);
-
-  // FIXME: NumLoads should not be subtracted 1. This is to match behavior
-  // of clusterNeighboringMemOps which was previosly passing cluster length
-  // less 1. LoadClusterThreshold should be tuned instead.
-  return ((NumLoads - 1) * (RI.getRegSizeInBits(*DstRC) / 8)) <=
-         LoadClusterThreshold;
+  return NumLoads <= MaxNumLoads;
 }
 
 // FIXME: This behaves strangely. If, for example, you have 32 load + stores,
@@ -1185,6 +1160,9 @@ static unsigned getSGPRSpillSaveOpcode(unsigned Size, bool NeedsCFI) {
   case 20:
     return NeedsCFI ? AMDGPU::SI_SPILL_S160_CFI_SAVE
                     : AMDGPU::SI_SPILL_S160_SAVE;
+  case 24:
+    return NeedsCFI ? AMDGPU::SI_SPILL_S192_CFI_SAVE
+                    : AMDGPU::SI_SPILL_S192_SAVE;
   case 32:
     return NeedsCFI ? AMDGPU::SI_SPILL_S256_CFI_SAVE
                     : AMDGPU::SI_SPILL_S256_SAVE;
@@ -1213,6 +1191,9 @@ static unsigned getVGPRSpillSaveOpcode(unsigned Size, bool NeedsCFI) {
   case 20:
     return NeedsCFI ? AMDGPU::SI_SPILL_V160_CFI_SAVE
                     : AMDGPU::SI_SPILL_V160_SAVE;
+  case 24:
+    return NeedsCFI ? AMDGPU::SI_SPILL_V192_CFI_SAVE
+                    : AMDGPU::SI_SPILL_V192_SAVE;
   case 32:
     return NeedsCFI ? AMDGPU::SI_SPILL_V256_CFI_SAVE
                     : AMDGPU::SI_SPILL_V256_SAVE;
@@ -1263,6 +1244,8 @@ void SIInstrInfo::storeRegToStackSlotImpl(
   if (RI.isSGPRClass(RC)) {
     MFI->setHasSpilledSGPRs();
     assert(SrcReg != AMDGPU::M0 && "m0 should not be spilled");
+    assert(SrcReg != AMDGPU::EXEC_LO && SrcReg != AMDGPU::EXEC_HI &&
+           SrcReg != AMDGPU::EXEC && "exec should not be spilled");
 
     // We are only allowed to create one new instruction when spilling
     // registers, so we need to use pseudo instruction for spilling SGPRs.
@@ -1273,7 +1256,7 @@ void SIInstrInfo::storeRegToStackSlotImpl(
     // to make sure we are using the correct register class.
     if (Register::isVirtualRegister(SrcReg) && SpillSize == 4) {
       MachineRegisterInfo &MRI = MF->getRegInfo();
-      MRI.constrainRegClass(SrcReg, &AMDGPU::SReg_32_XM0RegClass);
+      MRI.constrainRegClass(SrcReg, &AMDGPU::SReg_32_XM0_XEXECRegClass);
     }
 
     BuildMI(MBB, MI, DL, OpDesc)
@@ -1339,6 +1322,8 @@ static unsigned getSGPRSpillRestoreOpcode(unsigned Size) {
     return AMDGPU::SI_SPILL_S128_RESTORE;
   case 20:
     return AMDGPU::SI_SPILL_S160_RESTORE;
+  case 24:
+    return AMDGPU::SI_SPILL_S192_RESTORE;
   case 32:
     return AMDGPU::SI_SPILL_S256_RESTORE;
   case 64:
@@ -1362,6 +1347,8 @@ static unsigned getVGPRSpillRestoreOpcode(unsigned Size) {
     return AMDGPU::SI_SPILL_V128_RESTORE;
   case 20:
     return AMDGPU::SI_SPILL_V160_RESTORE;
+  case 24:
+    return AMDGPU::SI_SPILL_V192_RESTORE;
   case 32:
     return AMDGPU::SI_SPILL_V256_RESTORE;
   case 64:
@@ -1411,13 +1398,15 @@ void SIInstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
   if (RI.isSGPRClass(RC)) {
     MFI->setHasSpilledSGPRs();
     assert(DestReg != AMDGPU::M0 && "m0 should not be reloaded into");
+    assert(DestReg != AMDGPU::EXEC_LO && DestReg != AMDGPU::EXEC_HI &&
+           DestReg != AMDGPU::EXEC && "exec should not be spilled");
 
     // FIXME: Maybe this should not include a memoperand because it will be
     // lowered to non-memory instructions.
     const MCInstrDesc &OpDesc = get(getSGPRSpillRestoreOpcode(SpillSize));
     if (DestReg.isVirtual() && SpillSize == 4) {
       MachineRegisterInfo &MRI = MF->getRegInfo();
-      MRI.constrainRegClass(DestReg, &AMDGPU::SReg_32_XM0RegClass);
+      MRI.constrainRegClass(DestReg, &AMDGPU::SReg_32_XM0_XEXECRegClass);
     }
 
     if (RI.spillSGPRToVGPR())
@@ -2306,6 +2295,7 @@ unsigned SIInstrInfo::insertBranch(MachineBasicBlock &MBB,
 
     // Copy the flags onto the implicit condition register operand.
     preserveCondRegFlags(CondBr->getOperand(1), Cond[1]);
+    fixImplicitOperands(*CondBr);
 
     if (BytesAdded)
       *BytesAdded = 4;
@@ -2775,6 +2765,18 @@ bool SIInstrInfo::FoldImmediate(MachineInstr &UseMI, MachineInstr &DefMI,
   return false;
 }
 
+static bool
+memOpsHaveSameBaseOperands(ArrayRef<const MachineOperand *> BaseOps1,
+                           ArrayRef<const MachineOperand *> BaseOps2) {
+  if (BaseOps1.size() != BaseOps2.size())
+    return false;
+  for (size_t I = 0, E = BaseOps1.size(); I < E; ++I) {
+    if (!BaseOps1[I]->isIdenticalTo(*BaseOps2[I]))
+      return false;
+  }
+  return true;
+}
+
 static bool offsetsDoNotOverlap(int WidthA, int OffsetA,
                                 int WidthB, int OffsetB) {
   int LowOffset = OffsetA < OffsetB ? OffsetA : OffsetB;
@@ -3152,10 +3154,26 @@ bool SIInstrInfo::isInlineConstant(const MachineOperand &MO,
     return AMDGPU::isInlinableLiteral64(MO.getImm(),
                                         ST.hasInv2PiInlineImm());
   case AMDGPU::OPERAND_REG_IMM_INT16:
-  case AMDGPU::OPERAND_REG_IMM_FP16:
   case AMDGPU::OPERAND_REG_INLINE_C_INT16:
-  case AMDGPU::OPERAND_REG_INLINE_C_FP16:
   case AMDGPU::OPERAND_REG_INLINE_AC_INT16:
+    // We would expect inline immediates to not be concerned with an integer/fp
+    // distinction. However, in the case of 16-bit integer operations, the
+    // "floating point" values appear to not work. It seems read the low 16-bits
+    // of 32-bit immediates, which happens to always work for the integer
+    // values.
+    //
+    // See llvm bugzilla 46302.
+    //
+    // TODO: Theoretically we could use op-sel to use the high bits of the
+    // 32-bit FP values.
+    return AMDGPU::isInlinableIntLiteral(Imm);
+  case AMDGPU::OPERAND_REG_IMM_V2INT16:
+  case AMDGPU::OPERAND_REG_INLINE_C_V2INT16:
+  case AMDGPU::OPERAND_REG_INLINE_AC_V2INT16:
+    // This suffers the same problem as the scalar 16-bit cases.
+    return AMDGPU::isInlinableIntLiteralV216(Imm);
+  case AMDGPU::OPERAND_REG_IMM_FP16:
+  case AMDGPU::OPERAND_REG_INLINE_C_FP16:
   case AMDGPU::OPERAND_REG_INLINE_AC_FP16: {
     if (isInt<16>(Imm) || isUInt<16>(Imm)) {
       // A few special case instructions have 16-bit operands on subtargets
@@ -3169,11 +3187,8 @@ bool SIInstrInfo::isInlineConstant(const MachineOperand &MO,
 
     return false;
   }
-  case AMDGPU::OPERAND_REG_IMM_V2INT16:
   case AMDGPU::OPERAND_REG_IMM_V2FP16:
-  case AMDGPU::OPERAND_REG_INLINE_C_V2INT16:
   case AMDGPU::OPERAND_REG_INLINE_C_V2FP16:
-  case AMDGPU::OPERAND_REG_INLINE_AC_V2INT16:
   case AMDGPU::OPERAND_REG_INLINE_AC_V2FP16: {
     uint32_t Trunc = static_cast<uint32_t>(Imm);
     return AMDGPU::isInlinableLiteralV216(Trunc, ST.hasInv2PiInlineImm());
@@ -3342,7 +3357,8 @@ static void copyFlagsToImplicitVCC(MachineInstr &MI,
                                    const MachineOperand &Orig) {
 
   for (MachineOperand &Use : MI.implicit_operands()) {
-    if (Use.isUse() && Use.getReg() == AMDGPU::VCC) {
+    if (Use.isUse() &&
+        (Use.getReg() == AMDGPU::VCC || Use.getReg() == AMDGPU::VCC_LO)) {
       Use.setIsUndef(Orig.isUndef());
       Use.setIsKill(Orig.isKill());
       return;
@@ -3966,7 +3982,7 @@ bool SIInstrInfo::verifyInstruction(const MachineInstr &MI,
         IsA16 = A16->getImm() != 0;
       }
 
-      bool PackDerivatives = IsA16; // Either A16 or G16
+      bool PackDerivatives = IsA16 || BaseOpcode->G16;
       bool IsNSA = SRsrcIdx - VAddr0Idx > 1;
 
       unsigned AddrWords = BaseOpcode->NumExtraArgs;
@@ -4003,6 +4019,8 @@ bool SIInstrInfo::verifyInstruction(const MachineInstr &MI,
       }
 
       if (VAddrWords != AddrWords) {
+        LLVM_DEBUG(dbgs() << "bad vaddr size, expected " << AddrWords
+                          << " but got " << VAddrWords << "\n");
         ErrInfo = "bad vaddr size";
         return false;
       }
@@ -7004,20 +7022,24 @@ MachineInstr *SIInstrInfo::foldMemoryOperandImpl(
   // %0 may even spill. We can't spill $m0 normally (it would require copying to
   // a numbered SGPR anyway), and since it is in the SReg_32 register class,
   // TargetInstrInfo::foldMemoryOperand() is going to try.
+  // A similar issue also exists with spilling and reloading $exec registers.
   //
   // To prevent that, constrain the %0 register class here.
   if (MI.isFullCopy()) {
     Register DstReg = MI.getOperand(0).getReg();
     Register SrcReg = MI.getOperand(1).getReg();
-
-    if (DstReg == AMDGPU::M0 && SrcReg.isVirtual()) {
-      MF.getRegInfo().constrainRegClass(SrcReg, &AMDGPU::SReg_32_XM0RegClass);
-      return nullptr;
-    }
-
-    if (SrcReg == AMDGPU::M0 && DstReg.isVirtual()) {
-      MF.getRegInfo().constrainRegClass(DstReg, &AMDGPU::SReg_32_XM0RegClass);
-      return nullptr;
+    if ((DstReg.isVirtual() || SrcReg.isVirtual()) &&
+        (DstReg.isVirtual() != SrcReg.isVirtual())) {
+      MachineRegisterInfo &MRI = MF.getRegInfo();
+      Register VirtReg = DstReg.isVirtual() ? DstReg : SrcReg;
+      const TargetRegisterClass *RC = MRI.getRegClass(VirtReg);
+      if (RC->hasSuperClassEq(&AMDGPU::SReg_32RegClass)) {
+        MRI.constrainRegClass(VirtReg, &AMDGPU::SReg_32_XM0_XEXECRegClass);
+        return nullptr;
+      } else if (RC->hasSuperClassEq(&AMDGPU::SReg_64RegClass)) {
+        MRI.constrainRegClass(VirtReg, &AMDGPU::SReg_64_XEXECRegClass);
+        return nullptr;
+      }
     }
   }
 

@@ -119,7 +119,7 @@ else()
 endif()
 
 # create libraries
-set(mcpus gfx700 gfx701 gfx801 gfx803 gfx900 gfx902 gfx906 gfx908)
+set(mcpus gfx803 gfx900 gfx902 gfx906 gfx908)
 if (DEFINED LIBOMPTARGET_AMDGCN_GFXLIST)
   set(mcpus ${LIBOMPTARGET_AMDGCN_GFXLIST})
 endif()
@@ -170,6 +170,8 @@ macro(add_cuda_bc_library)
   set(cu_cmd ${AOMP_BINDIR}/clang++
     -std=c++14
     -fcuda-rdc
+    -c
+    -D_OPENMP # FIXME This gets around ~./clang/lib/Headers/__clang_hip_runtime_wrapper.h
     -fvisibility=default
     --cuda-device-only
     -Wno-unused-value
