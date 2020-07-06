@@ -53,6 +53,19 @@ static int DebugLevel = 0;
 
 #include "../../common/elf_common.c"
 
+#if OMPD_SUPPORT
+#ifdef __cplusplus
+extern "C" {
+#endif
+  /* TODO - Put these OMPD globals someplace cleaner */
+  uint64_t ompd_num_cuda_devices;
+  CUcontext* ompd_CudaContextArray;
+#ifdef __cplusplus
+}
+#endif /* __cplusplus */
+#endif /* OMPD_SUPPORT */
+
+
 /// Keep entries table per device.
 struct FuncOrGblEntryTy {
   __tgt_target_table Table;
@@ -357,6 +370,10 @@ public:
     }
 
     DeviceData.resize(NumberOfDevices);
+#if OMPD_SUPPORT
+    ompd_num_cuda_devices = (uint64_t) NumberOfDevices;
+    ompd_CudaContextArray = &DeviceData[0];
+#endif /* OMPD_SUPPORT */
 
     // Get environment variables regarding teams
     if (const char *EnvStr = getenv("OMP_TEAM_LIMIT")) {
