@@ -68,7 +68,8 @@ void AMDGCN::Linker::constructLldCommand(Compilation &C, const JobAction &JA,
                         "-o",
                         Output.getFilename()};
   for (auto Input : Inputs)
-    LldArgs.push_back(Input.getFilename());
+    if (Input.isFilename())
+      LldArgs.push_back(Input.getFilename());
   const char *Lld = Args.MakeArgString(getToolChain().GetProgramPath("lld"));
   C.addCommand(std::make_unique<Command>(JA, *this, Lld, LldArgs, Inputs));
 }
