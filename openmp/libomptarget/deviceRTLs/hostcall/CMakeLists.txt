@@ -121,7 +121,7 @@ macro(add_hip_bc_library name dir)
     -I${ROCM_DIR}/include)
 
   if(NOT ${AOMP_STANDALONE_BUILD})
-    set(hip_cmd "${hip_cmd};--hip-device-lib-path=${ROCM_DIR}/amdgcn/bitcode")
+    set(hip_cmd "${hip_cmd};--hip-device-lib-path=${ROCM_DIR}/aomp/amdgcn/bitcode")
   endif(NOT ${AOMP_STANDALONE_BUILD})
 
   set(bc1_files)
