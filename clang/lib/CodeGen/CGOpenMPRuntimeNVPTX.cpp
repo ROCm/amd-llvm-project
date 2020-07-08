@@ -448,7 +448,7 @@ class CheckVarsEscapingDeclContext final
       EscapedDeclsForTeams = EscapedDecls.getArrayRef();
     else
       EscapedDeclsForParallel = EscapedDecls.getArrayRef();
-    int WarpSize = CGF.getTarget().getGridValue(GPU::GVIDX::GV_Warp_Size);
+    int WarpSize = CGF.getTarget().getGridValue(GVIDX::GV_Warp_Size);
     GlobalizedRD = ::buildRecordForGlobalizedVars(
         CGF.getContext(), EscapedDeclsForParallel, EscapedDeclsForTeams,
         MappedDeclsFields, WarpSize);
@@ -640,7 +640,7 @@ static llvm::Value *getNVPTXWarpSize(CodeGenFunction &CGF) {
   if (CGF.getTarget().getTriple().isAMDGCN()) {
     CGBuilderTy &Bld = CGF.Builder;
     // return constant compile-time target-specific warp size
-    int TargetWarpSize = CGF.getTarget().getGridValue(GPU::GVIDX::GV_Warp_Size);
+    int TargetWarpSize = CGF.getTarget().getGridValue(GVIDX::GV_Warp_Size);
     return Bld.getInt32(TargetWarpSize);
   }
 
@@ -670,7 +670,7 @@ static llvm::Value *getNVPTXThreadID(CodeGenFunction &CGF) {
 static llvm::Value *getNVPTXWarpID(CodeGenFunction &CGF) {
   CGBuilderTy &Bld = CGF.Builder;
   unsigned warp_size_log2 =
-      CGF.getTarget().getGridValue(GPU::GVIDX::GV_Warp_Size_Log2);
+      CGF.getTarget().getGridValue(GVIDX::GV_Warp_Size_Log2);
   return Bld.CreateAShr(getNVPTXThreadID(CGF), warp_size_log2, "nvptx_warp_id");
 }
 
@@ -680,7 +680,7 @@ static llvm::Value *getNVPTXWarpID(CodeGenFunction &CGF) {
 static llvm::Value *getNVPTXLaneID(CodeGenFunction &CGF) {
   CGBuilderTy &Bld = CGF.Builder;
   unsigned mask2 = CGF.getContext().getTargetInfo().getGridValue(
-      GPU::GVIDX::GV_Warp_Size_Log2_Mask);
+      GVIDX::GV_Warp_Size_Log2_Mask);
   return Bld.CreateAnd(getNVPTXThreadID(CGF), Bld.getInt32(mask2),
                        "nvptx_lane_id");
 }
@@ -1242,7 +1242,15 @@ void CGOpenMPRuntimeNVPTX::GenerateMetaData(CodeGenModule &CGM,
                                             const OMPExecutableDirective &D,
                                             llvm::Function *&OutlinedFn,
                                             bool IsGeneric) {
+  // If constant ThreadLimit(), set reqd_work_group_size metadata
+  // Emitting Metadata for thread_limit causes an issue in ISEL, due to
+  // an optimization in OPT.
+  // See line 230 lib/Target/AMDGPU/AMDGPULowerKernelAttributes.cpp
+  bool enableMetaOptBug = false;
+  bool flatAttrEmitted = false;
   int FlatAttr = 0;
+  int DefaultWorkGroupSz =
+      CGM.getTarget().getGridValue(GVIDX::GV_Default_WG_Size);
 
   if ((CGM.getTriple().isAMDGCN()) &&
       (isOpenMPTeamsDirective(D.getDirectiveKind()) ||
@@ -1252,9 +1260,7 @@ void CGOpenMPRuntimeNVPTX::GenerateMetaData(CodeGenModule &CGM,
     const auto *ThreadLimitClause = D.getSingleClause<OMPThreadLimitClause>();
     const auto *NumThreadsClause = D.getSingleClause<OMPNumThreadsClause>();
     int MaxWorkGroupSz =
-        CGM.getTarget().getGridValue(GPU::GVIDX::GV_Max_WG_Size);
-    int DefaultWorkGroupSz =
-        CGM.getTarget().getGridValue(GPU::GVIDX::GV_Default_WG_Size);
+        CGM.getTarget().getGridValue(GVIDX::GV_Max_WG_Size);
     int compileTimeThreadLimit = 0;
     // Only one of thread_limit or num_threads is used, cant do it for both
     if (ThreadLimitClause && !NumThreadsClause) {
@@ -1275,7 +1281,7 @@ void CGOpenMPRuntimeNVPTX::GenerateMetaData(CodeGenModule &CGM,
       // Add the WarpSize to gneric, to reflect what runtime dispatch does.
       if (IsGeneric)
         compileTimeThreadLimit +=
-            CGM.getTarget().getGridValue(GPU::GVIDX::GV_Warp_Size);
+            CGM.getTarget().getGridValue(GVIDX::GV_Warp_Size);
       if (compileTimeThreadLimit > MaxWorkGroupSz)
         compileTimeThreadLimit = MaxWorkGroupSz;
       llvm::Metadata *AttrMDArgs[] = {
@@ -1293,6 +1299,7 @@ void CGOpenMPRuntimeNVPTX::GenerateMetaData(CodeGenModule &CGM,
       FlatAttr = compileTimeThreadLimit;
       OutlinedFn->addFnAttr("amdgpu-flat-work-group-size",
                             AttrVal + "," + AttrVal);
+      flatAttrEmitted = true;
       wgs_is_constant = true;
       setPropertyWorkGroupSize(CGM, OutlinedFn->getName(),
                                compileTimeThreadLimit);
@@ -1311,6 +1318,12 @@ void CGOpenMPRuntimeNVPTX::GenerateMetaData(CodeGenModule &CGM,
     }
   } // end of amdgcn teams or parallel directive
 
+  // emit amdgpu-flat-work-group-size if not emitted already.
+  if (!flatAttrEmitted) {
+    std::string FlatAttrVal = llvm::utostr(DefaultWorkGroupSz);
+    OutlinedFn->addFnAttr("amdgpu-flat-work-group-size",
+                            FlatAttrVal + "," + FlatAttrVal);
+  }
   // Emit a kernel descriptor for runtime.
   StringRef KernDescName = OutlinedFn->getName();
   CGOpenMPRuntime::emitStructureKernelDesc(CGM, KernDescName, FlatAttr,
@@ -2386,7 +2399,7 @@ llvm::Function *CGOpenMPRuntimeNVPTX::emitTeamsOutlinedFunction(
     getTeamsReductionVars(CGM.getContext(), D, LastPrivatesReductions);
   if (getExecutionMode() == CGOpenMPRuntimeNVPTX::EM_SPMD) {
     getDistributeLastprivateVars(CGM.getContext(), D, LastPrivatesReductions);
-    int WarpSize = CGM.getTarget().getGridValue(GPU::GVIDX::GV_Warp_Size);
+    int WarpSize = CGM.getTarget().getGridValue(GVIDX::GV_Warp_Size);
     if (!LastPrivatesReductions.empty()) {
       GlobalizedRD = ::buildRecordForGlobalizedVars(
           CGM.getContext(), llvm::None, LastPrivatesReductions,
@@ -3616,7 +3629,7 @@ static llvm::Value *emitInterWarpCopyFunction(CodeGenModule &CGM,
   llvm::GlobalVariable *TransferMedium =
       M.getGlobalVariable(TransferMediumName);
   if (!TransferMedium) {
-    int WarpSize = CGM.getTarget().getGridValue(GPU::GVIDX::GV_Warp_Size);
+    int WarpSize = CGM.getTarget().getGridValue(GVIDX::GV_Warp_Size);
     auto *Ty = llvm::ArrayType::get(CGM.Int32Ty, WarpSize);
     unsigned SharedAddressSpace = C.getTargetAddressSpace(LangAS::cuda_shared);
     // amdgcn cannot zeroinitialize LDS
@@ -5447,6 +5460,7 @@ void CGOpenMPRuntimeNVPTX::processRequiresDirective(
       case CudaArch::GFX1010:
       case CudaArch::GFX1011:
       case CudaArch::GFX1012:
+      case CudaArch::GFX1030:
       case CudaArch::UNKNOWN:
         break;
       case CudaArch::LAST:
@@ -5510,6 +5524,7 @@ static std::pair<unsigned, unsigned> getSMsBlocksPerSM(CodeGenModule &CGM) {
   case CudaArch::GFX1010:
   case CudaArch::GFX1011:
   case CudaArch::GFX1012:
+  case CudaArch::GFX1030:
     // New GFX* need to be verified for the correct # SM's
     return {120, 64};
   case CudaArch::UNKNOWN:

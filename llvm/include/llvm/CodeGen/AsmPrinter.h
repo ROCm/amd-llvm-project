@@ -659,10 +659,10 @@ public:
 
   /// This emits linkage information about \p GVSym based on \p GV, if this is
   /// supported by the target.
-  void emitLinkage(const GlobalValue *GV, MCSymbol *GVSym) const;
+  virtual void emitLinkage(const GlobalValue *GV, MCSymbol *GVSym) const;
 
   /// Return the alignment for the specified \p GV.
-  static Align getGVAlignment(const GlobalValue *GV, const DataLayout &DL,
+  static Align getGVAlignment(const GlobalObject *GV, const DataLayout &DL,
                               Align InAlign = Align(1));
 
 private:

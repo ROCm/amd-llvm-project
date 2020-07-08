@@ -17,6 +17,7 @@ include "mlir/Dialect/Shape/IR/ShapeBase.td"
 include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
+include "mlir/IR/OpAsmInterface.td"
 
 def Shape_WitnessType : DialectType<ShapeDialect,
     CPred<"$_self.isa<::mlir::shape::WitnessType>()">, "witness">,
@@ -62,6 +63,8 @@ def Shape_AddOp : Shape_Op<"add", [SameOperandsAndResultType]> {
 
   let arguments = (ins Shape_SizeType:$lhs, Shape_SizeType:$rhs);
   let results = (outs Shape_SizeType:$result);
+
+  let assemblyFormat = "$lhs `,` $rhs attr-dict";
 }
 
 def Shape_BroadcastOp : Shape_Op<"broadcast", []> {
@@ -110,7 +113,11 @@ def Shape_ConstShapeOp : Shape_Op<"const_shape", [ConstantLike, NoSideEffect]> {
   let hasFolder = 1;
 }
 
-def Shape_ConstSizeOp : Shape_Op<"const_size", [ConstantLike, NoSideEffect]> {
+def Shape_ConstSizeOp : Shape_Op<"const_size", [
+    ConstantLike,
+    NoSideEffect,
+    DeclareOpInterfaceMethods<OpAsmOpInterface>
+  ]> {
   let summary = "Creates a constant of type `shape.size`";
   let description = [{
     Creates a `shape.size` type representing the constant size given by `value`.
@@ -123,7 +130,7 @@ def Shape_ConstSizeOp : Shape_Op<"const_size", [ConstantLike, NoSideEffect]> {
   let arguments = (ins IndexAttr:$value);
   let results = (outs Shape_SizeType:$result);
 
-  let assemblyFormat = "attr-dict $value";
+  let assemblyFormat = "$value attr-dict";
   let hasFolder = 1;
 }
 
@@ -143,12 +150,12 @@ def Shape_FromExtentsOp : Shape_Op<"from_extents", [NoSideEffect]> {
   let arguments = (ins Variadic<Index>:$extents);
   let results = (outs Shape_ShapeType:$shape);
 
-  let assemblyFormat = "attr-dict $extents";
+  let assemblyFormat = "$extents attr-dict";
 
   let hasFolder = 1;
 }
 
-def Shape_FromExtentTensorOp : Shape_Op<"from_extent_tensor", []> {
+def Shape_FromExtentTensorOp : Shape_Op<"from_extent_tensor", [NoSideEffect]> {
   let summary = "Creates a shape from a tensor of extents";
   let description = [{
     Creates a shape from a 1D integral tensor of extents. The rank of the
@@ -158,25 +165,24 @@ def Shape_FromExtentTensorOp : Shape_Op<"from_extent_tensor", []> {
 
   let arguments = (ins IndexTensor:$input);
   let results = (outs Shape_ShapeType:$result);
+
+  let assemblyFormat = "attr-dict $input `:` type($input)";
 }
 
-def Shape_ToExtentTensorOp : Shape_Op<"to_extent_tensor", []> {
+def Shape_ToExtentTensorOp : Shape_Op<"to_extent_tensor", [NoSideEffect]> {
   let summary = "Creates a dimension tensor from a shape";
-  // TODO: Think more about the error situation. Perhaps factor out the
-  // error detection into a separate op so downstream consumers can control
-  // their error behavior. Then this op would assume that the input has
-  // been properly checked to not be an error (and could thus be a
-  // NoSideEffect op).
   let description = [{
     Converts a shape to a 1D integral tensor of extents. The number of elements
     in the tensor equals the rank of the shape, and the elements equal the
     extents of the shape.
 
-    If the shape represents an error, then this op currently aborts the program.
+    If the shape represents an error, this op's behavior is undefined.
   }];
 
   let arguments = (ins Shape_ShapeType:$input);
   let results = (outs IndexTensor:$result);
+
+  let assemblyFormat = "attr-dict $input `:` type($result)";
 
   let hasFolder = 1;
 }
@@ -185,23 +191,25 @@ def Shape_GetExtentOp : Shape_Op<"get_extent", [NoSideEffect]> {
   let summary = "Gets the specified extent from a shape";
   let description = [{
     Gets the extent indexed by `dim` from `shape`.
-
     If the shape is an error, it returns an error size.
   }];
   let arguments = (ins
     Shape_ShapeType:$shape,
-    Confined<I64Attr, [IntNonNegative]>:$dim
+    Shape_SizeType:$dim
   );
   let results = (outs Shape_SizeType:$extent);
   let assemblyFormat = "$shape `,` $dim attr-dict";
 
   let builders = [
-    // Builder that allows passing a simple integer instead of an IntegerAttr.
-    OpBuilder<
-      [{OpBuilder &builder, OperationState &result, Value shape, int64_t dim}],
-      [{build(builder, result, shape, builder.getI64IntegerAttr(dim));}]
-    >
+    // Builder that allows passing a constant dimension as a simple integer.
+    OpBuilder<"OpBuilder &builder, OperationState &result, Value shape, "
+              "int64_t dim">
   ];
+
+  let extraClassDeclaration = [{
+    /// Get the `dim` value as integer if it is constant.
+    Optional<int64_t> getConstantDim();
+  }];
 
   let hasFolder = 1;
 }
@@ -219,7 +227,7 @@ def Shape_IndexToSizeOp : Shape_Op<"index_to_size", [NoSideEffect]> {
   let arguments = (ins Index:$arg);
   let results = (outs Shape_SizeType:$result);
 
-  let assemblyFormat = "attr-dict $arg";
+  let assemblyFormat = "$arg attr-dict";
 
   let hasFolder = 1;
 }
@@ -268,7 +276,7 @@ def Shape_MulOp : Shape_Op<"mul", [SameOperandsAndResultType]> {
   let arguments = (ins Shape_SizeType:$lhs, Shape_SizeType:$rhs);
   let results = (outs Shape_SizeType:$result);
 
-  let assemblyFormat = "attr-dict $lhs `,` $rhs";
+  let assemblyFormat = "$lhs `,` $rhs attr-dict";
 }
 
 def Shape_NumElementsOp : Shape_Op<"num_elements", [NoSideEffect]> {
@@ -285,7 +293,7 @@ def Shape_NumElementsOp : Shape_Op<"num_elements", [NoSideEffect]> {
   let arguments = (ins Shape_ShapeType:$shape);
   let results = (outs Shape_SizeType:$result);
 
-  let assemblyFormat = "attr-dict $shape";
+  let assemblyFormat = "$shape attr-dict";
 
   let hasFolder = 1;
 }
@@ -327,7 +335,7 @@ def Shape_ReduceOp : Shape_Op<"reduce",
 
   let arguments = (ins Shape_ShapeType:$shape, Variadic<AnyType>:$initVals);
   let results = (outs Variadic<AnyType>:$result);
-  let regions = (region SizedRegion<1>:$body);
+  let regions = (region SizedRegion<1>:$region);
 
   let builders = [
     OpBuilder<"OpBuilder &builder, OperationState &result, "
@@ -345,7 +353,7 @@ def Shape_ShapeOfOp : Shape_Op<"shape_of", [NoSideEffect]> {
   let arguments = (ins AnyTypeOf<[AnyShaped, Shape_ValueShapeType]>:$arg);
   let results = (outs Shape_ShapeType:$result);
 
-  let assemblyFormat = "attr-dict $arg `:` type($arg)";
+  let assemblyFormat = "$arg `:` type($arg) attr-dict";
 
   let hasFolder = 1;
 }
@@ -362,12 +370,16 @@ def Shape_SizeToIndexOp : Shape_Op<"size_to_index", [NoSideEffect]> {
   let arguments = (ins Shape_SizeType:$arg);
   let results = (outs Index:$result);
 
-  let assemblyFormat = "attr-dict $arg";
+  let assemblyFormat = "$arg attr-dict";
 
   let hasFolder = 1;
 }
 
-def Shape_YieldOp : Shape_Op<"yield", [NoSideEffect, Terminator]> {
+def Shape_YieldOp : Shape_Op<"yield",
+    [HasParent<"ReduceOp">,
+     NoSideEffect,
+     ReturnLike,
+     Terminator]> {
   let summary = "Returns the value to parent op";
 
   let arguments = (ins Variadic<AnyType>:$operands);
@@ -376,6 +388,7 @@ def Shape_YieldOp : Shape_Op<"yield", [NoSideEffect, Terminator]> {
     "OpBuilder &b, OperationState &result", [{ build(b, result, llvm::None); }]
   >];
 
+  let verifier = [{ return ::verify(*this); }];
   let assemblyFormat = "attr-dict ($operands^ `:` type($operands))?";
 }
 
@@ -497,6 +510,8 @@ def Shape_AssumingAllOp : Shape_Op<"assuming_all", [Commutative, NoSideEffect]> 
   let assemblyFormat = "$inputs attr-dict";
 
   let hasFolder = 1;
+
+  let verifier = [{ return ::verify(*this); }];
 }
 
 def Shape_AssumingOp : Shape_Op<"assuming",
@@ -517,6 +532,14 @@ def Shape_AssumingOp : Shape_Op<"assuming",
 
   let printer = [{ return ::print(p, *this); }];
   let parser = [{ return ::parse$cppClass(parser, result); }];
+
+  let extraClassDeclaration = [{
+    // Inline the region into the region containing the AssumingOp and delete
+    // the AssumingOp.
+    //
+    // This does no checks on the inputs to the AssumingOp.
+    static void inlineRegionIntoParent(AssumingOp &op, PatternRewriter &rewriter);
+  }];
 
   let hasCanonicalizer = 1;
 }

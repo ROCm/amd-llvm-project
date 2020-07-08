@@ -112,6 +112,7 @@ static buffer_t *atl_hcq_create_buffer(unsigned int num_packets) {
 // FIXME: Clean up this diagnostic and die properly
 hsa_status_t atmi_hostcall_version_check(unsigned int device_vrm) {
   uint device_version_release = device_vrm >> 6;
+
   if (device_version_release != HOSTRPC_VERSION_RELEASE) {
     printf("ERROR Incompatible device and host release\n      Device "
            "release(%d)\n      Host release(%d)\n",
