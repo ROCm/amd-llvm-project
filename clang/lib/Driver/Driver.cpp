@@ -3003,17 +3003,6 @@ class OffloadingActionBuilder final {
         }
 
         for (unsigned I = 0; I < ToolChains.size(); ++I) {
-          bool foundDeviceCode = false;
-          for (unsigned I = 0, E = GpuArchList.size(); I != E; ++I) {
-            StringRef Extension =
-                llvm::sys::path::extension(FileName).drop_front();
-            if (Extension != "a") {
-              foundDeviceCode = true;
-            }
-          }
-          if (!foundDeviceCode)
-            return ABRT_Inactive;
-
           OpenMPDeviceActions.push_back(UA);
           if (GpuArchList.size())
             for (unsigned I = 0, E = GpuArchList.size(); I != E; ++I) {
