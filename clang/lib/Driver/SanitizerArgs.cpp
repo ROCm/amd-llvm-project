@@ -745,12 +745,12 @@ SanitizerArgs::SanitizerArgs(const ToolChain &TC,
   // So, there is no way to clear coverage lists but you can append to them.
   if (CoverageFeatures) {
     parseSpecialCaseListArg(
-        D, Args, CoverageWhitelistFiles,
-        options::OPT_fsanitize_coverage_whitelist, OptSpecifier(),
+        D, Args, CoverageAllowlistFiles,
+        options::OPT_fsanitize_coverage_allowlist, OptSpecifier(),
         clang::diag::err_drv_malformed_sanitizer_coverage_whitelist);
     parseSpecialCaseListArg(
-        D, Args, CoverageBlacklistFiles,
-        options::OPT_fsanitize_coverage_blacklist, OptSpecifier(),
+        D, Args, CoverageBlocklistFiles,
+        options::OPT_fsanitize_coverage_blocklist, OptSpecifier(),
         clang::diag::err_drv_malformed_sanitizer_coverage_blacklist);
   }
 
@@ -923,8 +923,7 @@ void SanitizerArgs::addArgs(const ToolChain &TC, const llvm::opt::ArgList &Args,
   // NVPTX doesn't currently support sanitizers.  Bailing out here means that
   // e.g. -fsanitize=address applies only to host code, which is what we want
   // for now.
-  if (TC.getTriple().isNVPTX() ||
-      TC.getTriple().getArch() == llvm::Triple::amdgcn)
+  if (TC.getTriple().isNVPTX() || TC.getTriple().isAMDGCN())
     return;
 
   // Translate available CoverageFeatures to corresponding clang-cc1 flags.
@@ -955,9 +954,9 @@ void SanitizerArgs::addArgs(const ToolChain &TC, const llvm::opt::ArgList &Args,
       CmdArgs.push_back(F.second);
   }
   addSpecialCaseListOpt(
-      Args, CmdArgs, "-fsanitize-coverage-whitelist=", CoverageWhitelistFiles);
+      Args, CmdArgs, "-fsanitize-coverage-allowlist=", CoverageAllowlistFiles);
   addSpecialCaseListOpt(
-      Args, CmdArgs, "-fsanitize-coverage-blacklist=", CoverageBlacklistFiles);
+      Args, CmdArgs, "-fsanitize-coverage-blocklist=", CoverageBlocklistFiles);
 
   if (TC.getTriple().isOSWindows() && needsUbsanRt()) {
     // Instruct the code generator to embed linker directives in the object file

@@ -13,11 +13,10 @@
 #include "NVPTX.h"
 #include "Targets.h"
 #include "clang/Basic/Builtins.h"
-#include "clang/Basic/GpuGridValues.h"
 #include "clang/Basic/MacroBuilder.h"
-#include "clang/Basic/OpenMPGridValues.h"
 #include "clang/Basic/TargetBuiltins.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/Frontend/OpenMP/OMPGridValues.h"
 
 using namespace clang;
 using namespace clang::targets;
@@ -64,8 +63,7 @@ NVPTXTargetInfo::NVPTXTargetInfo(const llvm::Triple &Triple,
   TLSSupported = false;
   VLASupported = false;
   AddrSpaceMap = &NVPTXAddrSpaceMap;
-  GridValues = (const int *)&(GPU::NVPTXGpuGridValues[0]);
-  LongGridValues = (const long long *)&(GPU::NVPTXGpuLongGridValues[0]);
+  GridValues = llvm::omp::NVPTXGpuGridValues;
   UseAddrSpaceMapMangling = true;
 
   // Define available target features
@@ -202,6 +200,7 @@ void NVPTXTargetInfo::getTargetDefines(const LangOptions &Opts,
       case CudaArch::GFX1010:
       case CudaArch::GFX1011:
       case CudaArch::GFX1012:
+      case CudaArch::GFX1030:
       case CudaArch::LAST:
         break;
       case CudaArch::UNKNOWN:

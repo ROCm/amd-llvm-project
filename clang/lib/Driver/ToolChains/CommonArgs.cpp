@@ -12,6 +12,7 @@
 #include "Arch/Mips.h"
 #include "Arch/PPC.h"
 #include "Arch/SystemZ.h"
+#include "Arch/VE.h"
 #include "Arch/X86.h"
 #include "HIP.h"
 #include "Hexagon.h"
@@ -175,14 +176,12 @@ void tools::AddLinkerInputs(const ToolChain &TC, const InputInfoList &Inputs,
     addDirectoryList(Args, CmdArgs, "-L", "LIBRARY_PATH");
 
   for (const auto &II : Inputs) {
-    // If the current tool chain refers to an OpenMP or HIP offloading host, we
-    // should ignore inputs that refer to OpenMP or HIP offloading devices -
+    // If the current tool chain refers to an OpenMP offloading host, we
+    // should ignore inputs that refer to OpenMP offloading devices -
     // they will be embedded according to a proper linker script.
     if (auto *IA = II.getAction())
       if ((JA.isHostOffloading(Action::OFK_OpenMP) &&
-           IA->isDeviceOffloading(Action::OFK_OpenMP)) ||
-          (JA.isHostOffloading(Action::OFK_HIP) &&
-           IA->isDeviceOffloading(Action::OFK_HIP)))
+           IA->isDeviceOffloading(Action::OFK_OpenMP)))
         continue;
 
     if (!TC.HasNativeLLVMSupport() && types::isLLVMIR(II.getType()))
@@ -215,17 +214,6 @@ void tools::AddLinkerInputs(const ToolChain &TC, const InputInfoList &Inputs,
    if (!SeenFirstLinkerInput && needFortranMain(D, Args)) {
      CmdArgs.push_back("-lflangmain");
    }
-
-   //Claim "no Fortran main" arguments
-   for (auto Arg : Args.filtered(options::OPT_no_fortran_main,options::OPT_Mnomain)) {
-     Arg->claim();
-   }
-
-  // LIBRARY_PATH - included following the user specified library paths.
-  //                and only supported on native toolchains.
-  if (!TC.isCrossCompiling()) {
-    addDirectoryList(Args, CmdArgs, "-L", "LIBRARY_PATH");
-  }
 
   // Claim "no Fortran main" arguments
   for (auto Arg :
@@ -571,7 +559,7 @@ std::string tools::FindDebugInLibraryPath() {
 }
 
 void tools::addOpenMPRuntimeSpecificRPath(const ToolChain &TC, const ArgList &Args,
-                                         ArgStringList &CmdArgs) {
+					  ArgStringList &CmdArgs) {
   const Driver &D = TC.getDriver();
   std::string CandidateRPath = FindDebugInLibraryPath();
   if (CandidateRPath.empty())
@@ -579,14 +567,17 @@ void tools::addOpenMPRuntimeSpecificRPath(const ToolChain &TC, const ArgList &Ar
 
   if (TC.getVFS().exists(CandidateRPath)) {
     CmdArgs.push_back("-rpath");
-   CmdArgs.push_back(Args.MakeArgString(CandidateRPath.c_str()));
+    CmdArgs.push_back(Args.MakeArgString(CandidateRPath.c_str()));
   }
 }
 
 void tools::addArchSpecificRPath(const ToolChain &TC, const ArgList &Args,
                                  ArgStringList &CmdArgs) {
+  // Enable -frtlib-add-rpath by default for the case of VE.
+  const bool IsVE = TC.getTriple().isVE();
+  bool DefaultValue = IsVE;
   if (!Args.hasFlag(options::OPT_frtlib_add_rpath,
-                    options::OPT_fno_rtlib_add_rpath, false))
+                    options::OPT_fno_rtlib_add_rpath, DefaultValue))
     return;
 
   std::string CandidateRPath = TC.getArchSpecificLibPath();
@@ -614,7 +605,6 @@ bool tools::addOpenMPRuntime(ArgStringList &CmdArgs, const ToolChain &TC,
 
   switch (RTKind) {
   case Driver::OMPRT_OMP:
-    CmdArgs.push_back("-lhostrpc");
     CmdArgs.push_back("-lomp");
     addOpenMPRuntimeSpecificRPath(TC, Args, CmdArgs);
     break;
@@ -631,11 +621,17 @@ bool tools::addOpenMPRuntime(ArgStringList &CmdArgs, const ToolChain &TC,
   if (ForceStaticHostRuntime)
     CmdArgs.push_back("-Bdynamic");
 
+  if (RTKind == Driver::OMPRT_OMP)
+    addOpenMPRuntimeSpecificRPath(TC, Args, CmdArgs);
+
   if (RTKind == Driver::OMPRT_GOMP && GompNeedsRT)
       CmdArgs.push_back("-lrt");
 
-  if (IsOffloadingHost)
+  if (IsOffloadingHost) {
+    if (TC.getTriple().isAMDGCN())
+      CmdArgs.push_back("-lhostrpc");
     CmdArgs.push_back("-lomptarget");
+  }
 
   addArchSpecificRPath(TC, Args, CmdArgs);
   return true;
@@ -1378,115 +1374,6 @@ void tools::AddRunTimeLibs(const ToolChain &TC, const Driver &D,
   }
 }
 
-/// Add HIP linker script arguments at the end of the argument list so that
-/// the fat binary is built by embedding the device images into the host. The
-/// linker script also defines a symbol required by the code generation so that
-/// the image can be retrieved at runtime. This should be used only in tool
-/// chains that support linker scripts.
-void tools::AddHIPLinkerScript(const ToolChain &TC, Compilation &C,
-                               const InputInfo &Output,
-                               const InputInfoList &Inputs, const ArgList &Args,
-                               ArgStringList &CmdArgs, const JobAction &JA,
-                               const Tool &T) {
-
-  // If this is not a HIP host toolchain, we don't need to do anything.
-  if (!JA.isHostOffloading(Action::OFK_HIP))
-    return;
-
-  InputInfoList DeviceInputs;
-  for (const auto &II : Inputs) {
-    const Action *A = II.getAction();
-    // Is this a device linking action?
-    if (A && isa<LinkJobAction>(A) && A->isDeviceOffloading(Action::OFK_HIP)) {
-      DeviceInputs.push_back(II);
-    }
-  }
-
-  if (DeviceInputs.empty())
-    return;
-
-  // Create temporary linker script. Keep it if save-temps is enabled.
-  const char *LKS;
-  std::string Name =
-      std::string(llvm::sys::path::filename(Output.getFilename()));
-  if (C.getDriver().isSaveTempsEnabled()) {
-    LKS = C.getArgs().MakeArgString(Name + ".lk");
-  } else {
-    auto TmpName = C.getDriver().GetTemporaryPath(Name, "lk");
-    LKS = C.addTempFile(C.getArgs().MakeArgString(TmpName));
-  }
-
-  // Add linker script option to the command.
-  CmdArgs.push_back("-T");
-  CmdArgs.push_back(LKS);
-
-  // Create a buffer to write the contents of the linker script.
-  std::string LksBuffer;
-  llvm::raw_string_ostream LksStream(LksBuffer);
-
-  // Get the HIP offload tool chain.
-  auto *HIPTC = static_cast<const toolchains::HIPToolChain *>(
-      C.getSingleOffloadToolChain<Action::OFK_HIP>());
-  assert(HIPTC->getTriple().getArch() == llvm::Triple::amdgcn &&
-         "Wrong platform");
-  (void)HIPTC;
-
-  const char *BundleFile;
-  if (C.getDriver().isSaveTempsEnabled()) {
-    BundleFile = C.getArgs().MakeArgString(Name + ".hipfb");
-  } else {
-    auto TmpName = C.getDriver().GetTemporaryPath(Name, "hipfb");
-    BundleFile = C.addTempFile(C.getArgs().MakeArgString(TmpName));
-  }
-  AMDGCN::constructHIPFatbinCommand(C, JA, BundleFile, DeviceInputs, Args, T);
-
-  // Add commands to embed target binaries. We ensure that each section and
-  // image is 16-byte aligned. This is not mandatory, but increases the
-  // likelihood of data to be aligned with a cache block in several main host
-  // machines.
-  LksStream << "/*\n";
-  LksStream << "       HIP Offload Linker Script\n";
-  LksStream << " *** Automatically generated by Clang ***\n";
-  LksStream << "*/\n";
-  LksStream << "TARGET(binary)\n";
-  LksStream << "INPUT(" << BundleFile << ")\n";
-  LksStream << "SECTIONS\n";
-  LksStream << "{\n";
-  LksStream << "  .hip_fatbin :\n";
-  LksStream << "  ALIGN(0x10)\n";
-  LksStream << "  {\n";
-  LksStream << "    PROVIDE_HIDDEN(__hip_fatbin = .);\n";
-  LksStream << "    " << BundleFile << "\n";
-  LksStream << "  }\n";
-  LksStream << "  /DISCARD/ :\n";
-  LksStream << "  {\n";
-  LksStream << "    * ( __CLANG_OFFLOAD_BUNDLE__* )\n";
-  LksStream << "  }\n";
-  LksStream << "}\n";
-  LksStream << "INSERT BEFORE .data\n";
-  LksStream.flush();
-
-  // Dump the contents of the linker script if the user requested that. We
-  // support this option to enable testing of behavior with -###.
-  if (C.getArgs().hasArg(options::OPT_fhip_dump_offload_linker_script))
-    llvm::errs() << LksBuffer;
-
-  // If this is a dry run, do not create the linker script file.
-  if (C.getArgs().hasArg(options::OPT__HASH_HASH_HASH))
-    return;
-
-  // Open script file and write the contents.
-  std::error_code EC;
-  llvm::raw_fd_ostream Lksf(LKS, EC, llvm::sys::fs::OF_None);
-
-  if (EC) {
-    C.getDriver().Diag(clang::diag::err_unable_to_make_temp) << EC.message();
-    return;
-  }
-
-  Lksf << LksBuffer;
-}
-
 SmallString<128> tools::getStatsFileName(const llvm::opt::ArgList &Args,
                                          const InputInfo &Output,
                                          const InputInfo &Input,
@@ -1514,6 +1401,56 @@ SmallString<128> tools::getStatsFileName(const llvm::opt::ArgList &Args,
 void tools::addMultilibFlag(bool Enabled, const char *const Flag,
                             Multilib::flags_list &Flags) {
   Flags.push_back(std::string(Enabled ? "+" : "-") + Flag);
+}
+
+void tools::addX86AlignBranchArgs(const Driver &D, const ArgList &Args,
+                                  ArgStringList &CmdArgs, bool IsLTO) {
+  auto addArg = [&, IsLTO](const Twine &Arg) {
+    if (IsLTO) {
+      CmdArgs.push_back(Args.MakeArgString("-plugin-opt=" + Arg));
+    } else {
+      CmdArgs.push_back("-mllvm");
+      CmdArgs.push_back(Args.MakeArgString(Arg));
+    }
+  };
+
+  if (Args.hasArg(options::OPT_mbranches_within_32B_boundaries)) {
+    addArg(Twine("-x86-branches-within-32B-boundaries"));
+  }
+  if (const Arg *A = Args.getLastArg(options::OPT_malign_branch_boundary_EQ)) {
+    StringRef Value = A->getValue();
+    unsigned Boundary;
+    if (Value.getAsInteger(10, Boundary) || Boundary < 16 ||
+        !llvm::isPowerOf2_64(Boundary)) {
+      D.Diag(diag::err_drv_invalid_argument_to_option)
+          << Value << A->getOption().getName();
+    } else {
+      addArg("-x86-align-branch-boundary=" + Twine(Boundary));
+    }
+  }
+  if (const Arg *A = Args.getLastArg(options::OPT_malign_branch_EQ)) {
+    std::string AlignBranch;
+    for (StringRef T : A->getValues()) {
+      if (T != "fused" && T != "jcc" && T != "jmp" && T != "call" &&
+          T != "ret" && T != "indirect")
+        D.Diag(diag::err_drv_invalid_malign_branch_EQ)
+            << T << "fused, jcc, jmp, call, ret, indirect";
+      if (!AlignBranch.empty())
+        AlignBranch += '+';
+      AlignBranch += T;
+    }
+    addArg("-x86-align-branch=" + Twine(AlignBranch));
+  }
+  if (const Arg *A = Args.getLastArg(options::OPT_mpad_max_prefix_size_EQ)) {
+    StringRef Value = A->getValue();
+    unsigned PrefixSize;
+    if (Value.getAsInteger(10, PrefixSize)) {
+      D.Diag(diag::err_drv_invalid_argument_to_option)
+          << Value << A->getOption().getName();
+    } else {
+      addArg("-x86-pad-max-prefix-size=" + Twine(PrefixSize));
+    }
+  }
 }
 
 /// SDLSearch: Search for Static Device Library
@@ -1732,61 +1669,13 @@ void tools::AddStaticDeviceLibs(Compilation *C, const Tool *T,
     }
   }
 
+  bool isTargOmp = JA->isDeviceOffloading(Action::OFK_OpenMP);
+
   // Add the autoinclude that allows system headers to work for devices
-  if (postClangLink) {
+  if (postClangLink && isTargOmp) {
     CC1Args.push_back("-include");
     SmallString<128> P(D.ResourceDir);
     llvm::sys::path::append(P, "/include/__clang_openmp_runtime_wrapper.h");
     CC1Args.push_back(DriverArgs.MakeArgString(P));
-  }
-}
-
-void tools::addX86AlignBranchArgs(const Driver &D, const ArgList &Args,
-                                  ArgStringList &CmdArgs, bool IsLTO) {
-  auto addArg = [&, IsLTO](const Twine &Arg) {
-    if (IsLTO) {
-      CmdArgs.push_back(Args.MakeArgString("-plugin-opt=" + Arg));
-    } else {
-      CmdArgs.push_back("-mllvm");
-      CmdArgs.push_back(Args.MakeArgString(Arg));
-    }
-  };
-
-  if (Args.hasArg(options::OPT_mbranches_within_32B_boundaries)) {
-    addArg(Twine("-x86-branches-within-32B-boundaries"));
-  }
-  if (const Arg *A = Args.getLastArg(options::OPT_malign_branch_boundary_EQ)) {
-    StringRef Value = A->getValue();
-    unsigned Boundary;
-    if (Value.getAsInteger(10, Boundary) || Boundary < 16 ||
-        !llvm::isPowerOf2_64(Boundary)) {
-      D.Diag(diag::err_drv_invalid_argument_to_option)
-          << Value << A->getOption().getName();
-    } else {
-      addArg("-x86-align-branch-boundary=" + Twine(Boundary));
-    }
-  }
-  if (const Arg *A = Args.getLastArg(options::OPT_malign_branch_EQ)) {
-    std::string AlignBranch;
-    for (StringRef T : A->getValues()) {
-      if (T != "fused" && T != "jcc" && T != "jmp" && T != "call" &&
-          T != "ret" && T != "indirect")
-        D.Diag(diag::err_drv_invalid_malign_branch_EQ)
-            << T << "fused, jcc, jmp, call, ret, indirect";
-      if (!AlignBranch.empty())
-        AlignBranch += '+';
-      AlignBranch += T;
-    }
-    addArg("-x86-align-branch=" + Twine(AlignBranch));
-  }
-  if (const Arg *A = Args.getLastArg(options::OPT_mpad_max_prefix_size_EQ)) {
-    StringRef Value = A->getValue();
-    unsigned PrefixSize;
-    if (Value.getAsInteger(10, PrefixSize)) {
-      D.Diag(diag::err_drv_invalid_argument_to_option)
-          << Value << A->getOption().getName();
-    } else {
-      addArg("-x86-pad-max-prefix-size=" + Twine(PrefixSize));
-    }
   }
 }

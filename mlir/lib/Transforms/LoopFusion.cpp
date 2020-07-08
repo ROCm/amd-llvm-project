@@ -70,10 +70,8 @@ mlir::createLoopFusionPass(unsigned fastMemorySpace,
 
 // TODO(b/117228571) Replace when this is modeled through side-effects/op traits
 static bool isMemRefDereferencingOp(Operation &op) {
-  if (isa<AffineReadOpInterface>(op) || isa<AffineWriteOpInterface>(op) ||
-      isa<AffineDmaStartOp>(op) || isa<AffineDmaWaitOp>(op))
-    return true;
-  return false;
+  return isa<AffineReadOpInterface, AffineWriteOpInterface, AffineDmaStartOp,
+             AffineDmaWaitOp>(op);
 }
 
 namespace {
@@ -636,7 +634,7 @@ bool MemRefDependenceGraph::init(FuncOp f) {
   DenseMap<Value, SetVector<unsigned>> memrefAccesses;
 
   // TODO: support multi-block functions.
-  if (f.getBlocks().size() != 1)
+  if (!llvm::hasSingleElement(f))
     return false;
 
   DenseMap<Operation *, unsigned> forToNodeMap;
@@ -911,22 +909,14 @@ static Value createPrivateMemRef(AffineForOp forOp, Operation *srcStoreOpInst,
   }
   auto newMemRefType = MemRefType::get(newShape, oldMemRefType.getElementType(),
                                        {}, newMemSpace);
-  // Gather alloc operands for the dynamic dimensions of the memref.
-  SmallVector<Value, 4> allocOperands;
-  unsigned dynamicDimCount = 0;
-  for (auto dimSize : oldMemRefType.getShape()) {
-    if (dimSize == -1)
-      allocOperands.push_back(
-          top.create<DimOp>(forOp.getLoc(), oldMemRef, dynamicDimCount++));
-  }
 
-  // Create new private memref for fused loop 'forOp'.
+  // Create new private memref for fused loop 'forOp'. 'newShape' is always
+  // a constant shape.
   // TODO(andydavis) Create/move alloc ops for private memrefs closer to their
   // consumer loop nests to reduce their live range. Currently they are added
   // at the beginning of the function, because loop nests can be reordered
   // during the fusion pass.
-  Value newMemRef =
-      top.create<AllocOp>(forOp.getLoc(), newMemRefType, allocOperands);
+  Value newMemRef = top.create<AllocOp>(forOp.getLoc(), newMemRefType);
 
   // Build an AffineMap to remap access functions based on lower bound offsets.
   SmallVector<AffineExpr, 4> remapExprs;
@@ -1628,14 +1618,22 @@ public:
             // Add new load ops to current Node load op list 'loads' to
             // continue fusing based on new operands.
             for (auto *loadOpInst : dstLoopCollector.loadOpInsts) {
-              auto loadMemRef =
-                  cast<AffineReadOpInterface>(loadOpInst).getMemRef();
               // NOTE: Change 'loads' to a hash set in case efficiency is an
               // issue. We still use a vector since it's expected to be small.
-              if (visitedMemrefs.count(loadMemRef) == 0 &&
-                  !llvm::is_contained(loads, loadOpInst))
+              if (!llvm::is_contained(loads, loadOpInst))
                 loads.push_back(loadOpInst);
             }
+            // Clear visited memrefs after fusion so that previously visited src
+            // nodes are considered for fusion again in the context of the new
+            // fused node.
+            // TODO: This shouldn't be necessary if we visited candidates in the
+            // dependence graph in post-order or once we fully support
+            // multi-store producers. Currently, in a multi-store producer
+            // scenario such as A->B, A->C, B->C, we fail to fuse A+B due to the
+            // multiple outgoing edges. However, after fusing B+C, A has a
+            // single outgoing edge and can be fused if we revisit it in the
+            // context of the new fused B+C node.
+            visitedMemrefs.clear();
 
             // Clear and add back loads and stores.
             mdg->clearNodeLoadAndStores(dstNode->id);

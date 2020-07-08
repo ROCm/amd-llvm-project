@@ -17,11 +17,9 @@ DEVICE char *p(uint32_t offset) {
 }
 
 
-
 DEVICE uint16_t workgroup_size_x() { return __builtin_amdgcn_workgroup_size_x(); }
 DEVICE uint16_t workgroup_size_y() { return __builtin_amdgcn_workgroup_size_y(); }
 DEVICE uint16_t workgroup_size_z() { return __builtin_amdgcn_workgroup_size_z(); }
-
 DEVICE uint32_t grid_size_x() { return *(uint32_t *)p(96 / 8); }
 DEVICE uint32_t grid_size_y() { return *(uint32_t *)p(128 / 8); }
 DEVICE uint32_t grid_size_z() { return *(uint32_t *)p(160 / 8); }

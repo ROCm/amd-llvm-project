@@ -24,39 +24,34 @@ DEVICE omptarget_device_environmentTy omptarget_device_environment;
 ////////////////////////////////////////////////////////////////////////////////
 
 DEVICE
-    omptarget_nvptx_Queue<omptarget_nvptx_ThreadPrivateContext, OMP_STATE_COUNT>
-        omptarget_nvptx_device_State[MAX_SM];
+omptarget_nvptx_Queue<omptarget_nvptx_ThreadPrivateContext, OMP_STATE_COUNT>
+    omptarget_nvptx_device_State[MAX_SM];
 
-    DEVICE void *omptarget_nest_par_call_stack;
-    DEVICE uint32_t omptarget_nest_par_call_struct_size =
-        sizeof(class omptarget_nvptx_TaskDescr);
+DEVICE void *omptarget_nest_par_call_stack;
+DEVICE uint32_t omptarget_nest_par_call_struct_size =
+    sizeof(class omptarget_nvptx_TaskDescr);
 
-    DEVICE omptarget_nvptx_SimpleMemoryManager
-        omptarget_nvptx_simpleMemoryManager;
-    DEVICE SHARED uint32_t usedMemIdx;
-    DEVICE SHARED uint32_t usedSlotIdx;
+DEVICE omptarget_nvptx_SimpleMemoryManager
+    omptarget_nvptx_simpleMemoryManager;
+DEVICE SHARED uint32_t usedMemIdx;
+DEVICE SHARED uint32_t usedSlotIdx;
+DEVICE SHARED uint8_t parallelLevel[MAX_THREADS_PER_TEAM / WARPSIZE];
+DEVICE SHARED uint16_t threadLimit;
+DEVICE SHARED uint16_t threadsInTeam;
+DEVICE SHARED uint16_t nThreads;
+// Pointer to this team's OpenMP state object
+DEVICE SHARED omptarget_nvptx_ThreadPrivateContext
+    *omptarget_nvptx_threadPrivateContext;
+
+////////////////////////////////////////////////////////////////////////////////
+// The team master sets the outlined parallel function in this variable to
+// communicate with the workers.  Since it is in shared memory, there is one
+// copy of these variables for each kernel, instance, and team.
+////////////////////////////////////////////////////////////////////////////////
+volatile DEVICE SHARED omptarget_nvptx_WorkFn omptarget_nvptx_workFn;
 #ifdef __AMDGCN__
-    DEVICE volatile SHARED uint8_t
-        parallelLevel[MAX_THREADS_PER_TEAM / WARPSIZE];
-#else
-    DEVICE SHARED uint8_t parallelLevel[MAX_THREADS_PER_TEAM / WARPSIZE];
-#endif
-    DEVICE SHARED uint16_t threadLimit;
-    DEVICE SHARED uint16_t threadsInTeam;
-    DEVICE SHARED uint16_t nThreads;
-    // Pointer to this team's OpenMP state object
-    DEVICE SHARED omptarget_nvptx_ThreadPrivateContext
-        *omptarget_nvptx_threadPrivateContext;
-
-    ////////////////////////////////////////////////////////////////////////////////
-    // The team master sets the outlined parallel function in this variable to
-    // communicate with the workers.  Since it is in shared memory, there is one
-    // copy of these variables for each kernel, instance, and team.
-    ////////////////////////////////////////////////////////////////////////////////
-    volatile DEVICE SHARED omptarget_nvptx_WorkFn omptarget_nvptx_workFn;
-#ifdef __AMDGCN__
-    volatile DEVICE SHARED bool omptarget_workers_active;
-    volatile DEVICE SHARED bool omptarget_master_active;
+DEVICE SHARED bool omptarget_workers_active;
+DEVICE SHARED bool omptarget_master_active;
 #endif
 
     ////////////////////////////////////////////////////////////////////////////////

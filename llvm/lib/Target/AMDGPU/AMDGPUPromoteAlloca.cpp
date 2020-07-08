@@ -69,7 +69,7 @@ namespace {
 static cl::opt<bool> DisablePromoteAllocaToVector(
   "disable-promote-alloca-to-vector",
   cl::desc("Disable promote alloca to vector"),
-  cl::init(false));
+  cl::init(true));
 
 static cl::opt<bool> DisablePromoteAllocaToLDS(
   "disable-promote-alloca-to-lds",
@@ -508,7 +508,7 @@ static bool tryPromoteAllocaToVector(AllocaInst *Alloca, const DataLayout &DL) {
       Value *VecValue = Builder.CreateLoad(VectorTy, BitCast);
       Value *ExtractElement = Builder.CreateExtractElement(VecValue, Index);
       if (Inst->getType() != VecEltTy)
-        ExtractElement = Builder.CreateBitCast(ExtractElement, Inst->getType());
+        ExtractElement = Builder.CreateBitOrPointerCast(ExtractElement, Inst->getType());
       Inst->replaceAllUsesWith(ExtractElement);
       Inst->eraseFromParent();
       break;
@@ -529,7 +529,7 @@ static bool tryPromoteAllocaToVector(AllocaInst *Alloca, const DataLayout &DL) {
       Value *VecValue = Builder.CreateLoad(VectorTy, BitCast);
       Value *Elt = SI->getValueOperand();
       if (Elt->getType() != VecEltTy)
-        Elt = Builder.CreateBitCast(Elt, VecEltTy);
+        Elt = Builder.CreateBitOrPointerCast(Elt, VecEltTy);
       Value *NewVecValue = Builder.CreateInsertElement(VecValue, Elt, Index);
       Builder.CreateStore(NewVecValue, BitCast);
       Inst->eraseFromParent();
