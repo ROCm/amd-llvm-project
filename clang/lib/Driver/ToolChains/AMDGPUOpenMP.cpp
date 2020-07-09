@@ -163,7 +163,7 @@ const char *AMDGCN::OpenMPLinker::constructOmpExtraCmds(
         {Args.MakeArgString("libomptarget-amdgcn-" + SubArchName + ".bc"),
          Args.MakeArgString("libaompextras-amdgcn-" + SubArchName + ".bc"),
          "hip.bc", "ockl.bc",
-	 Args.MakeArgString("libbc-hostrpc-amdgcn.a"),
+         Args.MakeArgString("libbc-hostrpc-amdgcn.a"),
          std::string(WaveFrontSizeBC)});
 
     if (!Args.hasArg(options::OPT_nostdlibxx) &&
@@ -355,7 +355,6 @@ void AMDGCN::OpenMPLinker::ConstructJob(Compilation &C, const JobAction &JA,
     if (II.isFilename())
       Prefix =
           llvm::sys::path::stem(II.getFilename()).str() + "-" + SubArchName;
-
   assert(Prefix.length() && "no linker inputs are files ");
 
   // Each command outputs different files.

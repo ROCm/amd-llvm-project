@@ -294,7 +294,7 @@ RValue CodeGenFunction::EmitHostrpcVargsFn(const CallExpr *E,
                                            const char *GPUAllocateName,
                                            const char *GPUStubFunctionName,
                                            ReturnValueSlot ReturnValue) {
-  assert(getTarget().getTriple().getArch() == llvm::Triple::amdgcn);
+  assert(getTarget().getTriple().isAMDGCN());
   // assert(E->getBuiltinCallee() == Builtin::BIprintf);
   assert(E->getNumArgs() >= 1); // rpc varfn always has at least one arg.
 
@@ -406,11 +406,11 @@ RValue CodeGenFunction::EmitHostrpcVargsFn(const CallExpr *E,
   llvm::Value *DataLenField = llvm::ConstantInt::get(Int32Ty, DataLen_CT);
   llvm::Value *P = Builder.CreateStructGEP(DataStructTy, BufferPtr, 0);
   Builder.CreateAlignedStore(
-      DataLenField, P, DL.getPrefTypeAlign(DataLenField->getType()), false);
+      DataLenField, P, DL.getPrefTypeAlign(DataLenField->getType()));
   llvm::Value *NumArgsField = llvm::ConstantInt::get(Int32Ty, NumArgs);
   P = Builder.CreateStructGEP(DataStructTy, BufferPtr, 1);
   Builder.CreateAlignedStore(
-      NumArgsField, P, DL.getPrefTypeAlign(NumArgsField->getType()), false);
+      NumArgsField, P, DL.getPrefTypeAlign(NumArgsField->getType()));
 
   // ---  2nd Pass: create array of 4-byte keys to describe each arg
 
@@ -431,8 +431,7 @@ RValue CodeGenFunction::EmitHostrpcVargsFn(const CallExpr *E,
     llvm::Value *Key =
         llvm::ConstantInt::get(Int32Ty, PACK_TY_BITLEN(argtypeid, numbits));
     P = Builder.CreateStructGEP(DataStructTy, BufferPtr, I + 2);
-    Builder.CreateAlignedStore(Key, P, DL.getPrefTypeAlign(Key->getType()),
-                               false);
+    Builder.CreateAlignedStore(Key, P, DL.getPrefTypeAlign(Key->getType()));
   }
 
   // ---  3rd Pass: Store thread-specfic data values for each arg ---
@@ -466,8 +465,7 @@ RValue CodeGenFunction::EmitHostrpcVargsFn(const CallExpr *E,
       structIndex++;
     }
     P = Builder.CreateStructGEP(DataStructTy, BufferPtr, structIndex);
-    Builder.CreateAlignedStore(Arg, P, DL.getPrefTypeAlign(Arg->getType()),
-                               false);
+    Builder.CreateAlignedStore(Arg, P, DL.getPrefTypeAlign(Arg->getType()));
     structOffset += structElementSize;
     structIndex++;
   }

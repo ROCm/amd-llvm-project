@@ -1054,7 +1054,7 @@ tools::ParsePICArgs(const ToolChain &ToolChain, const ArgList &Args) {
   }
 
   // AMDGPU-specific defaults for PIC.
-  if (Triple.getArch() == llvm::Triple::amdgcn)
+  if (Triple.isAMDGCN())
     PIC = true;
 
   // The last argument relating to either PIC or PIE wins, and no
