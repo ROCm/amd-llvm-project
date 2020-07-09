@@ -372,7 +372,8 @@ public:
     DeviceData.resize(NumberOfDevices);
 #if OMPD_SUPPORT
     ompd_num_cuda_devices = (uint64_t) NumberOfDevices;
-    ompd_CudaContextArray = &DeviceData[0];
+    // ompd_CudaContextArray = &DeviceData[0];
+    ompd_CudaContextArray = nullptr; // temp till we figure this out
 #endif /* OMPD_SUPPORT */
 
     // Get environment variables regarding teams
