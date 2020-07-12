@@ -259,7 +259,6 @@ StmtResult Sema::ActOnGCCAsmStmt(SourceLocation AsmLoc, bool IsSimple,
   FunctionDecl *FD = dyn_cast<FunctionDecl>(getCurLexicalContext());
   llvm::StringMap<bool> FeatureMap;
   Context.getFunctionFeatureMap(FeatureMap, FD);
-
   for (unsigned i = 0; i != NumOutputs; i++) {
     StringLiteral *Literal = Constraints[i];
     assert(Literal->isAscii());

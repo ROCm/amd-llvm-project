@@ -1184,6 +1184,11 @@ void Clang::AddPreprocessingOptions(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-include");
     CmdArgs.push_back("__clang_openmp_device_functions.h");
   }
+  if (Args.hasFlag(options::OPT_fopenmp, options::OPT_fopenmp_EQ,
+                   options::OPT_fno_openmp, false)){
+    CmdArgs.push_back("-I");
+    CmdArgs.push_back(Args.MakeArgString(D.Dir + "/../include"));
+  }
 
   // Add -i* options, and automatically translate to
   // -include-pch/-include-pth for transparent PCH support. It's
@@ -4045,6 +4050,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
             .normalize();
     CmdArgs.push_back("-aux-triple");
     CmdArgs.push_back(Args.MakeArgString(NormalizedTriple));
+    // Treat all c++ device code as if it is c++11
+    if (types::isCXX(Input.getType()))
+      CmdArgs.push_back("-std=c++11");
   }
 
   if (Triple.isOSWindows() && (Triple.getArch() == llvm::Triple::arm ||
@@ -5800,7 +5808,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // Enable vectorization per default according to the optimization level
   // selected. For optimization levels that want vectorization we use the alias
   // option to simplify the hasFlag logic.
-  bool EnableVec = shouldEnableVectorizerAtOLevel(Args, false);
+  bool EnableVec = shouldEnableVectorizerAtOLevel(Args, false) &&
+                   !(Triple.getArch() == llvm::Triple::amdgcn ||
+                     Triple.getArch() == llvm::Triple::nvptx64);
   OptSpecifier VectorizeAliasOption =
       EnableVec ? options::OPT_O_Group : options::OPT_fvectorize;
   if (Args.hasFlag(options::OPT_fvectorize, VectorizeAliasOption,
@@ -5808,7 +5818,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-vectorize-loops");
 
   // -fslp-vectorize is enabled based on the optimization level selected.
-  bool EnableSLPVec = shouldEnableVectorizerAtOLevel(Args, true);
+  bool EnableSLPVec = shouldEnableVectorizerAtOLevel(Args, true) &&
+                      !(Triple.getArch() == llvm::Triple::amdgcn ||
+                        Triple.getArch() == llvm::Triple::nvptx64);
   OptSpecifier SLPVectAliasOption =
       EnableSLPVec ? options::OPT_O_Group : options::OPT_fslp_vectorize;
   if (Args.hasFlag(options::OPT_fslp_vectorize, SLPVectAliasOption,
@@ -6205,7 +6217,14 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     assert(Output.isNothing() && "Invalid output.");
   }
 
-  addDashXForInput(Args, Input, CmdArgs);
+  if (IsHIP) {
+    CmdArgs.push_back("-x");
+    if (Input.getType() == types::TY_LLVM_BC)
+      CmdArgs.push_back("ir");
+    else
+      CmdArgs.push_back("hip");
+  } else
+    addDashXForInput(Args, Input, CmdArgs);
 
   ArrayRef<InputInfo> FrontendInputs = Input;
   if (IsHeaderModulePrecompile)
@@ -7076,14 +7095,13 @@ static bool isArchiveOfBundlesFileName(StringRef FilePath) {
   if (!FileName.endswith(".a"))
     return false;
 
-  if (!FileName.startswith("lib"))
-    return false;
 
-  if (FileName.contains("amdgcn") && FileName.contains("gfx"))
-    return false;
-
-  if (FileName.contains("nvptx") && FileName.contains("sm_"))
-    return false;
+  if (FileName.startswith("lib")) {
+    if (FileName.contains("amdgcn") && FileName.contains("gfx"))
+      return false;
+    if (FileName.contains("nvptx") && FileName.contains("sm_"))
+      return false;
+  }
 
   return true;
 }

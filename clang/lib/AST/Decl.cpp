@@ -907,7 +907,8 @@ LinkageComputer::getLVForNamespaceScopeDecl(const NamedDecl *D,
     return LinkageInfo(LV.getLinkage(), DefaultVisibility, false);
 
   // Mark the symbols as hidden when compiling for the device.
-  if (Context.getLangOpts().OpenMP && Context.getLangOpts().OpenMPIsDevice)
+  if (Context.getLangOpts().OpenMP && Context.getLangOpts().OpenMPIsDevice &&
+      Context.getTargetInfo().getTriple().getArch() != llvm::Triple::amdgcn)
     LV.mergeVisibility(HiddenVisibility, /*newExplicit=*/false);
 
   return LV;

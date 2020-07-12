@@ -36,14 +36,15 @@ namespace {
 
 static void addBCLib(const Driver &D, const ArgList &Args,
                      ArgStringList &CmdArgs, ArgStringList LibraryPaths,
-                     StringRef BCName) {
+                     StringRef BCName, bool postClangLink) {
   StringRef FullName;
   for (std::string LibraryPath : LibraryPaths) {
     SmallString<128> Path(LibraryPath);
     llvm::sys::path::append(Path, BCName);
     FullName = Path;
     if (llvm::sys::fs::exists(FullName)) {
-      CmdArgs.push_back("-mlink-builtin-bitcode");
+      if (postClangLink)
+        CmdArgs.push_back("-mlink-builtin-bitcode");
       CmdArgs.push_back(Args.MakeArgString(FullName));
       return;
     }
@@ -91,7 +92,8 @@ void AMDGCN::Linker::constructLldCommand(Compilation &C, const JobAction &JA,
 
   LldArgs.append({"-o", Output.getFilename()});
   for (auto Input : Inputs)
-    LldArgs.push_back(Input.getFilename());
+    if (Input.isFilename())
+      LldArgs.push_back(Input.getFilename());
   const char *Lld = Args.MakeArgString(getToolChain().GetProgramPath("lld"));
   C.addCommand(std::make_unique<Command>(JA, *this, ResponseFileSupport::None(),
                                          Lld, LldArgs, Inputs));
@@ -220,8 +222,9 @@ void AMDGCN::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 }
 
 HIPToolChain::HIPToolChain(const Driver &D, const llvm::Triple &Triple,
-                             const ToolChain &HostTC, const ArgList &Args)
-    : ROCMToolChain(D, Triple, Args), HostTC(HostTC) {
+                           const ToolChain &HostTC, const ArgList &Args,
+                           const Action::OffloadKind OK)
+    : ROCMToolChain(D, Triple, Args), HostTC(HostTC), OK(OK) {
   // Lookup binaries into the driver directory, this is used to
   // discover the clang-offload-bundler executable.
   getProgramPaths().push_back(getDriver().Dir);
@@ -236,12 +239,17 @@ void HIPToolChain::addClangTargetOptions(
   StringRef GpuArch = DriverArgs.getLastArgValue(options::OPT_mcpu_EQ);
   assert(!GpuArch.empty() && "Must have an explicit GPU arch.");
   (void) GpuArch;
-  assert(DeviceOffloadingKind == Action::OFK_HIP &&
+  assert((DeviceOffloadingKind == Action::OFK_HIP ||
+          DeviceOffloadingKind == Action::OFK_OpenMP) &&
          "Only HIP offloading kinds are supported for GPUs.");
   auto Kind = llvm::AMDGPU::parseArchAMDGCN(GpuArch);
   const StringRef CanonArch = llvm::AMDGPU::getArchNameAMDGCN(Kind);
 
   CC1Args.push_back("-fcuda-is-device");
+
+  if (DriverArgs.hasFlag(options::OPT_fcuda_flush_denormals_to_zero,
+                         options::OPT_fno_cuda_flush_denormals_to_zero, false))
+    CC1Args.push_back("-fcuda-flush-denormals-to-zero");
 
   if (DriverArgs.hasFlag(options::OPT_fcuda_approx_transcendentals,
                          options::OPT_fno_cuda_approx_transcendentals, false))
@@ -253,30 +261,16 @@ void HIPToolChain::addClangTargetOptions(
   else
     CC1Args.append({"-mllvm", "-amdgpu-internalize-symbols"});
 
-  StringRef MaxThreadsPerBlock =
-      DriverArgs.getLastArgValue(options::OPT_gpu_max_threads_per_block_EQ);
-  if (!MaxThreadsPerBlock.empty()) {
-    std::string ArgStr =
-        std::string("--gpu-max-threads-per-block=") + MaxThreadsPerBlock.str();
-    CC1Args.push_back(DriverArgs.MakeArgStringRef(ArgStr));
-  }
-
-  if (DriverArgs.hasFlag(options::OPT_fgpu_allow_device_init,
-                         options::OPT_fno_gpu_allow_device_init, false))
-    CC1Args.push_back("-fgpu-allow-device-init");
-
   CC1Args.push_back("-fcuda-allow-variadic-functions");
 
   // Default to "hidden" visibility, as object level linking will not be
   // supported for the foreseeable future.
   if (!DriverArgs.hasArg(options::OPT_fvisibility_EQ,
-                         options::OPT_fvisibility_ms_compat)) {
+                         options::OPT_fvisibility_ms_compat) &&
+      DeviceOffloadingKind != Action::OFK_OpenMP) {
     CC1Args.append({"-fvisibility", "hidden"});
     CC1Args.push_back("-fapply-global-visibility-to-externs");
   }
-
-  if (DriverArgs.hasArg(options::OPT_nogpulib))
-    return;
   ArgStringList LibraryPaths;
 
   // Find in --hip-device-lib-path and HIP_LIBRARY_PATH.
@@ -286,11 +280,31 @@ void HIPToolChain::addClangTargetOptions(
 
   addDirectoryList(DriverArgs, LibraryPaths, "", "HIP_DEVICE_LIB_PATH");
 
+#if 1
+  if (DeviceOffloadingKind == Action::OFK_OpenMP) {
+    // If device debugging turned on, add specially built bc files
+    std::string lib_debug_path = FindDebugInLibraryPath();
+    if (!lib_debug_path.empty()) {
+      LibraryPaths.push_back(
+          DriverArgs.MakeArgString(lib_debug_path + "/libdevice"));
+      LibraryPaths.push_back(DriverArgs.MakeArgString(lib_debug_path));
+    }
+  }
+
+  // Add compiler path libdevice last as lowest priority search
+  LibraryPaths.push_back(
+      DriverArgs.MakeArgString(getDriver().Dir + "/../lib/libdevice"));
+  LibraryPaths.push_back(DriverArgs.MakeArgString(getDriver().Dir + "/../lib"));
+  LibraryPaths.push_back(
+      DriverArgs.MakeArgString(getDriver().Dir + "/../../lib/libdevice"));
+  LibraryPaths.push_back(DriverArgs.MakeArgString(getDriver().Dir + "/../../lib"));
+
+#endif
   // Maintain compatability with --hip-device-lib.
   auto BCLibs = DriverArgs.getAllArgValues(options::OPT_hip_device_lib_EQ);
   if (!BCLibs.empty()) {
     for (auto Lib : BCLibs)
-      addBCLib(getDriver(), DriverArgs, CC1Args, LibraryPaths, Lib);
+      addBCLib(getDriver(), DriverArgs, CC1Args, LibraryPaths, Lib, true);
   } else {
     if (!RocmInstallation.isValid()) {
       getDriver().Diag(diag::err_drv_no_rocm_installation);
@@ -325,6 +339,11 @@ void HIPToolChain::addClangTargetOptions(
       DriverArgs, CC1Args, LibDeviceFile, Wave64, DAZ, FiniteOnly,
       UnsafeMathOpt, FastRelaxedMath, CorrectSqrt);
   }
+#if 0
+  for (auto Lib : BCLibs)
+    addBCLib(getDriver(), DriverArgs, CC1Args, LibraryPaths, Lib,
+             /* PostClang Link? */ true);
+#endif
 }
 
 llvm::opt::DerivedArgList *
@@ -366,7 +385,65 @@ HIPToolChain::GetCXXStdlibType(const ArgList &Args) const {
 
 void HIPToolChain::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
                                               ArgStringList &CC1Args) const {
+  // HCC2: Get includes from compiler installation
+  const Driver &D = HostTC.getDriver();
+  CC1Args.push_back("-internal-isystem");
+  CC1Args.push_back(DriverArgs.MakeArgString(D.Dir + "/../include"));
+  CC1Args.push_back("-internal-isystem");
+  CC1Args.push_back(DriverArgs.MakeArgString(D.Dir + "/../../include"));
+
   HostTC.AddClangSystemIncludeArgs(DriverArgs, CC1Args);
+  // HIP headers need the cuda_wrappers in include path
+  
+  CC1Args.push_back("-internal-isystem");
+  SmallString<128> P2(HostTC.getDriver().ResourceDir);
+  CC1Args.push_back(DriverArgs.MakeArgString(P2));
+  
+  CC1Args.push_back("-internal-isystem");
+  SmallString<128> P(HostTC.getDriver().ResourceDir);
+  llvm::sys::path::append(P, "include/cuda_wrappers");
+  CC1Args.push_back(DriverArgs.MakeArgString(P));
+}
+
+/// Convert path list to Fortran frontend argument
+static void AddFlangSysIncludeArg(const ArgList &DriverArgs,
+                                  ArgStringList &Flang1args,
+                                  ToolChain::path_list IncludePathList) {
+  std::string ArgValue; // Path argument value
+
+  // Make up argument value consisting of paths separated by colons
+  bool first = true;
+  for (auto P : IncludePathList) {
+    if (first) {
+      first = false;
+    } else {
+      ArgValue += ":";
+    }
+    ArgValue += P;
+  }
+
+  // Add the argument
+  Flang1args.push_back("-stdinc");
+  Flang1args.push_back(DriverArgs.MakeArgString(ArgValue));
+}
+
+/// Currently only adding include dir from install directory
+void HIPToolChain::AddFlangSystemIncludeArgs(const ArgList &DriverArgs,
+                                             ArgStringList &Flang1args) const {
+  path_list IncludePathList;
+  const Driver &D = getDriver();
+
+  if (DriverArgs.hasArg(options::OPT_nostdinc))
+    return;
+
+  {
+    SmallString<128> P(D.InstalledDir);
+    llvm::sys::path::append(P, "../include");
+    IncludePathList.push_back(DriverArgs.MakeArgString(P.str()));
+  }
+
+  AddFlangSysIncludeArg(DriverArgs, Flang1args, IncludePathList);
+  return;
 }
 
 void HIPToolChain::AddClangCXXStdlibIncludeArgs(const ArgList &Args,

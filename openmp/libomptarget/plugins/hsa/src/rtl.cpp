@@ -501,7 +501,6 @@ int32_t __tgt_rtl_init_device(int device_id) {
         llvm::omp::AMDGPUGpuGridValues[llvm::omp::GVIDX::GV_Warp_Size];
   }
 
-
   // Adjust teams to the env variables
   if (DeviceInfo.EnvTeamLimit > 0 &&
       DeviceInfo.GroupsPerDevice[device_id] > DeviceInfo.EnvTeamLimit) {

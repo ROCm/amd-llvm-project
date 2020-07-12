@@ -6,22 +6,21 @@
  *
  *===-----------------------------------------------------------------------===
 
- offload_macros.h: Create 2 Universal _DEVICE Offloading Macros.
+ offload_macros.h: Define Universal Offload Macros _DEVICE_ARCH & _DEVICE_GPU
  
-   This header creates macros  _DEVICE_ARCH and _DEVICE_GPU with values.
+   This header creates macros _DEVICE_ARCH and _DEVICE_GPU with values.
    This header exists because compiler macros are inconsistent in specifying if
-   a compiliation is a device pass or a host pass. There is also inconsistency
+   a compilation is a device pass or a host pass. There is also inconsistency
    in how the device architecture and type are specified during a device pass.
    The inconsistencies are between OpenMP, CUDA, HIP, and OpenCL.
    The macro logic in this header is aware of these inconsistencies and
    sets useful values for _DEVICE_ARCH and _DEVICE_GPU during a device
    compilation. The macros will NOT be defined during a host compilation pass.
-   So "#ifndef _DEVICE_ARCH" can be used by users to imply a host compilation.
-   Updates to this header to cover other architectures or other
+   So "#ifndef _DEVICE_ARCH" can be used by users to mark code for host-only
+   compilation. Updates to this header to cover other architectures or other
    compilation environments are very welcome. This header must remain
-   a preprocessing header only because it is intended to be used by 
+   a preprocessing only header because it is intended to be used by
    different languages.
-
 */
 
 #ifndef __OFFLOAD_MACROS_H__
@@ -75,46 +74,43 @@
 #endif
  
 #if defined(_DEVICE_ARCH) && ( _DEVICE_ARCH == amdgcn )
-  // AMD uses binary macros only, so create a value for _DEVICE_GPU
-  #if defined(__gfx906__)
-    #define _DEVICE_GPU 906
-  #elif defined(__gfx900__) 
-    #define _DEVICE_GPU 900
-  #elif defined(__gfx601__) 
-    #define _DEVICE_GPU 601
-  #elif defined(__gfx700__) 
-    #define _DEVICE_GPU 700
-  #elif defined(__gfx701__) 
-    #define _DEVICE_GPU 701
-  #elif defined(__gfx702__) 
-    #define _DEVICE_GPU 702
-  #elif defined(__gfx703__) 
-    #define _DEVICE_GPU 703
-  #elif defined(__gfx801__) 
-    #define _DEVICE_GPU 801
-  #elif defined(__gfx802__) 
-    #define _DEVICE_GPU 802
-  #elif defined(__gfx803__) 
-    #define _DEVICE_GPU 803
-  #elif defined(__gfx810__) 
-    #define _DEVICE_GPU 810
-  #elif defined(__gfx900__) 
-    #define _DEVICE_GPU 900 
-  #elif defined(__gfx902__) 
-    #define _DEVICE_GPU 902 
-  #elif defined(__gfx904__) 
-    #define _DEVICE_GPU 904 
-  #elif defined(__gfx906__) 
-    #define _DEVICE_GPU 906 
-  #elif defined(__gfx909__) 
-    #define _DEVICE_GPU 909 
-  #elif defined(__gfx1010__) 
-    #define _DEVICE_GPU 1010
-  #elif defined(__gfx1011__) 
-    #define _DEVICE_GPU 1011
-  #elif defined(__gfx1012__) 
-    #define _DEVICE_GPU 1012
-  #else 
+  // AMD uses binary macros for GPU identification
+  // Create a generational value x10 for expansion
+  #if defined(__gfx601__)
+    #define _DEVICE_GPU 6010
+  #elif defined(__gfx700__)
+    #define _DEVICE_GPU 7000
+  #elif defined(__gfx701__)
+    #define _DEVICE_GPU 7010
+  #elif defined(__gfx702__)
+    #define _DEVICE_GPU 7020
+  #elif defined(__gfx703__)
+    #define _DEVICE_GPU 7030
+  #elif defined(__gfx801__)
+    #define _DEVICE_GPU 8010
+  #elif defined(__gfx802__)
+    #define _DEVICE_GPU 8020
+  #elif defined(__gfx803__)
+    #define _DEVICE_GPU 8030
+  #elif defined(__gfx810__)
+    #define _DEVICE_GPU 8100
+  #elif defined(__gfx900__)
+    #define _DEVICE_GPU 9000
+  #elif defined(__gfx902__)
+    #define _DEVICE_GPU 9020
+  #elif defined(__gfx904__)
+    #define _DEVICE_GPU 9040
+  #elif defined(__gfx906__)
+    #define _DEVICE_GPU 9060
+  #elif defined(__gfx909__)
+    #define _DEVICE_GPU 9090
+  #elif defined(__gfx1010__)
+    #define _DEVICE_GPU 10100
+  #elif defined(__gfx1011__)
+    #define _DEVICE_GPU 10110
+  #elif defined(__gfx1012__)
+    #define _DEVICE_GPU 10120
+  #else
     #define _DEVICE_GPU UNKNOWN
   #endif
 #endif

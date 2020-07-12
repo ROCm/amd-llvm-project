@@ -793,7 +793,6 @@ EXTERN void __kmpc_reduce_conditional_lastprivate(kmp_Ident *loc, int32_t gtid,
     // Atomic max of iterations.
     uint64_t *varArray = (uint64_t *)array;
     uint64_t elem = varArray[i];
-
 #ifdef __AMDGCN__
     (void)__kmpc_atomic_max((unsigned long long int *)Buffer,
                             (unsigned long long int)elem);

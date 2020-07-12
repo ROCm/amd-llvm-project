@@ -2357,6 +2357,7 @@ void CompilerInvocation::setLangDefaults(LangOptions &Opts, InputKind IK,
     Opts.NativeHalfType = 1;
     Opts.NativeHalfArgsAndReturns = 1;
     Opts.OpenCLCPlusPlus = Opts.CPlusPlus;
+
     // Include default header file for OpenCL.
     if (Opts.IncludeDefaultHeader && !Opts.DeclareOpenCLBuiltins) {
       PPOpts.Includes.push_back("opencl-c.h");

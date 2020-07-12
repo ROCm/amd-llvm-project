@@ -363,8 +363,7 @@ void CGNVCUDARuntime::emitDeviceStubBodyLegacy(CodeGenFunction &CGF,
         CGM.getContext().getTypeInfoInChars(A->getType());
     Offset = Offset.alignTo(TyAlign);
     llvm::Value *Args[] = {
-        CGF.Builder.CreatePointerCast(CGF.GetAddrOfLocalVar(A).getPointer(),
-                                      VoidPtrTy),
+        CGF.Builder.CreatePointerCast(CGF.GetAddrOfLocalVar(A).getPointer(), VoidPtrTy),
         llvm::ConstantInt::get(SizeTy, TyWidth.getQuantity()),
         llvm::ConstantInt::get(SizeTy, Offset.getQuantity()),
     };

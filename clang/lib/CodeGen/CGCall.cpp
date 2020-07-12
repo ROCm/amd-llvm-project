@@ -4549,7 +4549,6 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
         if (FirstIRArg < IRFuncTy->getNumParams() &&
             V->getType() != IRFuncTy->getParamType(FirstIRArg))
           V = Builder.CreateBitCast(V, IRFuncTy->getParamType(FirstIRArg));
-
         IRCallArgs[FirstIRArg] = V;
         break;
       }

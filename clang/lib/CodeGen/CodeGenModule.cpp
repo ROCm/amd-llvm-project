@@ -211,9 +211,13 @@ void CodeGenModule::createOpenMPRuntime() {
   switch (getTriple().getArch()) {
   case llvm::Triple::nvptx:
   case llvm::Triple::nvptx64:
-  case llvm::Triple::amdgcn:
     assert(getLangOpts().OpenMPIsDevice &&
            "OpenMP NVPTX is only prepared to deal with device code.");
+    OpenMPRuntime.reset(new CGOpenMPRuntimeNVPTX(*this));
+    break;
+  case llvm::Triple::amdgcn:
+    assert(getLangOpts().OpenMPIsDevice &&
+           "OpenMP AMDGCN is only prepared to deal with device code.");
     OpenMPRuntime.reset(new CGOpenMPRuntimeNVPTX(*this));
     break;
   default:
@@ -450,7 +454,6 @@ void CodeGenModule::Release() {
   emitLLVMUsed();
   if (SanStats)
     SanStats->finish();
-
   if (CodeGenOpts.Autolink &&
       (Context.getLangOpts().Modules || !LinkerOptionsMetadata.empty())) {
     EmitModuleLinkOptions();

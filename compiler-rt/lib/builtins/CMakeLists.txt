@@ -569,6 +569,10 @@ set(wasm64_SOURCES
   ${GENERIC_SOURCES}
 )
 
+set(powerpc64le_SOURCES
+  ${GENERIC_TF_SOURCES}
+  ${GENERIC_SOURCES})
+
 set(ve_SOURCES
   ve/grow_stack.S
   ve/grow_stack_align.S

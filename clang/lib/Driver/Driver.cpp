@@ -96,7 +96,6 @@ using namespace clang::driver;
 using namespace clang;
 using namespace llvm::opt;
 
-// static
 std::string Driver::GetResourcesPath(StringRef BinaryPath,
                                      StringRef CustomResourceDir) {
   // Since the resource directory is embedded in the module hash, it's important
@@ -692,7 +691,7 @@ void Driver::CreateOffloadingDeviceToolChains(Compilation &C,
     auto &HIPTC = ToolChains[HIPTriple.str() + "/" + HostTriple.str()];
     if (!HIPTC) {
       HIPTC = std::make_unique<toolchains::HIPToolChain>(
-          *this, HIPTriple, *HostTC, C.getInputArgs());
+          *this, HIPTriple, *HostTC, C.getInputArgs(), OFK);
     }
     C.addOffloadDeviceToolChain(HIPTC.get(), OFK);
   }
@@ -1210,7 +1209,18 @@ Compilation *Driver::BuildCompilation(ArrayRef<const char *> ArgList) {
   }
 
   BuildJobs(*C);
-
+#if 0
+  PrintActions(*C);
+  printf("\n=========================> LOOP PRINT OF JOBS\n");
+  const driver::JobList &Jobs = C->getJobs();
+  for(const driver::Command &Cmd : Jobs) {
+     printf("\nCMD for action %s arch:%s\n",
+        Cmd.getSource().getClassName(),
+        Cmd.getSource().getOffloadingArch());
+     Cmd.Print(llvm::errs(),"\n",true);
+  }
+  printf("=========================> END PRINT OF JOBS\n\n");
+#endif
   return C;
 }
 
@@ -1332,6 +1342,10 @@ void Driver::generateCompilationDiagnostics(
 
   // Print the version of the compiler.
   PrintVersion(C, llvm::errs());
+
+  Diag(clang::diag::note_drv_command_failed_diag_msg)
+      << "PLEASE open a git issue at " BUG_REPORT_URL " with a detailed"
+         " description of this problem.";
 
   // Suppress driver output and emit preprocessor output to temp file.
   Mode = CPPMode;
@@ -2454,7 +2468,7 @@ class OffloadingActionBuilder final {
                "We should have at least one GPU architecture.");
 
         // If the host input is not CUDA or HIP, we don't need to bother about
-        // this input.
+        // this input. CUDA and HIP are allowed in cpp and c files.
         if (IA->getType() != types::TY_CUDA &&
             IA->getType() != types::TY_HIP) {
           // The builder will ignore this input.
@@ -2769,12 +2783,6 @@ class OffloadingActionBuilder final {
       // backend and assemble phases to output LLVM IR. Except for generating
       // non-relocatable device coee, where we generate fat binary for device
       // code and pass to host in Backend phase.
-#if 0
-      if (CudaDeviceActions.empty() ||
-          (CurPhase == phases::Backend && Relocatable) ||
-          CurPhase == phases::Assemble)
-        return CompileDeviceOnly ? ABRT_Ignore_Host : ABRT_Success;
-#endif
       if (CudaDeviceActions.empty())
         return ABRT_Success;
 
@@ -2854,9 +2862,10 @@ class OffloadingActionBuilder final {
       }
 
       // By default, we produce an action for each device arch.
-      for (Action *&A : CudaDeviceActions)
+      for (Action *&A : CudaDeviceActions) {
         A = C.getDriver().ConstructPhaseAction(C, Args, CurPhase, A,
                                                AssociatedOffloadKind);
+      }
 
       return (CompileDeviceOnly && CurPhase == FinalPhase) ? ABRT_Ignore_Host
                                                            : ABRT_Success;
@@ -3019,17 +3028,6 @@ class OffloadingActionBuilder final {
         }
 
         for (unsigned I = 0; I < ToolChains.size(); ++I) {
-          bool foundDeviceCode = false;
-          for (unsigned I = 0, E = GpuArchList.size(); I != E; ++I) {
-            StringRef Extension =
-                llvm::sys::path::extension(FileName).drop_front();
-            if (Extension != "a") {
-              foundDeviceCode = true;
-            }
-          }
-          if (!foundDeviceCode)
-            return ABRT_Inactive;
-
           OpenMPDeviceActions.push_back(UA);
           if (GpuArchList.size())
             for (unsigned I = 0, E = GpuArchList.size(); I != E; ++I) {
@@ -4645,11 +4643,12 @@ InputInfo Driver::BuildJobsForActionNoCache(
         /*CreatePrefixForHost=*/!!A->getOffloadingHostActiveKinds() &&
             !AtTopLevel);
     if (isa<OffloadWrapperJobAction>(JA)) {
-      OffloadingPrefix += "-wrapper";
+      std::string NewBI = "wrapper-";
       if (Arg *FinalOutput = C.getArgs().getLastArg(options::OPT_o))
-        BaseInput = FinalOutput->getValue();
+        NewBI += FinalOutput->getValue();
       else
-        BaseInput = getDefaultImageName();
+        NewBI += getDefaultImageName();
+      BaseInput = strdup(NewBI.c_str()); 
     }
     Result = InputInfo(A, GetNamedOutputPath(C, *JA, BaseInput, BoundArch,
                                              AtTopLevel, MultipleArchs,

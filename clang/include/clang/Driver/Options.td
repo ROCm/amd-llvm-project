@@ -609,6 +609,7 @@ def offload_arch_EQ : Joined<["--"], "offload-arch=">, Flags<[DriverOption]>,
   HelpText<"CUDA/HIP offloading device architecture (e.g. sm_35, gfx906).  May be specified more than once.">;
 def cuda_gpu_arch_EQ : Joined<["--"], "cuda-gpu-arch=">, Flags<[DriverOption]>,
   Alias<offload_arch_EQ>;
+//def : Joined<["--"], "offload-arch=">, Alias<cuda_gpu_arch_EQ>;
 def hip_link : Flag<["--"], "hip-link">,
   HelpText<"Link clang-offload-bundler bundles for HIP">;
 def no_offload_arch_EQ : Joined<["--"], "no-offload-arch=">, Flags<[DriverOption]>,
