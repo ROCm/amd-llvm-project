@@ -79,6 +79,11 @@ static cl::opt<bool> UseLegacyDA(
   cl::desc("Enable legacy divergence analysis for AMDGPU"),
   cl::init(false), cl::Hidden);
 
+static cl::opt<unsigned> UnrollMaxBlockToAnalyze(
+    "amdgpu-unroll-max-block-to-analyze",
+    cl::desc("Inner loop block size threshold to analyze in unroll for AMDGPU"),
+    cl::init(20), cl::Hidden);
+
 static bool dependsOnLocalPhi(const Loop *L, const Value *Cond,
                               unsigned Depth = 0) {
   const Instruction *I = dyn_cast<Instruction>(Cond);
@@ -223,19 +228,31 @@ void AMDGPUTTIImpl::getUnrollingPreferences(Loop *L, ScalarEvolution &SE,
       if (UP.Threshold >= MaxBoost)
         return;
     }
+
+    // If we got a GEP in a small BB from inner loop then increase max trip
+    // count to analyze for better estimation cost in unroll
+    if (L->empty() && BB->size() < UnrollMaxBlockToAnalyze)
+      UP.MaxIterationsCountToAnalyze = 32;
   }
 }
 
 unsigned GCNTTIImpl::getHardwareNumberOfRegisters(bool Vec) const {
   // The concept of vector registers doesn't really exist. Some packed vector
   // operations operate on the normal 32-bit registers.
-  return 256;
+  return MaxVGPRs;
 }
 
 unsigned GCNTTIImpl::getNumberOfRegisters(bool Vec) const {
   // This is really the number of registers to fill when vectorizing /
   // interleaving loops, so we lie to avoid trying to use all registers.
   return getHardwareNumberOfRegisters(Vec) >> 3;
+}
+
+unsigned GCNTTIImpl::getNumberOfRegisters(unsigned RCID) const {
+  const SIRegisterInfo *TRI = ST->getRegisterInfo();
+  const TargetRegisterClass *RC = TRI->getRegClass(RCID);
+  unsigned NumVGPRs = (TRI->getRegSizeInBits(*RC) + 31) / 32;
+  return getHardwareNumberOfRegisters(false) / NumVGPRs;
 }
 
 unsigned GCNTTIImpl::getRegisterBitWidth(bool Vector) const {
@@ -247,8 +264,8 @@ unsigned GCNTTIImpl::getMinVectorRegisterBitWidth() const {
 }
 
 unsigned GCNTTIImpl::getLoadVectorFactor(unsigned VF, unsigned LoadSize,
-                                            unsigned ChainSizeInBytes,
-                                            VectorType *VecTy) const {
+                                         unsigned ChainSizeInBytes,
+                                         VectorType *VecTy) const {
   unsigned VecRegBitWidth = VF * LoadSize;
   if (VecRegBitWidth > 128 && VecTy->getScalarSizeInBits() < 32)
     // TODO: Support element-size less than 32bit?
@@ -283,8 +300,8 @@ unsigned GCNTTIImpl::getLoadStoreVecRegBitWidth(unsigned AddrSpace) const {
 }
 
 bool GCNTTIImpl::isLegalToVectorizeMemChain(unsigned ChainSizeInBytes,
-                                               unsigned Alignment,
-                                               unsigned AddrSpace) const {
+                                            Align Alignment,
+                                            unsigned AddrSpace) const {
   // We allow vectorization of flat stores, even though we may need to decompose
   // them later if they may access private memory. We don't have enough context
   // here, and legalization can handle it.
@@ -296,14 +313,14 @@ bool GCNTTIImpl::isLegalToVectorizeMemChain(unsigned ChainSizeInBytes,
 }
 
 bool GCNTTIImpl::isLegalToVectorizeLoadChain(unsigned ChainSizeInBytes,
-                                                unsigned Alignment,
-                                                unsigned AddrSpace) const {
+                                             Align Alignment,
+                                             unsigned AddrSpace) const {
   return isLegalToVectorizeMemChain(ChainSizeInBytes, Alignment, AddrSpace);
 }
 
 bool GCNTTIImpl::isLegalToVectorizeStoreChain(unsigned ChainSizeInBytes,
-                                                 unsigned Alignment,
-                                                 unsigned AddrSpace) const {
+                                              Align Alignment,
+                                              unsigned AddrSpace) const {
   return isLegalToVectorizeMemChain(ChainSizeInBytes, Alignment, AddrSpace);
 }
 
@@ -427,8 +444,11 @@ int GCNTTIImpl::getArithmeticInstrCost(unsigned Opcode, Type *Ty,
                                        const Instruction *CxtI) {
   EVT OrigTy = TLI->getValueType(DL, Ty);
   if (!OrigTy.isSimple()) {
-    return BaseT::getArithmeticInstrCost(Opcode, Ty, CostKind, Opd1Info,
-                                         Opd2Info,
+    // FIXME: We're having to query the throughput cost so that the basic
+    // implementation tries to generate legalize and scalarization costs. Maybe
+    // we could hoist the scalarization code here?
+    return BaseT::getArithmeticInstrCost(Opcode, Ty, TTI::TCK_RecipThroughput,
+                                         Opd1Info, Opd2Info,
                                          Opd1PropInfo, Opd2PropInfo);
   }
 
@@ -536,6 +556,10 @@ int GCNTTIImpl::getArithmeticInstrCost(unsigned Opcode, Type *Ty,
       return LT.first * NElts * Cost;
     }
     break;
+  case ISD::FNEG:
+    // Use the backend' estimation. If fneg is not free each element will cost
+    // one additional instruction.
+    return TLI->isFNegFree(SLT) ? 0 : NElts;
   default:
     break;
   }
@@ -598,6 +622,9 @@ int GCNTTIImpl::getIntrinsicInstrCost(const IntrinsicCostAttributes &ICA,
 
 unsigned GCNTTIImpl::getCFInstrCost(unsigned Opcode,
                                     TTI::TargetCostKind CostKind) {
+  if (CostKind == TTI::TCK_CodeSize || CostKind == TTI::TCK_SizeAndLatency)
+    return Opcode == Instruction::PHI ? 0 : 1;
+
   // XXX - For some reason this isn't called for switch.
   switch (Opcode) {
   case Instruction::Br:
@@ -970,92 +997,6 @@ void GCNTTIImpl::getUnrollingPreferences(Loop *L, ScalarEvolution &SE,
   CommonTTI.getUnrollingPreferences(L, SE, UP);
 }
 
-unsigned
-GCNTTIImpl::getUserCost(const User *U, ArrayRef<const Value *> Operands,
-                        TTI::TargetCostKind CostKind) {
-  const Instruction *I = dyn_cast<Instruction>(U);
-  if (!I)
-    return BaseT::getUserCost(U, Operands, CostKind);
-
-  // Estimate different operations to be optimized out
-  switch (I->getOpcode()) {
-  case Instruction::ExtractElement: {
-    ConstantInt *CI = dyn_cast<ConstantInt>(I->getOperand(1));
-    unsigned Idx = -1;
-    if (CI)
-      Idx = CI->getZExtValue();
-    return getVectorInstrCost(I->getOpcode(), I->getOperand(0)->getType(), Idx);
-  }
-  case Instruction::InsertElement: {
-    ConstantInt *CI = dyn_cast<ConstantInt>(I->getOperand(2));
-    unsigned Idx = -1;
-    if (CI)
-      Idx = CI->getZExtValue();
-    return getVectorInstrCost(I->getOpcode(), I->getType(), Idx);
-  }
-  case Instruction::ShuffleVector: {
-    const ShuffleVectorInst *Shuffle = cast<ShuffleVectorInst>(I);
-    auto *Ty = cast<VectorType>(Shuffle->getType());
-    auto *SrcTy = cast<VectorType>(Shuffle->getOperand(0)->getType());
-
-    // TODO: Identify and add costs for insert subvector, etc.
-    int SubIndex;
-    if (Shuffle->isExtractSubvectorMask(SubIndex))
-      return getShuffleCost(TTI::SK_ExtractSubvector, SrcTy, SubIndex, Ty);
-
-    if (Shuffle->changesLength())
-      return BaseT::getUserCost(U, Operands, CostKind);
-
-    if (Shuffle->isIdentity())
-      return 0;
-
-    if (Shuffle->isReverse())
-      return getShuffleCost(TTI::SK_Reverse, Ty, 0, nullptr);
-
-    if (Shuffle->isSelect())
-      return getShuffleCost(TTI::SK_Select, Ty, 0, nullptr);
-
-    if (Shuffle->isTranspose())
-      return getShuffleCost(TTI::SK_Transpose, Ty, 0, nullptr);
-
-    if (Shuffle->isZeroEltSplat())
-      return getShuffleCost(TTI::SK_Broadcast, Ty, 0, nullptr);
-
-    if (Shuffle->isSingleSource())
-      return getShuffleCost(TTI::SK_PermuteSingleSrc, Ty, 0, nullptr);
-
-    return getShuffleCost(TTI::SK_PermuteTwoSrc, Ty, 0, nullptr);
-  }
-  case Instruction::Add:
-  case Instruction::FAdd:
-  case Instruction::Sub:
-  case Instruction::FSub:
-  case Instruction::Mul:
-  case Instruction::FMul:
-  case Instruction::UDiv:
-  case Instruction::SDiv:
-  case Instruction::FDiv:
-  case Instruction::URem:
-  case Instruction::SRem:
-  case Instruction::FRem:
-  case Instruction::Shl:
-  case Instruction::LShr:
-  case Instruction::AShr:
-  case Instruction::And:
-  case Instruction::Or:
-  case Instruction::Xor:
-  case Instruction::FNeg: {
-    return getArithmeticInstrCost(I->getOpcode(), I->getType(), CostKind,
-                                  TTI::OK_AnyValue, TTI::OK_AnyValue,
-                                  TTI::OP_None, TTI::OP_None, Operands, I);
-  }
-  default:
-    break;
-  }
-
-  return BaseT::getUserCost(U, Operands, CostKind);
-}
-
 unsigned R600TTIImpl::getHardwareNumberOfRegisters(bool Vec) const {
   return 4 * 128; // XXX - 4 channels. Should these count as vector instead?
 }
@@ -1091,7 +1032,7 @@ unsigned R600TTIImpl::getLoadStoreVecRegBitWidth(unsigned AddrSpace) const {
 }
 
 bool R600TTIImpl::isLegalToVectorizeMemChain(unsigned ChainSizeInBytes,
-                                             unsigned Alignment,
+                                             Align Alignment,
                                              unsigned AddrSpace) const {
   // We allow vectorization of flat stores, even though we may need to decompose
   // them later if they may access private memory. We don't have enough context
@@ -1100,13 +1041,13 @@ bool R600TTIImpl::isLegalToVectorizeMemChain(unsigned ChainSizeInBytes,
 }
 
 bool R600TTIImpl::isLegalToVectorizeLoadChain(unsigned ChainSizeInBytes,
-                                              unsigned Alignment,
+                                              Align Alignment,
                                               unsigned AddrSpace) const {
   return isLegalToVectorizeMemChain(ChainSizeInBytes, Alignment, AddrSpace);
 }
 
 bool R600TTIImpl::isLegalToVectorizeStoreChain(unsigned ChainSizeInBytes,
-                                               unsigned Alignment,
+                                               Align Alignment,
                                                unsigned AddrSpace) const {
   return isLegalToVectorizeMemChain(ChainSizeInBytes, Alignment, AddrSpace);
 }
@@ -1122,6 +1063,9 @@ unsigned R600TTIImpl::getMaxInterleaveFactor(unsigned VF) {
 
 unsigned R600TTIImpl::getCFInstrCost(unsigned Opcode,
                                      TTI::TargetCostKind CostKind) {
+  if (CostKind == TTI::TCK_CodeSize || CostKind == TTI::TCK_SizeAndLatency)
+    return Opcode == Instruction::PHI ? 0 : 1;
+
   // XXX - For some reason this isn't called for switch.
   switch (Opcode) {
   case Instruction::Br:

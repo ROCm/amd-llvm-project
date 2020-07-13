@@ -25,32 +25,20 @@ atmi_machine_t *atmi_machine_get_info() {
 /*
  * Modules
  */
-atmi_status_t atmi_module_register_from_memory_to_place(
-    void **modules, size_t *module_sizes, atmi_platform_type_t *types,
-    const int num_modules, atmi_place_t place) {
+atmi_status_t atmi_module_register_from_memory_to_place(void *module_bytes,
+                                                        size_t module_size,
+                                                        atmi_place_t place) {
   return core::Runtime::getInstance().RegisterModuleFromMemory(
-      modules, module_sizes, types, num_modules, place);
-}
-
-atmi_status_t atmi_module_register_from_memory(void **modules,
-                                               size_t *module_sizes,
-                                               atmi_platform_type_t *types,
-                                               const int num_modules) {
-  return core::Runtime::getInstance().RegisterModuleFromMemory(
-      modules, module_sizes, types, num_modules);
+      module_bytes, module_size, place);
 }
 
 /*
  * Kernels
  */
 atmi_status_t atmi_kernel_create(atmi_kernel_t *atmi_kernel, const int num_args,
-                                 const size_t *arg_sizes, const int num_impls,
-                                 ...) {
-  va_list arguments;
-  va_start(arguments, num_impls);
-  return core::Runtime::getInstance().CreateKernel(
-      atmi_kernel, num_args, arg_sizes, num_impls, arguments);
-  va_end(arguments);
+                                 const size_t *arg_sizes, const char *name) {
+  return core::Runtime::getInstance().CreateKernel(atmi_kernel, num_args,
+                                                   arg_sizes, name);
 }
 
 atmi_status_t atmi_kernel_release(atmi_kernel_t atmi_kernel) {

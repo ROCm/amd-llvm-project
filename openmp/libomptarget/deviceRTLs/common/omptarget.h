@@ -345,7 +345,7 @@ extern DEVICE omptarget_nvptx_SimpleMemoryManager
 extern DEVICE SHARED uint32_t usedMemIdx;
 extern DEVICE SHARED uint32_t usedSlotIdx;
 #ifdef __AMDGCN__
-extern DEVICE volatile SHARED uint8_t
+extern DEVICE SHARED uint8_t
     parallelLevel[MAX_THREADS_PER_TEAM / WARPSIZE];
 #else
 extern DEVICE SHARED uint8_t
@@ -369,8 +369,8 @@ typedef void *omptarget_nvptx_WorkFn;
 extern volatile DEVICE SHARED omptarget_nvptx_WorkFn
     omptarget_nvptx_workFn;
 #ifdef __AMDGCN__
-extern volatile DEVICE SHARED bool omptarget_workers_active;
-extern volatile DEVICE SHARED bool omptarget_master_active;
+extern DEVICE SHARED bool omptarget_workers_active;
+extern DEVICE SHARED bool omptarget_master_active;
 #endif
 
 ////////////////////////////////////////////////////////////////////////////////

@@ -141,6 +141,7 @@ private:
   mutable std::unique_ptr<Tool> Flang;
   mutable std::unique_ptr<Tool> Assemble;
   mutable std::unique_ptr<Tool> Link;
+  mutable std::unique_ptr<Tool> StaticLibTool;
   mutable std::unique_ptr<Tool> IfsMerge;
   mutable std::unique_ptr<Tool> OffloadBundler;
   mutable std::unique_ptr<Tool> OffloadWrapper;
@@ -150,6 +151,7 @@ private:
   //   Tool *getFlangFrontend() const;
   Tool *getAssemble() const;
   Tool *getLink() const;
+  Tool *getStaticLibTool() const;
   Tool *getIfsMerge() const;
   Tool *getClangAs() const;
   Tool *getOffloadBundler() const;
@@ -177,6 +179,7 @@ protected:
 
   virtual Tool *buildAssembler() const;
   virtual Tool *buildLinker() const;
+  virtual Tool *buildStaticLibTool() const;
   virtual Tool *getTool(Action::ActionClass AC) const;
 
   /// \name Utilities for implementing subclasses.
@@ -328,6 +331,9 @@ public:
   /// Returns the linker path, respecting the -fuse-ld= argument to determine
   /// the linker suffix or name.
   std::string GetLinkerPath() const;
+
+  /// Returns the linker path for emitting a static library.
+  std::string GetStaticLibToolPath() const;
 
   /// Dispatch to the specific toolchain for verbose printing.
   ///
@@ -539,6 +545,10 @@ public:
   /// FIXME: this really belongs on some sort of DeploymentTarget abstraction
   virtual bool hasBlocksRuntime() const { return true; }
 
+  /// Return the sysroot, possibly searching for a default sysroot using
+  /// target-specific logic.
+  virtual std::string computeSysRoot() const;
+
   /// Add the clang cc1 arguments for system include paths.
   ///
   /// This routine is responsible for adding the necessary cc1 arguments to
@@ -627,6 +637,10 @@ public:
   /// Add arguments to use system-specific CUDA includes.
   virtual void AddCudaIncludeArgs(const llvm::opt::ArgList &DriverArgs,
                                   llvm::opt::ArgStringList &CC1Args) const;
+
+  /// Add arguments to use system-specific HIP includes.
+  virtual void AddHIPIncludeArgs(const llvm::opt::ArgList &DriverArgs,
+                                 llvm::opt::ArgStringList &CC1Args) const;
 
   /// Add arguments to use MCU GCC toolchain includes.
   virtual void AddIAMCUIncludeArgs(const llvm::opt::ArgList &DriverArgs,

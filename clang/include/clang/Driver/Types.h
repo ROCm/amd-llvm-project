@@ -101,13 +101,12 @@ namespace types {
   ID lookupTypeForTypeSpecifier(const char *Name);
 
   /// getCompilationPhases - Get the list of compilation phases ('Phases') to be
-  /// done for type 'Id'.
-  void getCompilationPhases(
-    ID Id,
-    llvm::SmallVectorImpl<phases::ID> &Phases);
-  void getCompilationPhases(const clang::driver::Driver &Driver,
-                            llvm::opt::DerivedArgList &DAL, ID Id,
-                            llvm::SmallVectorImpl<phases::ID> &Phases);
+  /// done for type 'Id' up until including LastPhase.
+  llvm::SmallVector<phases::ID, phases::MaxNumberOfPhases>
+  getCompilationPhases(ID Id, phases::ID LastPhase = phases::LastPhase);
+  llvm::SmallVector<phases::ID, phases::MaxNumberOfPhases>
+  getCompilationPhases(const clang::driver::Driver &Driver,
+                       llvm::opt::DerivedArgList &DAL, ID Id);
 
   /// lookupCXXTypeForCType - Lookup CXX input type that corresponds to given
   /// C type (used for clang++ emulation of g++ behaviour)

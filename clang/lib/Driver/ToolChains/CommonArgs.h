@@ -78,12 +78,6 @@ bool SDLSearch(Compilation &C, const Driver &D, const Tool &T,
                StringRef ArchName, StringRef GpuArch, bool isBitCodeSDL,
                bool postClangLink);
 
-void AddHIPLinkerScript(const ToolChain &TC, Compilation &C,
-                        const InputInfo &Output, const InputInfoList &Inputs,
-                        const llvm::opt::ArgList &Args,
-                        llvm::opt::ArgStringList &CmdArgs, const JobAction &JA,
-                        const Tool &T);
-
 const char *SplitDebugName(const llvm::opt::ArgList &Args,
                            const InputInfo &Input, const InputInfo &Output);
 
@@ -150,9 +144,19 @@ void AddTargetFeature(const llvm::opt::ArgList &Args,
 std::string getCPUName(const llvm::opt::ArgList &Args, const llvm::Triple &T,
                        bool FromAs = false);
 
+/// Iterate \p Args and convert -mxxx to +xxx and -mno-xxx to -xxx and
+/// append it to \p Features.
+///
+/// Note: Since \p Features may contain default values before calling
+/// this function, or may be appended with entries to override arguments,
+/// entries in \p Features are not unique.
 void handleTargetFeaturesGroup(const llvm::opt::ArgList &Args,
                                std::vector<StringRef> &Features,
                                llvm::opt::OptSpecifier Group);
+
+/// If there are multiple +xxx or -xxx features, keep the last one.
+std::vector<StringRef>
+unifyTargetFeatures(const std::vector<StringRef> &Features);
 
 /// Handles the -save-stats option and returns the filename to save statistics
 /// to.

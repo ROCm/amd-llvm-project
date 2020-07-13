@@ -300,13 +300,6 @@ def parseOptionsAndInitTestdirs():
 
     if args.arch:
         configuration.arch = args.arch
-        if configuration.arch.startswith(
-                'arm') and platform_system == 'Darwin' and not args.apple_sdk:
-            configuration.sdkroot = seven.get_command_output(
-                'xcrun --sdk iphoneos.internal --show-sdk-path 2> /dev/null')
-            if not os.path.exists(configuration.sdkroot):
-                configuration.sdkroot = seven.get_command_output(
-                    'xcrun --sdk iphoneos --show-sdk-path 2> /dev/null')
     else:
         configuration.arch = platform_machine
 
@@ -370,7 +363,10 @@ def parseOptionsAndInitTestdirs():
                     args.executable)
             sys.exit(-1)
 
-    if args.server:
+    if args.server and args.out_of_tree_debugserver:
+        logging.warning('Both --server and --out-of-tree-debugserver are set')
+
+    if args.server and not args.out_of_tree_debugserver:
         os.environ['LLDB_DEBUGSERVER_PATH'] = args.server
 
     if args.excluded:

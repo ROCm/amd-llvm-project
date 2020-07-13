@@ -108,3 +108,12 @@ for locale, alts in locales.items():
     Feature(name='locale.{}'.format(locale),
             when=lambda cfg: any(hasLocale(cfg, alt) for alt in alts))
   ]
+
+
+# Add features representing the platform name: darwin, linux, windows, etc...
+features += [
+  Feature(name='darwin', when=lambda cfg: '__APPLE__' in compilerMacros(cfg)),
+  Feature(name='windows', when=lambda cfg: '_WIN32' in compilerMacros(cfg)),
+  Feature(name='linux', when=lambda cfg: '__linux__' in compilerMacros(cfg)),
+  Feature(name='netbsd', when=lambda cfg: '__NetBSD__' in compilerMacros(cfg))
+]

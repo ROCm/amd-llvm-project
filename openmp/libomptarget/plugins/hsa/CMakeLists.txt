@@ -14,7 +14,7 @@
 ################################################################################
 # Add check for required compiler
 
-find_package(LLVM QUIET CONFIG PATHS ${CMAKE_INSTALL_PREFIX} NO_DEFAULT_PATH)
+find_package(LLVM QUIET CONFIG PATHS ${LLVM_INSTALL_PREFIX} ${CMAKE_INSTALL_PREFIX} NO_DEFAULT_PATH)
 
 if (LLVM_DIR)
   libomptarget_say("Found LLVM ${LLVM_PACKAGE_VERSION}. Configure: ${LLVM_DIR}/LLVMConfig.cmake")
@@ -24,7 +24,7 @@ else()
 endif()
 set(LLVM_LIBDIR ${LLVM_INSTALL_PREFIX}/lib)
 
-find_package(Clang QUIET CONFIG PATHS ${CMAKE_INSTALL_PREFIX} NO_DEFAULT_PATH)
+find_package(Clang QUIET CONFIG PATHS ${LLVM_INSTALL_PREFIX} ${CMAKE_INSTALL_PREFIX} NO_DEFAULT_PATH)
 if (CLANG_CMAKE_DIR)
   libomptarget_say("Found Clang ${LLVM_PACKAGE_VERSION}. Configure: ${CLANG_CMAKE_DIR}/ClangConfig.cmake")
 else()
@@ -70,6 +70,7 @@ endif()
 include_directories(
   ${LIBOMPTARGET_DEP_LIBHSA_INCLUDE_DIRS}
   ${CLANG_INCLUDE_DIRS}
+  ${LLVM_INCLUDE_DIRS}
   ${CMAKE_CURRENT_SOURCE_DIR}/impl
 )
 

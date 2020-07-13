@@ -58,7 +58,7 @@ def err_drv_no_cuda_libdevice : Error<
 
 def err_drv_no_rocm_installation : Error<
   "cannot find ROCm installation.  Provide its path via --rocm-path, or pass "
-  "-nogpulib.">;
+  "-nogpulib and -nogpuinc to build without ROCm device library and HIP includes.">;
 def err_drv_no_rocm_device_lib : Error<
   "cannot find device library for %0. Provide path to different ROCm installation "
   "via --rocm-path, or pass -nogpulib to build without linking default libraries.">;
@@ -338,6 +338,8 @@ def warn_drv_object_size_disabled_O0 : Warning<
   InGroup<InvalidCommandLineArgument>, DefaultWarnNoWerror;
 def err_invalid_branch_protection: Error <
   "invalid branch protection option '%0' in '%1'">;
+def err_invalid_sls_hardening : Error<
+  "invalid sls hardening option '%0' in '%1'">;
 
 def note_drv_command_failed_diag_msg : Note<
   "diagnostic msg: %0">;
@@ -488,6 +490,12 @@ def err_drv_trivial_auto_var_init_zero_disabled : Error<
   "-ftrivial-auto-var-init=zero hasn't been enabled. Enable it at your own peril for benchmarking purpose only with "
   "-enable-trivial-auto-var-init-zero-knowing-it-will-be-removed-from-clang">;
 
+def err_drv_trivial_auto_var_init_stop_after_missing_dependency : Error<
+  "-ftrivial-auto-var-init-stop-after=* is used without -ftrivial-auto-var-init=zero or -ftrivial-auto-var-init=pattern.">;
+
+def err_drv_trivial_auto_var_init_stop_after_invalid_value : Error<
+  "-ftrivial-auto-var-init-stop-after=* only accepts positive integers.">;
+
 def warn_drv_msp430_hwmult_unsupported : Warning<"the given MCU does not "
   "support hardware multiply, but -mhwmult is set to %0.">,
    InGroup<InvalidCommandLineArgument>;
@@ -505,4 +513,6 @@ def warn_drv_libstdcxx_not_found : Warning<
   InGroup<DiagGroup<"stdlibcxx-not-found">>;
 
 def err_drv_cannot_mix_options : Error<"cannot specify '%1' along with '%0'">;
+
+def err_drv_invalid_object_mode : Error<"OBJECT_MODE setting %0 is not recognized and is not a valid setting.">;
 }

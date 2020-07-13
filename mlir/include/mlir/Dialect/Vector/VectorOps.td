@@ -15,6 +15,7 @@
 
 include "mlir/Dialect/Affine/IR/AffineOpsBase.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
+include "mlir/Interfaces/VectorUnrollInterface.td"
 
 def Vector_Dialect : Dialect {
   let name = "vector";
@@ -36,16 +37,16 @@ class Vector_Op<string mnemonic, list<OpTrait> traits = []> :
   let parser = [{ return ::parse$cppClass(parser, result); }];
 }
 
-// TODO(andydavis, ntv) Add an attribute to specify a different algebra
-// with operators other than the current set: {*, +}.
+// TODO: Add an attribute to specify a different algebra with operators other
+// than the current set: {*, +}.
 def Vector_ContractionOp :
-  Vector_Op<"contract", [NoSideEffect,
-     PredOpTrait<"first operand lhs and result have same element type",
-                 TCresVTEtIsSameAsOpBase<0, 0>>,
-     PredOpTrait<"second operand rhs and result have same element type",
-                 TCresVTEtIsSameAsOpBase<0, 1>>,
-     PredOpTrait<"third operand acc and result have same element type",
-                 TCresVTEtIsSameAsOpBase<0, 1>>]>,
+  Vector_Op<"contract", [
+      NoSideEffect,
+      PredOpTrait<"lhs and rhs have same element type", TCopVTEtIsSameAs<0, 1>>,
+      PredOpTrait<"third operand acc and result have same element type",
+                  TCresVTEtIsSameAsOpBase<0, 2>>,
+      DeclareOpInterfaceMethods<VectorUnrollOpInterface, ["getShapeForUnroll"]>
+    ]>,
     Arguments<(ins AnyVector:$lhs, AnyVector:$rhs, AnyType:$acc,
                Variadic<VectorOf<[I1]>>:$masks,
                AffineMapArrayAttr:$indexing_maps, ArrayAttr:$iterator_types)>,
@@ -140,6 +141,11 @@ def Vector_ContractionOp :
 
     %5 = vector.contract #contraction_trait %0, %1, %2, %lhs_mask, %rhs_mask
        : vector<7x8x16x15xf32>, vector<8x16x7x5xf32> into vector<8x15x8x5xf32>
+
+    // Vector contraction with mixed typed. lhs/rhs have different element
+    // types than accumulator/result.
+    %6 = vector.contract #contraction_trait %0, %1, %2
+      : vector<10xf16>, vector<10xf16> into f32
     ```
   }];
   let builders = [OpBuilder<
@@ -384,6 +390,7 @@ def Vector_ExtractOp :
       return vector().getType().cast<VectorType>();
     }
   }];
+  let hasFolder = 1;
 }
 
 def Vector_ExtractSlicesOp :
@@ -708,8 +715,8 @@ def Vector_OuterProductOp :
   }];
 }
 
-// TODO(andydavis) Add transformation which decomposes ReshapeOp into an
-// optimized sequence of vector rotate/shuffle/select operations.
+// TODO: Add transformation which decomposes ReshapeOp into an optimized
+// sequence of vector rotate/shuffle/select operations.
 def Vector_ReshapeOp :
   Vector_Op<"reshape", [AttrSizedOperandSegments, NoSideEffect]>,
     Arguments<(ins AnyVector:$vector, Variadic<Index>:$input_shape,
@@ -843,7 +850,7 @@ def Vector_ExtractStridedSliceOp :
     attribute and extracts the n-D subvector at the proper offset.
 
     At the moment strides must contain only 1s.
-    // TODO(ntv) support non-1 strides.
+    // TODO: support non-1 strides.
 
     Returns an n-D vector where the first k-D dimensions match the `sizes`
     attribute. The returned subvector contains the elements starting at offset
@@ -856,7 +863,7 @@ def Vector_ExtractStridedSliceOp :
         {offsets = [0, 2], sizes = [2, 4], strides = [1, 1]}:
       vector<4x8x16xf32> to vector<2x4x16xf32>
 
-    // TODO(ntv) Evolve to a range form syntax similar to:
+    // TODO: Evolve to a range form syntax similar to:
     %1 = vector.extract_strided_slice %0[0:2:1][2:4:1]
       vector<4x8x16xf32> to vector<2x4x16xf32>
     ```
@@ -894,7 +901,9 @@ def Vector_TransferOpUtils {
 }
 
 def Vector_TransferReadOp :
-  Vector_Op<"transfer_read">,
+  Vector_Op<"transfer_read", [
+      DeclareOpInterfaceMethods<VectorUnrollOpInterface, ["getShapeForUnroll"]>
+    ]>,
     Arguments<(ins AnyMemRef:$memref, Variadic<Index>:$indices,
                AffineMapAttr:$permutation_map, AnyType:$padding,
                OptionalAttr<BoolArrayAttr>:$masked)>,
@@ -1066,7 +1075,9 @@ def Vector_TransferReadOp :
 }
 
 def Vector_TransferWriteOp :
-  Vector_Op<"transfer_write">,
+  Vector_Op<"transfer_write", [
+      DeclareOpInterfaceMethods<VectorUnrollOpInterface, ["getShapeForUnroll"]>
+    ]>,
     Arguments<(ins AnyVector:$vector, AnyMemRef:$memref,
                Variadic<Index>:$indices,
                AffineMapAttr:$permutation_map,
@@ -1503,7 +1514,7 @@ def Vector_MatmulOp : Vector_Op<"matrix_multiply", [NoSideEffect,
         PredOpTrait<"rhs operand and result have same element type",
                     TCresVTEtIsSameAsOpBase<0, 1>>]>,
       Arguments<(
-        // TODO(ntv, fhahn): tighten vector element types that make sense.
+        // TODO: tighten vector element types that make sense.
         ins VectorOfRankAndType<[1],
               [AnySignlessInteger, AnySignedInteger, AnyFloat]>:$lhs,
             VectorOfRankAndType<[1],
@@ -1566,7 +1577,7 @@ def Vector_FlatTransposeOp : Vector_Op<"flat_transpose", [NoSideEffect,
   PredOpTrait<"source operand and result have same element type",
                  TCresVTEtIsSameAsOpBase<0, 0>>]>,
     Arguments<(
-      // TODO(ntv, fhahn, ajcbik): tighten vector element types that make sense.
+      // TODO: tighten vector element types that make sense.
       ins VectorOfRankAndType<[1],
             [AnySignlessInteger, AnySignedInteger, AnyFloat]>:$matrix,
           I32Attr:$rows, I32Attr:$columns)>,

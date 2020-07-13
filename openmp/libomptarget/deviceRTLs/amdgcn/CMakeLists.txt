@@ -12,6 +12,7 @@
 
 find_package(LLVM QUIET CONFIG
   PATHS
+  ${LLVM_INSTALL_PREFIX}
   $ENV{AOMP}
   $ENV{HOME}/rocm/aomp
   /opt/rocm/aomp
@@ -78,7 +79,6 @@ set(hip_sources
   ${CMAKE_CURRENT_SOURCE_DIR}/src/amdgcn_reduction.hip
   ${CMAKE_CURRENT_SOURCE_DIR}/src/amdgcn_smid.hip
   ${CMAKE_CURRENT_SOURCE_DIR}/src/amdgcn_sync.hip
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/amdgcn_threadfence.hip
   ${CMAKE_CURRENT_SOURCE_DIR}/src/target_impl.hip
   ${devicertl_base_directory}/common/src/cancel.cu
   ${devicertl_base_directory}/common/src/critical.cu
@@ -119,7 +119,7 @@ else()
 endif()
 
 # create libraries
-set(mcpus gfx700 gfx701 gfx801 gfx803 gfx900 gfx902 gfx906 gfx908)
+set(mcpus gfx803 gfx900 gfx902 gfx906 gfx908)
 if (DEFINED LIBOMPTARGET_AMDGCN_GFXLIST)
   set(mcpus ${LIBOMPTARGET_AMDGCN_GFXLIST})
 endif()
@@ -143,7 +143,7 @@ macro(add_ocl_bc_library dir)
   set(cl_bc_files)
   file(GLOB h_files "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h")
   if(NOT ${AOMP_STANDALONE_BUILD})
-    set(cu_cmd "${cu_cmd};--hip-device-lib-path=${ROCM_DIR}/lib/bitcode")
+    set(cu_cmd "${cu_cmd};--hip-device-lib-path=${ROCM_DIR}/amdgcn/bitcode")
   endif(NOT ${AOMP_STANDALONE_BUILD})
 
   foreach(file ${ARGN})
@@ -170,6 +170,8 @@ macro(add_cuda_bc_library)
   set(cu_cmd ${AOMP_BINDIR}/clang++
     -std=c++14
     -fcuda-rdc
+    -c
+    -D_OPENMP # FIXME This gets around ~./clang/lib/Headers/__clang_hip_runtime_wrapper.h
     -fvisibility=default
     --cuda-device-only
     -Wno-unused-value
@@ -181,7 +183,7 @@ macro(add_cuda_bc_library)
     -I${devicertl_base_directory})
 
   if(NOT ${AOMP_STANDALONE_BUILD})
-    set(cu_cmd "${cu_cmd};--hip-device-lib-path=${ROCM_DIR}/lib/bitcode")
+    set(cu_cmd "${cu_cmd};--hip-device-lib-path=${ROCM_DIR}/amdgcn/bitcode")
   endif(NOT ${AOMP_STANDALONE_BUILD})
 
   set(bc1_files)

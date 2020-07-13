@@ -2608,6 +2608,14 @@ TEST(NullPointerConstants, Basic) {
   EXPECT_TRUE(matches("char *cp = (char *)0;", expr(nullPointerConstant())));
   EXPECT_TRUE(matches("int *ip = 0;", expr(nullPointerConstant())));
   EXPECT_TRUE(matches("int i = 0;", expr(nullPointerConstant())));
+  const char kTest[] = R"(
+    template <typename T>
+    struct MyTemplate {
+      MyTemplate() : field_(__null) {}
+      T* field_;
+    };
+  )";
+  EXPECT_TRUE(matches(kTest, expr(nullPointerConstant())));
 }
 
 TEST(HasExternalFormalLinkage, Basic) {
@@ -3117,5 +3125,44 @@ TEST(IsVirtual, NoVirtualBase) {
                          cxxRecordDecl(hasAnyBase(isVirtual()))));
 }
 
+TEST(BaseSpecifier, hasDirectBase) {
+  EXPECT_TRUE(matches(
+      R"cc(
+    class Base {};
+    class Derived : Base{};
+    )cc",
+      cxxRecordDecl(hasName("Derived"),
+                    hasDirectBase(hasType(cxxRecordDecl(hasName("Base")))))));
+
+  StringRef MultiDerived = R"cc(
+    class Base {};
+    class Base2 {};
+    class Derived : Base, Base2{};
+    )cc";
+
+  EXPECT_TRUE(matches(
+      MultiDerived,
+      cxxRecordDecl(hasName("Derived"),
+                    hasDirectBase(hasType(cxxRecordDecl(hasName("Base")))))));
+  EXPECT_TRUE(matches(
+      MultiDerived,
+      cxxRecordDecl(hasName("Derived"),
+                    hasDirectBase(hasType(cxxRecordDecl(hasName("Base2")))))));
+
+  StringRef Indirect = R"cc(
+    class Base {};
+    class Intermediate : Base {};
+    class Derived : Intermediate{};
+    )cc";
+
+  EXPECT_TRUE(
+      matches(Indirect, cxxRecordDecl(hasName("Derived"),
+                                      hasDirectBase(hasType(cxxRecordDecl(
+                                          hasName("Intermediate")))))));
+  EXPECT_TRUE(notMatches(
+      Indirect,
+      cxxRecordDecl(hasName("Derived"),
+                    hasDirectBase(hasType(cxxRecordDecl(hasName("Base")))))));
+}
 } // namespace ast_matchers
 } // namespace clang

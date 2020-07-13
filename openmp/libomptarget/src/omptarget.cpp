@@ -139,12 +139,12 @@ static int InitLibrary(DeviceTy& Device) {
         DP("Add mapping from host " DPxMOD " to device " DPxMOD " with size %zu"
             "\n", DPxPTR(CurrHostEntry->addr), DPxPTR(CurrDeviceEntry->addr),
             CurrDeviceEntry->size);
-        Device.HostDataToTargetMap.push_front(HostDataToTargetTy(
+        Device.HostDataToTargetMap.emplace(
             (uintptr_t)CurrHostEntry->addr /*HstPtrBase*/,
             (uintptr_t)CurrHostEntry->addr /*HstPtrBegin*/,
             (uintptr_t)CurrHostEntry->addr + CurrHostEntry->size /*HstPtrEnd*/,
             (uintptr_t)CurrDeviceEntry->addr /*TgtPtrBegin*/,
-            true /*IsRefCountINF*/));
+            true /*IsRefCountINF*/);
       }
     }
     Device.DataMapMtx.unlock();
@@ -427,7 +427,6 @@ int target_data_end(DeviceTy &Device, int32_t arg_num, void **args_base,
           int rt = Device.data_retrieve(HstPtrBegin, TgtPtrBegin, data_size,
                                         async_info_ptr);
           if (rt != OFFLOAD_SUCCESS) {
-            DP("Copying data from device failed.\n");
             fprintf(stderr, "Copying data from device failed.\n");
             return OFFLOAD_FAIL;
           }
@@ -476,8 +475,9 @@ int target_data_end(DeviceTy &Device, int32_t arg_num, void **args_base,
         int rt = Device.deallocTgtPtr(HstPtrBegin, data_size, ForceDelete,
                                       HasCloseModifier);
         if (rt != OFFLOAD_SUCCESS) {
-          fprintf(stderr, "Deallocating data map from device failed.\n");
-          return OFFLOAD_FAIL;
+          fprintf(stderr, "Warning: Deallocating data map from device failed.\n");
+	  return OFFLOAD_FAIL;
+
         }
       }
     }

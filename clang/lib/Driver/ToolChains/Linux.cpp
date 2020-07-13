@@ -363,6 +363,10 @@ bool Linux::HasNativeLLVMSupport() const { return true; }
 
 Tool *Linux::buildLinker() const { return new tools::gnutools::Linker(*this); }
 
+Tool *Linux::buildStaticLibTool() const {
+  return new tools::gnutools::StaticLibTool(*this);
+}
+
 Tool *Linux::buildAssembler() const {
   return new tools::gnutools::Assembler(*this);
 }
@@ -537,6 +541,8 @@ std::string Linux::getDynamicLinker(const ArgList &Args) const {
     Loader = X32 ? "ld-linux-x32.so.2" : "ld-linux-x86-64.so.2";
     break;
   }
+  case llvm::Triple::ve:
+    return "/opt/nec/ve/lib/ld-linux-ve.so.1";
   }
 
   if (Distro == Distro::Exherbo &&
@@ -554,9 +560,11 @@ void Linux::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
   if (DriverArgs.hasArg(clang::driver::options::OPT_nostdinc))
     return;
 
-  // Look for system files in our compiler AOMP/include dir first
-  addSystemInclude(DriverArgs, CC1Args,
-                   DriverArgs.MakeArgString(D.Dir + "/../include"));
+  if (DriverArgs.hasArg(clang::driver::options::OPT_fopenmp)) {
+    // Look for system files in our compiler AOMP/include dir first
+    addSystemInclude(DriverArgs, CC1Args,
+                     DriverArgs.MakeArgString(D.Dir + "/../include"));
+  }
 
   if (!DriverArgs.hasArg(options::OPT_nostdlibinc))
     addSystemInclude(DriverArgs, CC1Args, SysRoot + "/usr/local/include");
@@ -1029,6 +1037,11 @@ void Linux::AddCudaIncludeArgs(const ArgList &DriverArgs,
   CudaInstallation.AddCudaIncludeArgs(DriverArgs, CC1Args);
 }
 
+void Linux::AddHIPIncludeArgs(const ArgList &DriverArgs,
+                              ArgStringList &CC1Args) const {
+  RocmInstallation.AddHIPIncludeArgs(DriverArgs, CC1Args);
+}
+
 void Linux::AddIAMCUIncludeArgs(const ArgList &DriverArgs,
                                 ArgStringList &CC1Args) const {
   if (GCCInstallation.isValid()) {
@@ -1067,6 +1080,7 @@ SanitizerMask Linux::getSupportedSanitizers() const {
                          getTriple().getArch() == llvm::Triple::thumb ||
                          getTriple().getArch() == llvm::Triple::armeb ||
                          getTriple().getArch() == llvm::Triple::thumbeb;
+  const bool IsSystemZ = getTriple().getArch() == llvm::Triple::systemz;
   SanitizerMask Res = ToolChain::getSupportedSanitizers();
   Res |= SanitizerKind::Address;
   Res |= SanitizerKind::PointerCompare;
@@ -1079,7 +1093,8 @@ SanitizerMask Linux::getSupportedSanitizers() const {
   Res |= SanitizerKind::SafeStack;
   if (IsX86_64 || IsMIPS64 || IsAArch64)
     Res |= SanitizerKind::DataFlow;
-  if (IsX86_64 || IsMIPS64 || IsAArch64 || IsX86 || IsArmArch || IsPowerPC64)
+  if (IsX86_64 || IsMIPS64 || IsAArch64 || IsX86 || IsArmArch || IsPowerPC64 ||
+      IsSystemZ)
     Res |= SanitizerKind::Leak;
   if (IsX86_64 || IsMIPS64 || IsAArch64 || IsPowerPC64)
     Res |= SanitizerKind::Thread;

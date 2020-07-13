@@ -75,18 +75,10 @@ atmi_status_t atmi_finalize();
  * hand, CPU devices execute regular x86 functions that are compiled with the
  * host program.
  *
- * @param[in] modules A collection of memory regions that contain the GPU
- * modules
+ * @param[in] module_bytes A memory region that contains the GPU modules
  * targeting ::AMDGCN platform types. Value cannot be NULL.
  *
- * @param[in] module_sizes Sizes of each module region in @p modules. Value
- * cannot be NULL.
- *
- * @param[in] types A collection of platform types corresponding to the modules.
- * Value cannot be NULL.
- *
- * @param[in] num_modules Size of @p modules. @p module_sizes and @p types.
- * Value should be greater than 0.
+ * @param[in] module_size Size of module region
  *
  * @param[in] place Denotes the execution place (device) on which the module
  * should be registered and loaded.
@@ -98,43 +90,10 @@ atmi_status_t atmi_finalize();
  * @retval ::ATMI_STATUS_UNKNOWN The function encountered errors.
  *
  */
-atmi_status_t atmi_module_register_from_memory_to_place(
-    void **modules, size_t *module_sizes, atmi_platform_type_t *types,
-    const int num_modules, atmi_place_t place);
+  atmi_status_t atmi_module_register_from_memory_to_place(void *module_bytes,
+                                                        size_t module_size,
+                                                        atmi_place_t place);
 
-/**
- * @brief Register the ATMI code module from memory.
- *
- * @detail Currently, only GPU devices need explicit module registration because
- * of their specific ISAs that require a separate compilation phase. On the
- * other
- * hand, CPU devices execute regular x86 functions that are compiled with the
- * host program.
- *
- * @param[in] modules A collection of memory regions that contain the GPU
- * modules
- * targeting ::AMDGCN platform types. Value cannot be NULL.
- *
- * @param[in] module_sizes Sizes of each module region in @p modules. Value
- * cannot be NULL.
- *
- * @param[in] types A collection of platform types corresponding to the modules.
- * Value cannot be NULL.
- *
- * @param[in] num_modules Size of @p modules. @p module_sizes and @p types.
- * Value should be greater than 0.
- *
- * @retval ::ATMI_STATUS_SUCCESS The function has executed successfully.
- *
- * @retval ::ATMI_STATUS_ERROR The function encountered errors.
- *
- * @retval ::ATMI_STATUS_UNKNOWN The function encountered errors.
- *
- */
-atmi_status_t atmi_module_register_from_memory(void **modules,
-                                               size_t *module_sizes,
-                                               atmi_platform_type_t *types,
-                                               const int num_modules);
 /** @} */
 
 /** \defgroup machine ATMI Machine
@@ -204,9 +163,7 @@ typedef struct atmi_kernel_s {
  *
  * @param[in] num_impls Number of implementations for this kernel.
  *
- * @param[in] ... va_list Key-value pairs separated by commas of the format
- * (@atmi_devtype_t, implementation), where implementation is either the char
- * string for GPU implementation or function pointer for CPU implementation.
+ * @param[in] name Hsaco name of this kernel
  *
  * @retval ::ATMI_STATUS_SUCCESS The function has executed successfully.
  *
@@ -216,8 +173,8 @@ typedef struct atmi_kernel_s {
  *
  */
 atmi_status_t atmi_kernel_create(atmi_kernel_t *atmi_kernel, const int num_args,
-                                 const size_t *arg_sizes, const int num_impls,
-                                 ...);
+                                 const size_t *arg_sizes,
+                                 const char * name);
 /**
  * @brief Create an empty kernel opaque structure.
  *

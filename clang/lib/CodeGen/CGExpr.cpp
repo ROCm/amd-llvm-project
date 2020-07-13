@@ -130,7 +130,7 @@ void CodeGenFunction::InitTempAlloca(Address Var, llvm::Value *Init) {
          (isa<llvm::AddrSpaceCastInst>(Alloca) &&
           isa<llvm::AllocaInst>(
               cast<llvm::AddrSpaceCastInst>(Alloca)->getPointerOperand())));
-  auto *Store = new llvm::StoreInst(Init, Var.getPointer(), /*volatile*/ false,
+  auto *Store = new llvm::StoreInst(Init, Alloca, /*volatile*/ false,
                                     Var.getAlignment().getAsAlign());
   llvm::BasicBlock *Block = AllocaInsertPt->getParent();
   Block->getInstList().insertAfter(AllocaInsertPt->getIterator(), Store);
@@ -1306,8 +1306,15 @@ LValue CodeGenFunction::EmitLValue(const Expr *E) {
     return EmitVAArgExprLValue(cast<VAArgExpr>(E));
   case Expr::DeclRefExprClass:
     return EmitDeclRefLValue(cast<DeclRefExpr>(E));
-  case Expr::ConstantExprClass:
+  case Expr::ConstantExprClass: {
+    const ConstantExpr *CE = cast<ConstantExpr>(E);
+    if (llvm::Value *Result = ConstantEmitter(*this).tryEmitConstantExpr(CE)) {
+      QualType RetType = cast<CallExpr>(CE->getSubExpr()->IgnoreImplicit())
+                             ->getCallReturnType(getContext());
+      return MakeNaturalAlignAddrLValue(Result, RetType);
+    }
     return EmitLValue(cast<ConstantExpr>(E)->getSubExpr());
+  }
   case Expr::ParenExprClass:
     return EmitLValue(cast<ParenExpr>(E)->getSubExpr());
   case Expr::GenericSelectionExprClass:
@@ -1334,7 +1341,6 @@ LValue CodeGenFunction::EmitLValue(const Expr *E) {
 
   case Expr::ExprWithCleanupsClass: {
     const auto *cleanups = cast<ExprWithCleanups>(E);
-    enterFullExpression(cleanups);
     RunCleanupsScope Scope(*this);
     LValue LV = EmitLValue(cleanups->getSubExpr());
     if (LV.isSimple()) {
@@ -2396,7 +2402,13 @@ EmitBitCastOfLValueToProperType(CodeGenFunction &CGF,
 static LValue EmitThreadPrivateVarDeclLValue(
     CodeGenFunction &CGF, const VarDecl *VD, QualType T, Address Addr,
     llvm::Type *RealVarTy, SourceLocation Loc) {
-  Addr = CGF.CGM.getOpenMPRuntime().getAddrOfThreadPrivate(CGF, VD, Addr, Loc);
+  if (CGF.CGM.getLangOpts().OpenMPIRBuilder)
+    Addr = CodeGenFunction::OMPBuilderCBHelpers::getAddrOfThreadPrivate(
+        CGF, VD, Addr, Loc);
+  else
+    Addr =
+        CGF.CGM.getOpenMPRuntime().getAddrOfThreadPrivate(CGF, VD, Addr, Loc);
+
   Addr = CGF.Builder.CreateElementBitCast(Addr, RealVarTy);
   return CGF.MakeAddrLValue(Addr, T, AlignmentSource::Decl);
 }
@@ -3841,7 +3853,7 @@ LValue CodeGenFunction::EmitOMPArraySectionExpr(const OMPArraySectionExpr *E,
   else
     ResultExprTy = BaseTy->getPointeeType();
   llvm::Value *Idx = nullptr;
-  if (IsLowerBound || E->getColonLoc().isInvalid()) {
+  if (IsLowerBound || E->getColonLocFirst().isInvalid()) {
     // Requesting lower bound or upper bound, but without provided length and
     // without ':' symbol for the default length -> length = 1.
     // Idx = LowerBound ?: 0;
@@ -5140,7 +5152,7 @@ RValue CodeGenFunction::EmitCall(QualType CalleeType, const CGCallee &OrigCallee
 
   // FIXME: Only call EmitHostrpcVargsFn for variadic functions that actually
   //        that have a hostrpc stub and service function.
-  if ((CGM.getTriple().getArch() == llvm::Triple::amdgcn) &&
+  if ((CGM.getTriple().isAMDGCN()) && CGM.getLangOpts().OpenMP &&
       dyn_cast<FunctionProtoType>(FnType)->isVariadic())
     return EmitHostrpcVargsFn(
         E, E->getDirectCallee()->getNameAsString().append("_allocate").c_str(),

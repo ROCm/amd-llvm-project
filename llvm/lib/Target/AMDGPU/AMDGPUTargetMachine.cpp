@@ -195,7 +195,7 @@ static cl::opt<bool> EnableScalarIRPasses(
 
 static cl::opt<bool> EnableStructurizerWorkarounds(
     "amdgpu-enable-structurizer-workarounds",
-    cl::desc("Enable workarounds for the StructurizeCFG pass"), cl::init(false),
+    cl::desc("Enable workarounds for the StructurizeCFG pass"), cl::init(true),
     cl::Hidden);
 
 extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeAMDGPUTarget() {
@@ -997,12 +997,9 @@ void GCNPassConfig::addFastRegAlloc() {
 }
 
 void GCNPassConfig::addOptimizedRegAlloc() {
-  if (OptExecMaskPreRA) {
+  if (OptExecMaskPreRA)
     insertPass(&MachineSchedulerID, &SIOptimizeExecMaskingPreRAID);
-    insertPass(&SIOptimizeExecMaskingPreRAID, &SIFormMemoryClausesID);
-  } else {
-    insertPass(&MachineSchedulerID, &SIFormMemoryClausesID);
-  }
+  insertPass(&MachineSchedulerID, &SIFormMemoryClausesID);
 
   // This must be run immediately after phi elimination and before
   // TwoAddressInstructions, otherwise the processing of the tied operand of
@@ -1062,8 +1059,8 @@ void GCNPassConfig::addPreEmitPass() {
     addPass(&SIInsertHardClausesID);
 
   addPass(&SIRemoveShortExecBranchesID);
-  addPass(&SIPreEmitPeepholeID);
   addPass(&SIInsertSkipsPassID);
+  addPass(&SIPreEmitPeepholeID);
   addPass(&BranchRelaxationPassID);
 }
 

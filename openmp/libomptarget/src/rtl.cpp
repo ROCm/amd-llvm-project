@@ -18,9 +18,12 @@
 #include <cstdlib>
 #include <cstring>
 #include <dlfcn.h>
+
+#include <linux/limits.h>
+
 #include <mutex>
 #include <string>
-// It's strang we do not have llvm tools for openmp runtime, so we use stat
+// It's strange we do not have llvm tools for openmp runtime, so we use stat
 #include <sys/stat.h>
 
 // List of all plugins that can support offloading.
@@ -92,8 +95,6 @@ void RTLsTy::LoadRTLs() {
                 "Warning both HIP_VISIBLE_DEVICES %s "
                 "and ROCR_VISIBLE_DEVICES %s set\n", hipVisDevs, rocrVisDevs);
     }
-    DP("Setting ROCR_VISIBLE_DEVICES %s\n", hipVisDevs);
-    setenv("ROCR_VISIBLE_DEVICES", hipVisDevs, true);
   }
 
   // Parse environment variable OMP_TARGET_OFFLOAD (if set)
@@ -103,11 +104,10 @@ void RTLsTy::LoadRTLs() {
   }
 
   // Plugins should be loaded from same directory as libomptarget.so
-  std::string full_plugin_name;
   void *handle = dlopen("libomptarget.so", RTLD_NOW);
   if (!handle)
     DP("dlopen() failed: %s\n", dlerror());
-  char *libomptarget_dir_name = new char[256];
+  char *libomptarget_dir_name = new char[PATH_MAX];
   if (dlinfo(handle, RTLD_DI_ORIGIN, libomptarget_dir_name) == -1)
     DP("RTLD_DI_ORIGIN failed: %s\n", dlerror());
   struct stat stat_buffer;
@@ -119,6 +119,7 @@ void RTLsTy::LoadRTLs() {
   // is correct and if they are supporting any devices.
   for (auto *Name : RTLNames) {
     // Only one quick check file required to attempt to load platform plugin
+    std::string full_plugin_name;
     bool found = false;
     for (auto *QuickCheckName : RTLQuickCheckFiles[platform_num++]) {
       if (QuickCheckName) {
@@ -213,7 +214,7 @@ void RTLsTy::LoadRTLs() {
     // The RTL is valid! Will save the information in the RTLs list.
     AllRTLs.push_back(R);
   }
-
+  delete libomptarget_dir_name;
   DP("RTLs loaded!\n");
 
   return;

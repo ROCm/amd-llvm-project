@@ -33,7 +33,7 @@
 
 // Get static gpu grid values from clang target-specific constants managed
 // in the clang header file GpuGridValues.h
-#include "clang/Basic/GpuGridValues.h"
+#include "llvm/Frontend/OpenMP/OMPGridValues.h"
 
 #ifndef TARGET_NAME
 #define TARGET_NAME AMDHSA
@@ -198,13 +198,13 @@ public:
   static const int HardTeamLimit = 1 << 20; // 1 Meg
   static const int DefaultNumTeams = 128;
   static const int Max_Teams =
-      clang::GPU::AMDGPUGpuGridValues[clang::GPU::GVIDX::GV_Max_Teams];
+      llvm::omp::AMDGPUGpuGridValues[llvm::omp::GVIDX::GV_Max_Teams];
   static const int Warp_Size =
-      clang::GPU::AMDGPUGpuGridValues[clang::GPU::GVIDX::GV_Warp_Size];
+      llvm::omp::AMDGPUGpuGridValues[llvm::omp::GVIDX::GV_Warp_Size];
   static const int Max_WG_Size =
-      clang::GPU::AMDGPUGpuGridValues[clang::GPU::GVIDX::GV_Max_WG_Size];
+      llvm::omp::AMDGPUGpuGridValues[llvm::omp::GVIDX::GV_Max_WG_Size];
   static const int Default_WG_Size =
-      clang::GPU::AMDGPUGpuGridValues[clang::GPU::GVIDX::GV_Default_WG_Size];
+      llvm::omp::AMDGPUGpuGridValues[llvm::omp::GVIDX::GV_Default_WG_Size];
 
   // Record entry point associated with device
   void addOffloadEntry(int32_t device_id, __tgt_offload_entry entry) {
@@ -410,9 +410,6 @@ int32_t dataSubmit(int32_t DeviceId, void *TgtPtr, void *HstPtr, int64_t Size,
 }
 } // namespace
 
-
-static char GPUName[256] = "--unknown gpu--";
-
 int32_t __tgt_rtl_is_valid_binary(__tgt_device_image *image) {
   return elf_machine_id_is_amdgcn(image);
 }
@@ -499,14 +496,10 @@ int32_t __tgt_rtl_init_device(int device_id) {
     DeviceInfo.WarpSize[device_id] = wavefront_size;
   } else {
     DP("Default wavefront size: %d\n",
-       clang::GPU::AMDGPUGpuGridValues[clang::GPU::GVIDX::GV_Warp_Size]);
+       llvm::omp::AMDGPUGpuGridValues[llvm::omp::GVIDX::GV_Warp_Size]);
     DeviceInfo.WarpSize[device_id] =
-        clang::GPU::AMDGPUGpuGridValues[clang::GPU::GVIDX::GV_Warp_Size];
+        llvm::omp::AMDGPUGpuGridValues[llvm::omp::GVIDX::GV_Warp_Size];
   }
-
-  err = hsa_agent_get_info(agent, (hsa_agent_info_t)HSA_AGENT_INFO_NAME,
-                           (void *)GPUName);
-  DP("Name of gpu:%s\n", GPUName);
 
   // Adjust teams to the env variables
   if (DeviceInfo.EnvTeamLimit > 0 &&
@@ -572,11 +565,15 @@ __tgt_target_table *__tgt_rtl_load_binary(int32_t device_id,
 
   atmi_status_t err;
   {
-    atmi_platform_type_t platform = AMDGCN;
     err = atmi_module_register_from_memory_to_place(
-        (void **)&image->ImageStart, &img_size, &platform, 1, get_gpu_place(device_id));
+        (void *)image->ImageStart, img_size, get_gpu_place(device_id));
+
     check("Module registering", err);
     if (err != ATMI_STATUS_SUCCESS) {
+      char GPUName[64] = "--unknown gpu--";
+      hsa_agent_t &agent = DeviceInfo.HSAAgents[device_id];
+      (void) hsa_agent_get_info(agent, (hsa_agent_info_t)HSA_AGENT_INFO_NAME,
+                               (void *)GPUName);
       fprintf(stderr,
               "Possible gpu arch mismatch: %s, please check"
               " compiler: -march=<gpu> flag\n",
@@ -602,11 +599,11 @@ __tgt_target_table *__tgt_rtl_load_binary(int32_t device_id,
   for (__tgt_offload_entry *e = HostBegin; e != HostEnd; ++e) {
 
     if (!e->addr) {
-       // The host should have always something in the address to
-       // uniquely identify the target region.
-      fprintf(stderr, "Analyzing host entry '<null>' (size = %lld)...\n",
-         (unsigned long long)e->size);
-      return NULL;
+      // The host should have always something in the address to
+      // uniquely identify the target region.
+     fprintf(stderr, "Analyzing host entry '<null>' (size = %lld)...\n",
+          (unsigned long long)e->size);
+     return NULL;
     }
 
     if (e->size) {
@@ -670,8 +667,8 @@ __tgt_target_table *__tgt_rtl_load_binary(int32_t device_id,
       *it = sizeof(void *);
     }
 
-    atmi_status_t stat = atmi_kernel_create(&kernel, arg_num, &arg_sizes[0], 1,
-                                            ATMI_DEVTYPE_GPU, e->name);
+    atmi_status_t stat = atmi_kernel_create(&kernel, arg_num, &arg_sizes[0],
+                                            e->name);
 
     if (stat != ATMI_STATUS_SUCCESS) {
       DP("atmi_kernel_create failed %d\n", stat);

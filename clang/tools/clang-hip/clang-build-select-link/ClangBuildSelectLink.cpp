@@ -69,6 +69,9 @@ static cl::opt<bool> Verbose("v",
 static cl::opt<bool> DirectCalls("d", cl::desc("Enable direct calls"),
                                  cl::init(true));
 
+static cl::opt<bool> BuiltinCode("mlink-builtin-bitcode", cl::desc("Ignore option"),
+                                 cl::ZeroOrMore, cl::init(true));
+
 static ExitOnError ExitOnErr;
 
 /// ---------------------------------------------
@@ -400,10 +403,6 @@ static bool convertExternsToLinkOnce(Module *MOUT, LLVMContext &Ctx) {
   // After next opt step, only kernels will exist
   for (Module::iterator i = MOUT->begin(), e = MOUT->end(); i != e; ++i) {
     llvm::Function *F = &*i;
-#if 0
-    if (F->hasName()) 
-      printf("Function name : %s\n",F->getName().str().c_str());
-#endif
     if (!i->isDeclaration()) {
       if (Verbose)
         errs() << "Function attribute cleanup for\'"
