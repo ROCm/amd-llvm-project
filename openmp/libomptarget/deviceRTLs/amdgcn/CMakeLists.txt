@@ -91,7 +91,8 @@ set(hip_sources
   ${devicertl_base_directory}/common/src/reduction.cu
   ${devicertl_base_directory}/common/src/support.cu
   ${devicertl_base_directory}/common/src/sync.cu
-  ${devicertl_base_directory}/common/src/task.cu)
+  ${devicertl_base_directory}/common/src/task.cu
+  ${devicertl_base_directory}/common/src/ompd-specific.cu)
 
 set(llvm_sources
   ${CMAKE_CURRENT_SOURCE_DIR}/src/atomic_inc.ll)
