@@ -7152,7 +7152,6 @@ static void createUnbundleArchiveCommand(Compilation &C,
       UBArgs.push_back(C.getArgs().MakeArgString(InputArg.c_str()));
       UBArgs.push_back(C.getArgs().MakeArgString(OffloadArg.c_str()));
       UBArgs.push_back(C.getArgs().MakeArgString(OutputArg.c_str()));
-      UBArgs.push_back(C.getArgs().MakeArgString(HostOutputArg.c_str()));
       C.addCommand(std::make_unique<Command>(
           UA, T, ResponseFileSupport::AtFileCurCP(), UBProgram, UBArgs, Inputs));
     }
