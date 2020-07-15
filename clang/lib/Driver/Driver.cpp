@@ -4599,14 +4599,17 @@ InputInfo Driver::BuildJobsForActionNoCache(
           UI.DependentOffloadKind,
           UI.DependentToolChain->getTriple().normalize(),
           /*CreatePrefixForHost=*/true);
-      auto CurI = InputInfo(
-          UA,
-          GetNamedOutputPath(C, *UA, BaseInput, UI.DependentBoundArch,
-                             /*AtTopLevel=*/false,
-                             MultipleArchs ||
-                                 UI.DependentOffloadKind == Action::OFK_HIP,
-                             OffloadingPrefix),
-          BaseInput);
+      auto CurI =
+          UI.DependentOffloadKind == Action::OFK_Host
+              ? InputInfos[0]
+              : InputInfo(UA,
+                          GetNamedOutputPath(
+                              C, *UA, BaseInput, UI.DependentBoundArch,
+                              /*AtTopLevel=*/false,
+                              MultipleArchs ||
+                                  UI.DependentOffloadKind == Action::OFK_HIP,
+                              OffloadingPrefix),
+                          BaseInput);
       // Save the unbundling result.
       UnbundlingResults.push_back(CurI);
 
