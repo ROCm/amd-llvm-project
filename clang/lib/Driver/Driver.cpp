@@ -4600,7 +4600,8 @@ InputInfo Driver::BuildJobsForActionNoCache(
           UI.DependentToolChain->getTriple().normalize(),
           /*CreatePrefixForHost=*/true);
       auto CurI =
-          UI.DependentOffloadKind == Action::OFK_Host
+	(UI.DependentOffloadKind == Action::OFK_Host &&
+	 llvm::sys::path::extension(InputInfos[0].getFilename()) == ".a")
               ? InputInfos[0]
               : InputInfo(UA,
                           GetNamedOutputPath(
