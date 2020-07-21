@@ -653,8 +653,7 @@ bool tools::addOpenMPRuntime(ArgStringList &CmdArgs, const ToolChain &TC,
       CmdArgs.push_back("-lrt");
 
   if (IsOffloadingHost) {
-    if (TC.getTriple().isAMDGCN())
-      CmdArgs.push_back("-lhostrpc");
+    CmdArgs.push_back("-lhostrpc");
     CmdArgs.push_back("-lomptarget");
   }
 
