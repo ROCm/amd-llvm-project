@@ -4246,11 +4246,11 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
     if (getTarget().getTriple().isNVPTX())
       return EmitNVPTXDevicePrintfCallExpr(E, ReturnValue);
     if (getTarget().getTriple().isAMDGCN()) {
-      if (getLangOpts().HIP)
-        return EmitAMDGPUDevicePrintfCallExpr(E, ReturnValue);
-      else if (getLangOpts().OpenMP)
+      if (getLangOpts().OpenMP)
         return EmitHostrpcVargsFn(E, "printf_allocate", "printf_execute",
                                   ReturnValue);
+      else if (getLangOpts().HIP)
+        return EmitAMDGPUDevicePrintfCallExpr(E, ReturnValue);
     }
     break;
   case Builtin::BI__builtin_canonicalize:
