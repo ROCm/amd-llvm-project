@@ -439,6 +439,8 @@ typedef enum ompd_rc_t {
   ompd_rc_device_read_error = 8,
   ompd_rc_device_write_error = 9,
   ompd_rc_nomem = 10,
+  ompd_rc_incomplete = 11,
+  ompd_rc_callback_error = 12
 } ompd_rc_t;
 
 typedef void (*ompt_interface_fn_t) (void);
