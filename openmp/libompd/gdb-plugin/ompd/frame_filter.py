@@ -146,7 +146,7 @@ class FrameFilter():
 						if self.continue_to_master:
 							yield OmpdFrameDecoratorThread(x)
 						else:
-							yield OmpdFrameDecorator(x)
+							yield OmpdFrameDecorator(x, self.curr_task.task_handle)
 					else:
 						yield OmpdFrameDecorator(x, self.curr_task.task_handle)
 					break
