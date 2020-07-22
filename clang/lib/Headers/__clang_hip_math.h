@@ -10,16 +10,27 @@
 #ifndef __CLANG_HIP_MATH_H__
 #define __CLANG_HIP_MATH_H__
 
-#include <algorithm>
 #include <limits.h>
+#ifndef _OPENMP
 #include <limits>
+#endif
 #include <stdint.h>
+
+#ifndef _cplusplus
+#include <assert.h> // static_assert
+#define _GLIBCXX_CONSTEXPR
+#endif
 
 #pragma push_macro("__DEVICE__")
 #pragma push_macro("__RETURN_TYPE")
 
 // to be consistent with __clang_cuda_math_forward_declares
-#define __DEVICE__ static __device__
+#ifdef _OPENMP
+  #define __DEVICE__ static __attribute__((always_inline, nothrow))
+#else
+  #define __DEVICE__ static __device__
+#endif
+
 #define __RETURN_TYPE bool
 
 __DEVICE__
@@ -95,8 +106,11 @@ inline uint64_t __make_mantissa(const char *__tagp) {
 }
 
 // BEGIN FLOAT
+#ifdef _cplusplus
 __DEVICE__
+_GLIBCXX_CONSTEXPR
 inline float abs(float __x) { return __ocml_fabs_f32(__x); }
+#endif
 __DEVICE__
 inline float acosf(float __x) { return __ocml_acos_f32(__x); }
 __DEVICE__
@@ -178,12 +192,16 @@ __DEVICE__
 inline float hypotf(float __x, float __y) { return __ocml_hypot_f32(__x, __y); }
 __DEVICE__
 inline int ilogbf(float __x) { return __ocml_ilogb_f32(__x); }
+// glibc defines isfinite,.. as a macro, exapnding in terms of __MATH_TG
+// if this is avoided with (isfinite), collides with glibc mathcalls.h
+#ifndef _OPENMP
 __DEVICE__
 inline __RETURN_TYPE isfinite(float __x) { return __ocml_isfinite_f32(__x); }
 __DEVICE__
 inline __RETURN_TYPE isinf(float __x) { return __ocml_isinf_f32(__x); }
 __DEVICE__
 inline __RETURN_TYPE isnan(float __x) { return __ocml_isnan_f32(__x); }
+#endif
 __DEVICE__
 inline float j0f(float __x) { return __ocml_j0_f32(__x); }
 __DEVICE__
@@ -251,7 +269,7 @@ inline float nanf(const char *__tagp) {
       uint32_t sign : 1;
     } bits;
 
-    static_assert(sizeof(float) == sizeof(ieee_float), "");
+    static_assert(sizeof(float) == sizeof(struct ieee_float), "");
   } __tmp;
 
   __tmp.bits.sign = 0u;
@@ -346,8 +364,11 @@ inline float scalblnf(float __x, long int __n) {
 }
 __DEVICE__
 inline float scalbnf(float __x, int __n) { return __ocml_scalbn_f32(__x, __n); }
+
+#ifndef _OPENMP
 __DEVICE__
 inline __RETURN_TYPE signbit(float __x) { return __ocml_signbit_f32(__x); }
+#endif
 __DEVICE__
 inline void sincosf(float __x, float *__sinptr, float *__cosptr) {
   float __tmp;
@@ -551,8 +572,11 @@ inline float __tanf(float __x) { return __ocml_tan_f32(__x); }
 // END FLOAT
 
 // BEGIN DOUBLE
+#ifdef _cplusplus
 __DEVICE__
+_GLIBCXX_CONSTEXPR
 inline double abs(double __x) { return __ocml_fabs_f64(__x); }
+#endif
 __DEVICE__
 inline double acos(double __x) { return __ocml_acos_f64(__x); }
 __DEVICE__
@@ -636,12 +660,14 @@ inline double hypot(double __x, double __y) {
 }
 __DEVICE__
 inline int ilogb(double __x) { return __ocml_ilogb_f64(__x); }
+#ifndef _OPENMP
 __DEVICE__
 inline __RETURN_TYPE isfinite(double __x) { return __ocml_isfinite_f64(__x); }
 __DEVICE__
 inline __RETURN_TYPE isinf(double __x) { return __ocml_isinf_f64(__x); }
 __DEVICE__
 inline __RETURN_TYPE isnan(double __x) { return __ocml_isnan_f64(__x); }
+#endif
 __DEVICE__
 inline double j0(double __x) { return __ocml_j0_f64(__x); }
 __DEVICE__
@@ -710,7 +736,7 @@ inline double nan(const char *__tagp) {
       uint32_t exponent : 11;
       uint32_t sign : 1;
     } bits;
-    static_assert(sizeof(double) == sizeof(ieee_double), "");
+    static_assert(sizeof(double) == sizeof(struct ieee_double), "");
   } __tmp;
 
   __tmp.bits.sign = 0u;
@@ -812,8 +838,10 @@ __DEVICE__
 inline double scalbn(double __x, int __n) {
   return __ocml_scalbn_f64(__x, __n);
 }
+#ifndef _OPENMP
 __DEVICE__
 inline __RETURN_TYPE signbit(double __x) { return __ocml_signbit_f64(__x); }
+#endif
 __DEVICE__
 inline double sin(double __x) { return __ocml_sin_f64(__x); }
 __DEVICE__
@@ -981,16 +1009,19 @@ inline double __fma_rz(double __x, double __y, double __z) {
 
 // BEGIN INTEGER
 __DEVICE__
+_GLIBCXX_CONSTEXPR
 inline int abs(int __x) {
   int __sgn = __x >> (sizeof(int) * CHAR_BIT - 1);
   return (__x ^ __sgn) - __sgn;
 }
 __DEVICE__
+_GLIBCXX_CONSTEXPR
 inline long labs(long __x) {
   long __sgn = __x >> (sizeof(long) * CHAR_BIT - 1);
   return (__x ^ __sgn) - __sgn;
 }
 __DEVICE__
+_GLIBCXX_CONSTEXPR
 inline long long llabs(long long __x) {
   long long __sgn = __x >> (sizeof(long long) * CHAR_BIT - 1);
   return (__x ^ __sgn) - __sgn;
@@ -1004,6 +1035,7 @@ inline long long abs(long long __x) { return llabs(__x); }
 #endif
 // END INTEGER
 
+#ifndef _OPENMP
 __DEVICE__
 inline _Float16 fma(_Float16 __x, _Float16 __y, _Float16 __z) {
   return __ocml_fma_f16(__x, __y, __z);
@@ -1181,5 +1213,7 @@ __host__ inline static int max(int __arg1, int __arg2) {
 #pragma pop_macro("__HIP_OVERLOAD2")
 #pragma pop_macro("__DEVICE__")
 #pragma pop_macro("__RETURN_TYPE")
+
+#endif
 
 #endif // __CLANG_HIP_MATH_H__

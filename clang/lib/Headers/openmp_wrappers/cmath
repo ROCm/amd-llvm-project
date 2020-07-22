@@ -25,11 +25,10 @@
 #include <cstdlib>
 
 #pragma omp begin declare variant match(                                       \
-    device = {arch(nvptx, nvptx64)}, implementation = {extension(match_any)})
+    device = {arch(nvptx, nvptx64, amdgcn)},                                   \
+    implementation = {extension(match_any)})
 
-#define __CUDA__
 #include <__clang_cuda_cmath.h>
-#undef __CUDA__
 
 // Overloads not provided by the CUDA wrappers but by the CUDA system headers.
 // Since we do not include the latter we define them ourselves.

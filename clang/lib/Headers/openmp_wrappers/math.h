@@ -46,4 +46,18 @@
 
 #pragma omp end declare variant
 
+#pragma omp begin declare variant match(                                       \
+    device = {arch(amdgcn)}, implementation = {extension(match_any)})
+
+#if defined (__device__)
+#error "__device__ already a macro, will need to push/pop it"
+#endif
+#define __device__
+#include <__clang_hip_libdevice_declares.h>
+#undef __device__
+
+#include <__clang_hip_math.h>
+  
+#pragma omp end declare variant
+
 #endif

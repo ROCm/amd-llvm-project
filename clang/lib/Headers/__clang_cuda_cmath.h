@@ -8,9 +8,6 @@
  */
 #ifndef __CLANG_CUDA_CMATH_H__
 #define __CLANG_CUDA_CMATH_H__
-#ifndef __CUDA__
-#error "This file is for CUDA compilation only."
-#endif
 
 #ifndef _OPENMP
 #include <limits>
@@ -128,6 +125,11 @@ __DEVICE__ float modf(float __x, float *__iptr) { return ::modff(__x, __iptr); }
 __DEVICE__ float pow(float __base, float __exp) {
   return ::powf(__base, __exp);
 }
+
+#if defined(__NVPTX__)
+// defines these in terms of functions in __clang_cuda_device_functions
+// signbit is nonstandard
+// pow is standard until c++11, but changes type in c++11. leave it for now.
 __DEVICE__ float pow(float __base, int __iexp) {
   return ::powif(__base, __iexp);
 }
@@ -136,6 +138,8 @@ __DEVICE__ double pow(double __base, int __iexp) {
 }
 __DEVICE__ bool signbit(float __x) { return ::__signbitf(__x); }
 __DEVICE__ bool signbit(double __x) { return ::__signbitd(__x); }
+#endif
+
 __DEVICE__ float sin(float __x) { return ::sinf(__x); }
 __DEVICE__ float sinh(float __x) { return ::sinhf(__x); }
 __DEVICE__ float sqrt(float __x) { return ::sqrtf(__x); }

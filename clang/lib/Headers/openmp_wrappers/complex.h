@@ -14,11 +14,13 @@
 #error "This file is for OpenMP compilation only."
 #endif
 
+#if defined(__NVPTX__)
 // We require math functions in the complex builtins below.
 #include <math.h>
 
 #define __CUDA__
 #include <__clang_cuda_complex_builtins.h>
+#endif
 #endif
 
 // Grab the host header too.

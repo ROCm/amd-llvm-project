@@ -1169,21 +1169,24 @@ void Clang::AddPreprocessingOptions(Compilation &C, const JobAction &JA,
 
   // If we are offloading to a target via OpenMP we need to include the
   // openmp_wrappers folder which contains alternative system headers.
-  if (JA.isDeviceOffloading(Action::OFK_OpenMP) &&
-      getToolChain().getTriple().isNVPTX()){
-    if (!Args.hasArg(options::OPT_nobuiltininc)) {
-      // Add openmp_wrappers/* to our system include path.  This lets us wrap
-      // standard library headers.
-      SmallString<128> P(D.ResourceDir);
-      llvm::sys::path::append(P, "include");
-      llvm::sys::path::append(P, "openmp_wrappers");
-      CmdArgs.push_back("-internal-isystem");
-      CmdArgs.push_back(Args.MakeArgString(P));
-    }
+  if (JA.isDeviceOffloading(Action::OFK_OpenMP)) {
+    const llvm::Triple &T = getToolChain().getTriple();
+    if (T.isNVPTX() || T.isAMDGCN()) {
+      if (!Args.hasArg(options::OPT_nobuiltininc)) {
+        // Add openmp_wrappers/* to our system include path.  This lets us wrap
+        // standard library headers.
+        SmallString<128> P(D.ResourceDir);
+        llvm::sys::path::append(P, "include");
+        llvm::sys::path::append(P, "openmp_wrappers");
+        CmdArgs.push_back("-internal-isystem");
+        CmdArgs.push_back(Args.MakeArgString(P));
+      }
 
-    CmdArgs.push_back("-include");
-    CmdArgs.push_back("__clang_openmp_device_functions.h");
+      CmdArgs.push_back("-include");
+      CmdArgs.push_back("__clang_openmp_device_functions.h");
+    }
   }
+
   if (Args.hasFlag(options::OPT_fopenmp, options::OPT_fopenmp_EQ,
                    options::OPT_fno_openmp, false)){
     CmdArgs.push_back("-I");
