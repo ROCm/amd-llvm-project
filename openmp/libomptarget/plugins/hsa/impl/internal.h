@@ -122,7 +122,47 @@ class Kernel;
 class KernelImpl;
 }  // namespace core
 
-extern std::queue<hsa_signal_t> FreeSignalPool;
+
+extern std::queue<core::TaskImpl *> ReadyTaskQueue;
+
+struct SignalPoolT {
+  SignalPoolT() = default;
+  SignalPoolT(const SignalPoolT &) = delete;
+  SignalPoolT(SignalPoolT &&) = delete;
+
+  size_t size() {
+    lock l(&mutex);
+    return state.size();
+  }
+  bool empty() {
+    lock l(&mutex);
+    return state.empty();
+  }
+  void push(hsa_signal_t s) {
+    lock l(&mutex);
+    state.push(s);
+  }
+  hsa_signal_t front() {
+    lock l(&mutex);
+    return state.front();
+  }
+  void pop(void) {
+    lock l(&mutex);
+    state.pop();
+  }
+
+private:
+  static pthread_mutex_t mutex;
+  std::queue<hsa_signal_t> state;
+  struct lock {
+    lock(pthread_mutex_t *m) : m(m) { pthread_mutex_lock(m); }
+    ~lock() { pthread_mutex_unlock(m); }
+    pthread_mutex_t *m;
+  };
+};
+
+extern SignalPoolT FreeSignalPool;
+
 extern std::vector<hsa_amd_memory_pool_t> atl_gpu_kernarg_pools;
 
 namespace core {

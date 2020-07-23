@@ -151,7 +151,8 @@ std::map<std::string, std::string> KernelNameMap;
 std::vector<std::map<std::string, atl_kernel_info_t> > KernelInfoTable;
 std::vector<std::map<std::string, atl_symbol_info_t> > SymbolInfoTable;
 
-std::queue<hsa_signal_t> FreeSignalPool;
+SignalPoolT FreeSignalPool;
+pthread_mutex_t SignalPoolT::mutex = PTHREAD_MUTEX_INITIALIZER;
 
 bool g_atmi_initialized = false;
 bool g_atmi_hostcall_required = false;
