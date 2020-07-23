@@ -10,8 +10,14 @@
 #ifndef __CLANG_HIP_MATH_H__
 #define __CLANG_HIP_MATH_H__
 
+#ifdef _OPENMP_TARGET
+#error ""
+#endif
+#define _OPENMP_TARGET (defined(_OPENMP) && defined(__AMDGCN__))
+
 #include <limits.h>
-#ifndef _OPENMP
+#if !_OPENMP_TARGET
+#include <algorithm> // std::min
 #include <limits>
 #endif
 #include <stdint.h>
@@ -25,8 +31,8 @@
 #pragma push_macro("__RETURN_TYPE")
 
 // to be consistent with __clang_cuda_math_forward_declares
-#ifdef _OPENMP
-  #define __DEVICE__ static __attribute__((always_inline, nothrow))
+#if _OPENMP_TARGET
+  #define __DEVICE__ __attribute__((always_inline, nothrow))
 #else
   #define __DEVICE__ static __device__
 #endif
@@ -194,7 +200,7 @@ __DEVICE__
 inline int ilogbf(float __x) { return __ocml_ilogb_f32(__x); }
 // glibc defines isfinite,.. as a macro, exapnding in terms of __MATH_TG
 // if this is avoided with (isfinite), collides with glibc mathcalls.h
-#ifndef _OPENMP
+#if !_OPENMP_TARGET
 __DEVICE__
 inline __RETURN_TYPE isfinite(float __x) { return __ocml_isfinite_f32(__x); }
 __DEVICE__
@@ -365,7 +371,7 @@ inline float scalblnf(float __x, long int __n) {
 __DEVICE__
 inline float scalbnf(float __x, int __n) { return __ocml_scalbn_f32(__x, __n); }
 
-#ifndef _OPENMP
+#if !_OPENMP_TARGET
 __DEVICE__
 inline __RETURN_TYPE signbit(float __x) { return __ocml_signbit_f32(__x); }
 #endif
@@ -660,7 +666,7 @@ inline double hypot(double __x, double __y) {
 }
 __DEVICE__
 inline int ilogb(double __x) { return __ocml_ilogb_f64(__x); }
-#ifndef _OPENMP
+#if !_OPENMP_TARGET
 __DEVICE__
 inline __RETURN_TYPE isfinite(double __x) { return __ocml_isfinite_f64(__x); }
 __DEVICE__
@@ -838,7 +844,7 @@ __DEVICE__
 inline double scalbn(double __x, int __n) {
   return __ocml_scalbn_f64(__x, __n);
 }
-#ifndef _OPENMP
+#if !_OPENMP_TARGET
 __DEVICE__
 inline __RETURN_TYPE signbit(double __x) { return __ocml_signbit_f64(__x); }
 #endif
@@ -1035,7 +1041,7 @@ inline long long abs(long long __x) { return llabs(__x); }
 #endif
 // END INTEGER
 
-#ifndef _OPENMP
+#if !_OPENMP_TARGET
 __DEVICE__
 inline _Float16 fma(_Float16 __x, _Float16 __y, _Float16 __z) {
   return __ocml_fma_f16(__x, __y, __z);

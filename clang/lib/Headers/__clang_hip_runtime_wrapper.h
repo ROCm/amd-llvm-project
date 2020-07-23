@@ -46,13 +46,16 @@ static inline __device__ void *free(void *__ptr) {
 }
 #endif
 
+#if !(defined(_OPENMP) && defined(__AMDGCN__))
 #include <__clang_hip_libdevice_declares.h>
 #include <__clang_hip_math.h>
+#endif
 
 #if !_OPENMP || __HIP_ENABLE_CUDA_WRAPPER_FOR_OPENMP__
+#if !(defined(_OPENMP) && defined(__AMDGCN__))
 #include <__clang_cuda_math_forward_declares.h>
 #include <__clang_cuda_complex_builtins.h>
-
+#endif
 #include <algorithm>
 #include <complex>
 #include <new>

@@ -46,6 +46,9 @@
 
 #pragma omp end declare variant
 
+// This may be active for hip + host openmp, though it shouldn't be
+
+#if (defined(_OPENMP) && defined(__AMDGCN__))
 #pragma omp begin declare variant match(                                       \
     device = {arch(amdgcn)}, implementation = {extension(match_any)})
 
@@ -59,5 +62,6 @@
 #include <__clang_hip_math.h>
   
 #pragma omp end declare variant
+#endif
 
 #endif

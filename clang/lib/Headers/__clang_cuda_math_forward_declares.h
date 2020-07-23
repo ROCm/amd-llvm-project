@@ -6,6 +6,10 @@
  *
  *===-----------------------------------------------------------------------===
  */
+
+// This gets included by math.h and by hip runtime
+
+
 #ifndef __CLANG__CUDA_MATH_FORWARD_DECLARES_H__
 #define __CLANG__CUDA_MATH_FORWARD_DECLARES_H__
 #if !defined(__CUDA__) && !__HIP__
