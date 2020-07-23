@@ -112,8 +112,10 @@ enum ExecutionModeType {
 };
 
 struct KernelArgPool {
+private:
+    static pthread_mutex_t mutex;
+public:
   uint32_t kernarg_segment_size;
-  pthread_mutex_t mutex;
   void *kernarg_region = nullptr;
   std::queue<int> free_kernarg_segments;
 
@@ -127,20 +129,18 @@ struct KernelArgPool {
       assert(r == HSA_STATUS_SUCCESS);
       ErrorCheck(Memory pool free, r);
     }
-    pthread_mutex_destroy(&mutex);
   }
 
   // Can't really copy or move a mutex
+  KernelArgPool() = default;
   KernelArgPool(const KernelArgPool &) = delete;
   KernelArgPool(KernelArgPool &&) = delete;
-  KernelArgPool() { pthread_mutex_init(&mutex, NULL); }
 
   KernelArgPool(uint32_t kernarg_segment_size)
       : kernarg_segment_size(kernarg_segment_size) {
 
     // atmi uses one pool per kernel for all gpus, with a fixed upper size
     // preserving that exact scheme here, including the queue<int>
-    pthread_mutex_init(&mutex, NULL);
     {
       hsa_status_t err = hsa_amd_memory_pool_allocate(
           atl_gpu_kernarg_pools[0],
@@ -157,7 +157,7 @@ struct KernelArgPool {
 
   void *allocate(uint64_t arg_num) {
     assert((arg_num * sizeof(void *)) == kernarg_segment_size);
-    pthread_mutex_lock(&mutex);
+    lock l(&mutex);
     void *res = nullptr;
     if (!free_kernarg_segments.empty()) {
 
@@ -167,15 +167,13 @@ struct KernelArgPool {
       assert(free_idx == pointer_to_index(res));
       free_kernarg_segments.pop();
     }
-    pthread_mutex_unlock(&mutex);
     return res;
   }
 
   void deallocate(void *ptr) {
+    lock l(&mutex);
     int idx = pointer_to_index(ptr);
-    pthread_mutex_lock(&mutex);
     free_kernarg_segments.push(idx);
-    pthread_mutex_unlock(&mutex);
   }
 
 private:
@@ -186,7 +184,13 @@ private:
     assert(bytes % kernarg_size_including_implicit() == 0);
     return bytes / kernarg_size_including_implicit();
   }
+  struct lock {
+    lock(pthread_mutex_t *m) : m(m) { pthread_mutex_lock(m); }
+    ~lock() { pthread_mutex_unlock(m); }
+    pthread_mutex_t *m;
+  };
 };
+pthread_mutex_t KernelArgPool::mutex = PTHREAD_MUTEX_INITIALIZER;
 
 std::unordered_map<std::string /*kernel*/, std::unique_ptr<KernelArgPool>>
     KernelArgPoolMap;
@@ -1423,8 +1427,6 @@ static uint64_t acquire_available_packet_id(hsa_queue_t *queue) {
 
 extern bool g_atmi_hostcall_required; // declared without header by atmi
 
-static pthread_mutex_t run_target_team_region_mutex = PTHREAD_MUTEX_INITIALIZER;
-
 int32_t __tgt_rtl_run_target_team_region(int32_t device_id, void *tgt_entry_ptr,
                                          void **tgt_args,
                                          ptrdiff_t *tgt_offsets,
@@ -1434,6 +1436,8 @@ int32_t __tgt_rtl_run_target_team_region(int32_t device_id, void *tgt_entry_ptr,
   // Set the context we are using
   // update thread limit content in gpu memory if un-initialized or specified
   // from host
+
+  static pthread_mutex_t run_target_team_region_mutex = PTHREAD_MUTEX_INITIALIZER;
 
   DP("Run target team region thread_limit %d\n", thread_limit);
 
