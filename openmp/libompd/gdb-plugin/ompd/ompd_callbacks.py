@@ -27,17 +27,13 @@ def _sym_addr(*args):
 """ Read string from the target and copy it into the provided buffer.
 """
 def _read_string(*args):
-	# args is a tuple consisting of address and number of bytes to be read
+	# args is a tuple with just the source address
 	addr = args[0]
-	nbytes = args[1]
-	ret_buf = str()
 	try:
-		buf = gdb.parse_and_eval('(unsigned char*)%li' % addr)
-		for i in range(nbytes):
-			ret_buf.append(b'%c' % buf[i])
+		buf = gdb.parse_and_eval('(unsigned char*)%li' % addr).string()
 	except:
 		traceback.print_exc()
-	return ret_buf
+	return buf
 
 """ Read memory from the target and copy it into the provided buffer.
 """

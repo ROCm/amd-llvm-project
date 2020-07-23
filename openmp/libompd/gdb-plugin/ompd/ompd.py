@@ -3,6 +3,7 @@ import gdb
 import re
 import traceback
 from ompd_address_space import ompd_address_space
+from ompd_handles import ompd_thread, ompd_task, ompd_parallel
 from frame_filter import FrameFilter
 from enum import Enum
 
@@ -86,6 +87,116 @@ class ompd_threads(gdb.Command):
 	def invoke(self, arg, from_tty):
 		global addr_space
 		addr_space.list_threads(True)
+
+def print_parallel_region(curr_parallel, team_size):
+	"""Helper function for ompd_parallel_region. To print out the details of the parallel region."""
+	for omp_thr in range(team_size):
+		thread = curr_parallel.get_thread_in_parallel(omp_thr)
+		ompd_state = str(addr_space.states[thread.get_state()[0]])
+		ompd_wait_id = thread.get_state()[1]
+		task = curr_parallel.get_task_in_parallel(omp_thr)
+		task_func_addr = task.get_task_function()
+		# Get the function this addr belongs to
+		sal = gdb.find_pc_line(task_func_addr)
+		block = gdb.block_for_pc(task_func_addr)
+		while block and not block.function:
+			block = block.superblock
+		if omp_thr == 0:
+			print('%6d (master) %-37s %ld    0x%lx %-25s %-17s:%d' % \
+			(omp_thr, ompd_state, ompd_wait_id, task_func_addr, \
+			 block.function.print_name, sal.symtab.filename, sal.line))
+		else:
+			print('%6d          %-37s %ld    0x%lx %-25s %-17s:%d' % \
+			(omp_thr, ompd_state, ompd_wait_id, task_func_addr, \
+			 block.function.print_name, sal.symtab.filename, sal.line))
+
+class ompd_parallel_region(gdb.Command):
+	"""Parallel Region Details"""
+	def __init__(self):
+		self.__doc__ = 'Display the details of the current and enclosing parallel regions.\n usage: ompd parallel'
+		super(ompd_parallel_region, self).__init__('ompd parallel',
+							   gdb.COMMAND_STATUS)
+
+	def invoke(self, arg, from_tty):
+		global addr_space
+		if addr_space.icv_map is None:
+			addr_space.get_icv_map()
+		if addr_space.states is None:
+			addr_space.enumerate_states()
+		curr_thread_handle = addr_space.get_curr_thread()
+		curr_parallel_handle = curr_thread_handle.get_current_parallel_handle()
+		curr_parallel = ompd_parallel(curr_parallel_handle)
+		while curr_parallel_handle is not None and curr_parallel is not None:
+			nest_level = ompdModule.call_ompd_get_icv_from_scope(curr_parallel_handle,\
+				     addr_space.icv_map['levels-var'][1], addr_space.icv_map['levels-var'][0])
+			if nest_level == 0:
+				break
+			team_size = ompdModule.call_ompd_get_icv_from_scope(curr_parallel_handle, \
+				    addr_space.icv_map['ompd-team-size-var'][1], \
+				    addr_space.icv_map['ompd-team-size-var'][0])
+			print ("")
+			print ("Parallel Region: Nesting Level %d: Team Size: %d" % (nest_level, team_size))
+			print ("================================================")
+			print ("")
+			print ("OMP Thread Nbr  Thread State                     Wait Id  EntryAddr FuncName                 File:Line");
+			print ("======================================================================================================");
+			print_parallel_region(curr_parallel, team_size)
+			enclosing_parallel = curr_parallel.get_enclosing_parallel()
+			enclosing_parallel_handle = curr_parallel.get_enclosing_parallel_handle()
+			curr_parallel = enclosing_parallel
+			curr_parallel_handle = enclosing_parallel_handle
+
+class ompd_icvs(gdb.Command):
+	"""ICVs"""
+	def __init__(self):
+		self.__doc__ = 'Display the values of the Internal Control Variables.\n usage: ompd icvs'
+		super(ompd_icvs, self).__init__('ompd icvs',
+						 gdb.COMMAND_STATUS)
+
+	def invoke(self, arg, from_tty):
+		global addr_space
+		global ompd_scope_map
+		curr_thread_handle = addr_space.get_curr_thread()
+		if addr_space.icv_map is None:
+			addr_space.get_icv_map()
+		print("ICV Name                        Scope                     Value")
+		print("===============================================================")
+
+		try:
+			for icv_name in addr_space.icv_map:
+				scope = addr_space.icv_map[icv_name][1]
+				#{1:'global', 2:'address_space', 3:'thread', 4:'parallel', 5:'implicit_task', 6:'task'}
+				if scope == 2:
+					handle = addr_space.addr_space
+				elif scope == 3:
+					handle = curr_thread_handle.thread_handle
+				elif scope == 4:
+					handle = curr_thread_handle.get_current_parallel_handle()
+				elif scope == 6:
+					handle = curr_thread_handle.get_current_task_handle()
+				else:
+					raise ValueError("Invalid scope")
+
+				if (icv_name == "nthreads-var"):
+					icv_value = ompdModule.call_ompd_get_icv_from_scope(
+						    handle, scope, addr_space.icv_map[icv_name][0])
+					if icv_value is None:
+						icv_string = ompdModule.call_ompd_get_icv_string_from_scope( \
+							     handle, scope, addr_space.icv_map[icv_name][0])
+						print('%-31s %-26s %s' % (icv_name, ompd_scope_map[scope], icv_string))
+					else:
+						print('%-31s %-26s %d' % (icv_name, ompd_scope_map[scope], icv_value))
+
+				elif (icv_name == "affinity-format-var" or icv_name == "tool-libraries-var" ):
+					icv_string = ompdModule.call_ompd_get_icv_string_from_scope( \
+						     handle, scope, addr_space.icv_map[icv_name][0])
+					print('%-31s %-26s %s' % (icv_name, ompd_scope_map[scope], icv_string))
+				else:
+					icv_value = ompdModule.call_ompd_get_icv_from_scope(handle, \
+						    scope, addr_space.icv_map[icv_name][0])
+					print('%-31s %-26s %d' % (icv_name, ompd_scope_map[scope], icv_value))
+		except:
+		       traceback.print_exc()
 
 def curr_thread():
 	"""Helper function for ompd_step. Returns the thread object for the current thread number."""
@@ -230,6 +341,8 @@ def main():
 	ompd()
 	ompd_init()
 	ompd_threads()
+	ompd_icvs()
+	ompd_parallel_region()
 	ompd_test()
 	ompd_taskframes()
 	ompd_bt()

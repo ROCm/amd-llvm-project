@@ -545,22 +545,19 @@ ompd_rc_t _read_string (
 {
 	uint64_t readMem = (uint64_t) addr->address;
 	PyObject* pFunc = PyObject_GetAttrString(pModule, "_read_string");
-	PyObject* pArgs = PyTuple_New(2);
+	PyObject* pArgs = PyTuple_New(1);
 	PyTuple_SetItem(pArgs, 0, Py_BuildValue("l", readMem));
-	PyTuple_SetItem(pArgs, 1, Py_BuildValue("i", nbytes));
 	PyObject* retString = PyObject_CallObject(pFunc, pArgs);
 	Py_XDECREF(pArgs);
-	if(!PyString_Check(retString)) {
-		return ompd_rc_error;
-	}
 	int retSize = (int) PyString_Size(retString);
-	if(retSize != nbytes) {
-		return ompd_rc_error;
+	ompd_rc_t retVal = ompd_rc_ok;
+	if(retSize >= nbytes) {
+		retVal = ompd_rc_incomplete;
 	}
 	char* strbuffer = (char*) buffer;
  	strncpy(strbuffer, PyString_AsString(retString), nbytes);
 	strbuffer[nbytes-1]='\0';
-	return ompd_rc_ok;
+	return retVal;
 }
 
 /**
@@ -942,7 +939,9 @@ static PyObject* call_ompd_get_icv_from_scope(PyObject* self, PyObject* args) {
 	ompd_rc_t retVal = ompd_get_icv_from_scope(addrSpaceHandle, scope, icvId, &icvValue);
 	
 	if(retVal != ompd_rc_ok) {
-		_printf("An error occurred when calling ompd_get_icv_from_scope: Error code: %d", retVal);
+                if (retVal != ompd_rc_incompatible) {
+		    _printf("An error occurred when calling ompd_get_icv_from_scope: Error code: %d", retVal);
+                }
 		return Py_None;
 	}
 	return PyLong_FromLong(icvValue);
