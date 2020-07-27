@@ -79,8 +79,11 @@ class Runtime {
   // machine info
   atmi_machine_t *GetMachineInfo();
   // modules
-  atmi_status_t RegisterModuleFromMemory(void *, size_t,
-                                         atmi_place_t);
+  atmi_status_t RegisterModuleFromMemory(
+      void *, size_t, atmi_place_t,
+      atmi_status_t (*on_deserialized_data)(void *data, size_t size,
+                                            void *cb_state),
+      void *cb_state);
   // data
   atmi_status_t Memcpy(void *, const void *, size_t);
   atmi_status_t Memfree(void *);

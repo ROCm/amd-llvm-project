@@ -83,6 +83,11 @@ atmi_status_t atmi_finalize();
  * @param[in] place Denotes the execution place (device) on which the module
  * should be registered and loaded.
  *
+ * @param[in] on_deserialized_data Callback run on deserialized code object,
+ * before loading it
+ *
+ * @param[in] cb_state void* passed to on_deserialized_data callback
+ *
  * @retval ::ATMI_STATUS_SUCCESS The function has executed successfully.
  *
  * @retval ::ATMI_STATUS_ERROR The function encountered errors.
@@ -90,9 +95,11 @@ atmi_status_t atmi_finalize();
  * @retval ::ATMI_STATUS_UNKNOWN The function encountered errors.
  *
  */
-  atmi_status_t atmi_module_register_from_memory_to_place(void *module_bytes,
-                                                        size_t module_size,
-                                                        atmi_place_t place);
+atmi_status_t atmi_module_register_from_memory_to_place(
+    void *module_bytes, size_t module_size, atmi_place_t place,
+    atmi_status_t (*on_deserialized_data)(void *data, size_t size,
+                                          void *cb_state),
+    void *cb_state);
 
 /** @} */
 
