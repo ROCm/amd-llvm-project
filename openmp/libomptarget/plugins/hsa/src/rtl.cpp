@@ -997,19 +997,14 @@ __tgt_target_table *__tgt_rtl_load_binary(int32_t device_id,
         }
         void *StructSizePtr;
         const char *SsNam = "omptarget_nest_par_call_struct_size";
-        err = atmi_interop_hsa_get_symbol_info(place, SsNam, &StructSizePtr,
-                                               &varsize);
-        if (err != ATMI_STATUS_SUCCESS) {
+        err = interop_get_symbol_info((char *)image->ImageStart, img_size,
+                                      SsNam, &StructSizePtr, &varsize);
+        if ((err != ATMI_STATUS_SUCCESS) ||
+            (varsize != sizeof(TgtStackItemSize))) {
           fprintf(stderr, "Addr of %s failed\n", SsNam);
           return NULL;
         }
-        err = atmi_memcpy(&TgtStackItemSize, StructSizePtr, (size_t)varsize);
-        if (err != ATMI_STATUS_SUCCESS) {
-          DP("Error when copying data from device to host. Pointers: "
-             "host = " DPxMOD ", device = " DPxMOD ", size = %u\n",
-             DPxPTR(&TgtStackItemSize), DPxPTR(StructSizePtr), varsize);
-          return NULL;
-        }
+        memcpy(&TgtStackItemSize, StructSizePtr, sizeof(TgtStackItemSize));
         DP("Size of our struct is %d\n", TgtStackItemSize);
       }
 
