@@ -1038,9 +1038,11 @@ static hsa_status_t populate_InfoTables(hsa_executable_t executable,
   return HSA_STATUS_SUCCESS;
 }
 
-atmi_status_t Runtime::RegisterModuleFromMemory(void *module_bytes,
-                                                size_t module_size,
-                                                atmi_place_t place) {
+atmi_status_t Runtime::RegisterModuleFromMemory(
+    void *module_bytes, size_t module_size, atmi_place_t place,
+    atmi_status_t (*on_deserialized_data)(void *data, size_t size,
+                                          void *cb_state),
+    void *cb_state) {
   hsa_status_t err;
   int gpu = place.device_id;
   assert(gpu >= 0);
@@ -1077,6 +1079,11 @@ atmi_status_t Runtime::RegisterModuleFromMemory(void *module_bytes,
                                         &code_object);
       ErrorCheckAndContinue(Code Object Deserialization, err);
       assert(0 != code_object.handle);
+
+      // Mutating the device image here avoids another allocation & memcpy
+      void * code_object_alloc_data = reinterpret_cast<void*>(code_object.handle);
+      atmi_status_t atmi_err = on_deserialized_data(code_object_alloc_data, module_size, cb_state);
+      ATMIErrorCheck(Error in deserialized_data callback, atmi_err);
 
       /* Load the code object.  */
       err =

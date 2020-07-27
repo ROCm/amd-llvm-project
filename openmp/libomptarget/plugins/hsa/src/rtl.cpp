@@ -851,6 +851,18 @@ atmi_status_t interop_get_symbol_info(char *base, size_t img_size,
     return ATMI_STATUS_ERROR;
   }
 }
+
+template <typename C>
+atmi_status_t module_register_from_memory_to_place(void *module_bytes,
+                                                   size_t module_size,
+                                                   atmi_place_t place, C cb) {
+  auto L = [](void *data, size_t size, void *cb_state) -> atmi_status_t {
+    C *unwrapped = static_cast<C *>(cb_state);
+    return (*unwrapped)(data, size);
+  };
+  return atmi_module_register_from_memory_to_place(
+      module_bytes, module_size, place, L, static_cast<void *>(&cb));
+}
 } // namespace
 
 static __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
@@ -880,10 +892,42 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
     return NULL;
   }
 
+  omptarget_device_environmentTy host_device_env;
+  host_device_env.num_devices = DeviceInfo.NumberOfDevices;
+  host_device_env.device_num = device_id;
+  host_device_env.debug_level = 0;
+#ifdef OMPTARGET_DEBUG
+  if (char *envStr = getenv("LIBOMPTARGET_DEVICE_RTL_DEBUG")) {
+    host_device_env.debug_level = std::stoi(envStr);
+  }
+#endif
+
+  auto on_deserialized_data = [&](void *data, size_t size) -> atmi_status_t {
+    const char *device_env_Name = "omptarget_device_environment";
+    symbol_info si;
+    int rc = get_symbol_info_without_loading((char *)image->ImageStart,
+                                             img_size, device_env_Name, &si);
+    if (rc != 0) {
+      DP("Finding global device environment '%s' - symbol missing.\n",
+         device_env_Name);
+      // no need to return FAIL, consider this is a not a device debug build.
+      return ATMI_STATUS_SUCCESS;
+    }
+    if (si.size != sizeof(host_device_env)) {
+      return ATMI_STATUS_ERROR;
+    }
+    DP("Setting global device environment %lu bytes\n", si.size);
+    uint64_t offset = (char *)si.addr - (char *)image->ImageStart;
+    void *pos = (char *)data + offset;
+    memcpy(pos, &host_device_env, sizeof(host_device_env));
+    return ATMI_STATUS_SUCCESS;
+  };
+
   atmi_status_t err;
   {
-    err = atmi_module_register_from_memory_to_place(
-        (void *)image->ImageStart, img_size, get_gpu_place(device_id));
+    err = module_register_from_memory_to_place(
+        (void *)image->ImageStart, img_size, get_gpu_place(device_id),
+        on_deserialized_data);
 
     check("Module registering", err);
     if (err != ATMI_STATUS_SUCCESS) {
@@ -1155,52 +1199,6 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
     entry.addr = (void *)&KernelsList.back();
     DeviceInfo.addOffloadEntry(device_id, entry);
     DP("Entry point %ld maps to %s\n", e - HostBegin, e->name);
-  }
-
-  { // send device environment here
-
-    omptarget_device_environmentTy host_device_env;
-    host_device_env.num_devices = DeviceInfo.NumberOfDevices;
-    host_device_env.device_num = device_id;
-    host_device_env.debug_level = 0;
-#ifdef OMPTARGET_DEBUG
-    if (char *envStr = getenv("LIBOMPTARGET_DEVICE_RTL_DEBUG")) {
-      host_device_env.debug_level = std::stoi(envStr);
-    }
-#endif
-
-    const char *device_env_Name = "omptarget_device_environment";
-    void *device_env_Ptr;
-    uint32_t varsize;
-
-    atmi_mem_place_t place = get_gpu_mem_place(device_id);
-    err = atmi_interop_hsa_get_symbol_info(place, device_env_Name,
-                                           &device_env_Ptr, &varsize);
-
-    if (err == ATMI_STATUS_SUCCESS) {
-      if ((size_t)varsize != sizeof(host_device_env)) {
-        DP("Global device_environment '%s' - size mismatch (%u != %lu)\n",
-           device_env_Name, varsize, sizeof(int32_t));
-        return NULL;
-      }
-
-      err = atmi_memcpy(device_env_Ptr, &host_device_env, (size_t)varsize);
-      if (err != ATMI_STATUS_SUCCESS) {
-        DP("Error when copying data from host to device. Pointers: "
-           "host = " DPxMOD ", device = " DPxMOD ", size = %u\n",
-           DPxPTR(&host_device_env), DPxPTR(device_env_Ptr), varsize);
-        return NULL;
-      }
-
-      DP("Sending global device environment %lu bytes\n", (size_t)varsize);
-    } else {
-      DP("Finding global device environment '%s' - symbol missing.\n",
-         device_env_Name);
-      // no need to return NULL, consider this is a not a device debug build.
-      // return NULL;
-    }
-
-    check("Sending device environment", err);
   }
 
   return DeviceInfo.getOffloadEntriesTable(device_id);
