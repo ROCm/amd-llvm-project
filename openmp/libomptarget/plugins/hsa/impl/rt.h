@@ -74,7 +74,12 @@ class Runtime final {
   static atmi_status_t Finalize();
 
   // modules
-  static atmi_status_t RegisterModuleFromMemory(void *, size_t, atmi_place_t);
+  static atmi_status_t RegisterModuleFromMemory(
+      void *, size_t, atmi_place_t,
+      atmi_status_t (*on_deserialized_data)(void *data, size_t size,
+                                            void *cb_state),
+      void *cb_state);
+
   // machine info
   static atmi_machine_t *GetMachineInfo();
 
