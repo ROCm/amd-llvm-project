@@ -27,13 +27,9 @@ DEVICE
 omptarget_nvptx_Queue<omptarget_nvptx_ThreadPrivateContext, OMP_STATE_COUNT>
     omptarget_nvptx_device_State[MAX_SM];
 
-#ifdef __AMDGCN__
-// Allocated by rtl.cpp
 DEVICE void *omptarget_nest_par_call_stack;
-// Read by rtl.cpp as part of choosing how much to allocate
-DEVICE const uint32_t omptarget_nest_par_call_struct_size =
+DEVICE uint32_t omptarget_nest_par_call_struct_size =
     sizeof(class omptarget_nvptx_TaskDescr);
-#endif
 
 DEVICE omptarget_nvptx_SimpleMemoryManager
     omptarget_nvptx_simpleMemoryManager;
