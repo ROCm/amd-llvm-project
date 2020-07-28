@@ -599,6 +599,11 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
     }
   }
 
+  if (JA.isHostOffloading(Action::OFK_HIP)) {
+    CmdArgs.push_back("-lamdhip64");
+    addOpenMPRuntimeSpecificRPath(ToolChain, Args, CmdArgs);
+  }
+
   if (D.CCCIsCXX() &&
       !Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs)) {
     if (ToolChain.ShouldLinkCXXStdlib(Args)) {
