@@ -5239,8 +5239,12 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       // cuda-parallel-target-regions flag
       if (Args.hasFlag(options::OPT_fopenmp_cuda_parallel_target_regions,
                        options::OPT_fno_openmp_cuda_parallel_target_regions,
-                       /*Default=*/true))
-        CmdArgs.push_back("-fopenmp-cuda-parallel-target-regions");
+                       /*Default=*/true)) {
+        // FIXME: Do not use paralllel target regions in fiji
+        const Arg *A = Args.getLastArg(options::OPT_march_EQ);
+        if (!A || (StringRef(A->getValue()) != "gfx803"))
+          CmdArgs.push_back("-fopenmp-cuda-parallel-target-regions");
+      }
 
       // When in OpenMP offloading mode with NVPTX target, check if full runtime
       // is required.
