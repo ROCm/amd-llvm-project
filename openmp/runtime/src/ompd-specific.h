@@ -69,6 +69,7 @@ OMPD_ACCESS(kmp_internal_control_t, nproc) \
 OMPD_ACCESS(kmp_internal_control_t, proc_bind) \
 OMPD_ACCESS(kmp_internal_control_t, sched) \
 OMPD_ACCESS(kmp_internal_control_t, default_device) \
+OMPD_ACCESS(kmp_internal_control_t, thread_limit) \
 \
 OMPD_ACCESS(kmp_taskdata_t,       ompt_task_info) \
 OMPD_ACCESS(kmp_taskdata_t,       td_flags) \
