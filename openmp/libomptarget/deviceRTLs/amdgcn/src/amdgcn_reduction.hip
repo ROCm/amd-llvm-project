@@ -1,3 +1,4 @@
+#if 0
 //===---- amdgcn_reduction.hip - extensions to OpenMP reduction --- HIP -*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -68,4 +69,4 @@ EXTERN
 int32_t __kmpc_reduce_simd(kmp_Ident *loc) {
   return (GetThreadIdInBlock() % WARPSIZE == 0) ? 1 : 0;
 }
-
+#endif
