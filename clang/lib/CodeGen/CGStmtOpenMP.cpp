@@ -6137,6 +6137,7 @@ void CodeGenFunction::EmitOMPTargetDataDirective(
         (void)PrivateScope.Privatize();
         RCG(CGF);
       } else {
+        OMPLexicalScope Scope(CGF, S, OMPD_unknown);
         RCG(CGF);
       }
     };
