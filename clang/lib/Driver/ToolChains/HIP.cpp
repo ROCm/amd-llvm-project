@@ -59,19 +59,44 @@ void AMDGCN::Linker::constructLldCommand(Compilation &C, const JobAction &JA,
                                           const llvm::opt::ArgList &Args) const {
   // Construct lld command.
   // The output from ld.lld is an HSA code object file.
-  ArgStringList LldArgs{"-flavor",
-                        "gnu",
-                        "--no-undefined",
-                        "-shared",
-                        "-mllvm",
-                        "-amdgpu-internalize-symbols",
-                        "-o",
-                        Output.getFilename()};
+  ArgStringList LldArgs{"-flavor", "gnu", "--no-undefined", "-shared",
+                        "-plugin-opt=-amdgpu-internalize-symbols"};
+
+  auto &TC = getToolChain();
+  auto &D = TC.getDriver();
+  assert(!Inputs.empty() && "Must have at least one input.");
+  addLTOOptions(TC, Args, LldArgs, Output, Inputs[0],
+                D.getLTOMode() == LTOK_Thin);
+
+  // Extract all the -m options
+  std::vector<llvm::StringRef> Features;
+  amdgpu::getAMDGPUTargetFeatures(D, Args, Features);
+
+  // Add features to mattr such as cumode
+  std::string MAttrString = "-plugin-opt=-mattr=";
+  for (auto OneFeature : unifyTargetFeatures(Features)) {
+    MAttrString.append(Args.MakeArgString(OneFeature));
+    if (OneFeature != Features.back())
+      MAttrString.append(",");
+  }
+  if (!Features.empty())
+    LldArgs.push_back(Args.MakeArgString(MAttrString));
+
+  for (const Arg *A : Args.filtered(options::OPT_mllvm)) {
+    LldArgs.push_back(
+        Args.MakeArgString(Twine("-plugin-opt=") + A->getValue(0)));
+  }
+
+  if (C.getDriver().isSaveTempsEnabled())
+    LldArgs.push_back("-save-temps");
+
+  LldArgs.append({"-o", Output.getFilename()});
   for (auto Input : Inputs)
     if (Input.isFilename())
       LldArgs.push_back(Input.getFilename());
   const char *Lld = Args.MakeArgString(getToolChain().GetProgramPath("lld"));
-  C.addCommand(std::make_unique<Command>(JA, *this, Lld, LldArgs, Inputs));
+  C.addCommand(std::make_unique<Command>(JA, *this, ResponseFileSupport::None(),
+                                         Lld, LldArgs, Inputs));
 }
 
 // Construct a clang-offload-bundler command to bundle code objects for
@@ -102,10 +127,10 @@ void AMDGCN::constructHIPFatbinCommand(Compilation &C, const JobAction &JA,
       std::string("-outputs=").append(std::string(OutputFileName)));
   BundlerArgs.push_back(BundlerOutputArg);
 
-  SmallString<128> BundlerPath(C.getDriver().Dir);
-  llvm::sys::path::append(BundlerPath, "clang-offload-bundler");
-  const char *Bundler = Args.MakeArgString(BundlerPath);
-  C.addCommand(std::make_unique<Command>(JA, T, Bundler, BundlerArgs, Inputs));
+  const char *Bundler = Args.MakeArgString(
+      T.getToolChain().GetProgramPath("clang-offload-bundler"));
+  C.addCommand(std::make_unique<Command>(JA, T, ResponseFileSupport::None(),
+                                         Bundler, BundlerArgs, Inputs));
 }
 
 /// Add Generated HIP Object File which has device images embedded into the
@@ -171,11 +196,11 @@ void AMDGCN::Linker::constructGenerateObjFileFromHIPFatBinary(
 
   Objf << ObjBuffer;
 
-  ArgStringList McArgs{"-triple", Args.MakeArgString(TC.getTripleString()),
-                       "-o",      Output.getFilename(),
+  ArgStringList McArgs{"-o",      Output.getFilename(),
                        McinFile,  "--filetype=obj"};
   const char *Mc = Args.MakeArgString(TC.GetProgramPath("llvm-mc"));
-  C.addCommand(std::make_unique<Command>(JA, *this, Mc, McArgs, Inputs));
+  C.addCommand(std::make_unique<Command>(JA, *this, ResponseFileSupport::None(),
+                                         Mc, McArgs, Inputs));
 }
 
 // For amdgcn the inputs of the linker job are device bitcode and output is

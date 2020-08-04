@@ -79,17 +79,10 @@ add_library(omptarget.rtl.hsa SHARED
       impl/atmi.cpp
       impl/atmi_interop_hsa.cpp
       impl/data.cpp
-      impl/kernel.cpp
       impl/machine.cpp
-      impl/queue.cpp
       impl/system.cpp
-      impl/task.cpp
-      impl/taskgroup.cpp
       impl/utils.cpp
       impl/msgpack.cpp
-      impl/atmi_hostcall.c
-      impl/hostcall.cpp
-      impl/hostrpc_handlers.c
       src/rtl.cpp 
       )
 
@@ -101,6 +94,7 @@ install(TARGETS omptarget.rtl.hsa LIBRARY DESTINATION "lib${OPENMP_LIBDIR_SUFFIX
 # Also, the AOMP specific build of ATMI has seperate release and debug builds. 
 target_link_libraries(
   omptarget.rtl.hsa
+  hostrpc_services
   -lpthread -ldl -Wl,-rpath,${LLVM_LIBDIR}${OPENMP_LIBDIR_SUFFIX}
   -L${LIBOMPTARGET_DEP_LIBHSA_LIBRARIES_DIRS} -L${LIBOMPTARGET_DEP_LIBHSAKMT_LIBRARIES_DIRS} -lhsa-runtime64 -lhsakmt -Wl,-rpath,${LIBOMPTARGET_DEP_LIBHSA_LIBRARIES_DIRS},-rpath,${LIBOMPTARGET_DEP_LIBHSAKMT_LIBRARIES_DIRS}
   -lelf

@@ -107,21 +107,22 @@
 // LINK-NOT: "*.llvm-link"
 // LINK-NOT: ".*opt"
 // LINK-NOT: ".*llc"
-// LINK: {{".*lld.*"}} {{.*}} "-mllvm" "-amdgpu-internalize-symbols"
+// LINK: {{".*lld.*"}} {{.*}} "-plugin-opt=-amdgpu-internalize-symbols"
+// LINK: "-plugin-opt=mcpu=gfx803"
 // LINK-SAME: "-o" "[[IMG_DEV1:.*.out]]" "[[A_BC1]]" "[[B_BC1]]"
 
 // LINK-NOT: "*.llvm-link"
 // LINK-NOT: ".*opt"
 // LINK-NOT: ".*llc"
-// LINK: {{".*lld.*"}} {{.*}} "-mllvm" "-amdgpu-internalize-symbols"
+// LINK: {{".*lld.*"}} {{.*}} "-plugin-opt=-amdgpu-internalize-symbols"
+// LINK: "-plugin-opt=mcpu=gfx900"
 // LINK-SAME: "-o" "[[IMG_DEV2:.*.out]]" "[[A_BC2]]" "[[B_BC2]]"
 
 // LINK: [[BUNDLER:".*clang-offload-bundler"]] "-type=o"
 // LINK-SAME: "-targets={{.*}},hip-amdgcn-amd-amdhsa-gfx803,hip-amdgcn-amd-amdhsa-gfx900"
 // LINK-SAME: "-inputs={{.*}},[[IMG_DEV1]],[[IMG_DEV2]]" "-outputs=[[BUNDLE:.*hipfb]]"
 
-// LINK: {{".*llvm-mc.*"}} "-triple" "amdgcn-amd-amdhsa" "-o"
-// LINK-SAME: "[[OBJBUNDLE:.*o]]" "{{.*}}.mcin" "--filetype=obj"
+// LINK: {{".*llvm-mc.*"}} "-o" "[[OBJBUNDLE:.*o]]" "{{.*}}.mcin" "--filetype=obj"
 
 // LINK: [[LD:".*ld.*"]] {{.*}} "-o" "a.out" {{.*}} "[[A_OBJ_HOST]]"
 // LINK-SAME: "[[B_OBJ_HOST]]" "[[OBJBUNDLE]]"

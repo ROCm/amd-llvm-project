@@ -106,6 +106,31 @@ void tools::handleTargetFeaturesGroup(const ArgList &Args,
   }
 }
 
+std::vector<StringRef>
+tools::unifyTargetFeatures(const std::vector<StringRef> &Features) {
+  std::vector<StringRef> UnifiedFeatures;
+  // Find the last of each feature.
+  llvm::StringMap<unsigned> LastOpt;
+  for (unsigned I = 0, N = Features.size(); I < N; ++I) {
+    StringRef Name = Features[I];
+    assert(Name[0] == '-' || Name[0] == '+');
+    LastOpt[Name.drop_front(1)] = I;
+  }
+
+  for (unsigned I = 0, N = Features.size(); I < N; ++I) {
+    // If this feature was overridden, ignore it.
+    StringRef Name = Features[I];
+    llvm::StringMap<unsigned>::iterator LastI = LastOpt.find(Name.drop_front(1));
+    assert(LastI != LastOpt.end());
+    unsigned Last = LastI->second;
+    if (Last != I)
+      continue;
+
+    UnifiedFeatures.push_back(Name);
+  }
+  return UnifiedFeatures;
+}
+
 void tools::addDirectoryList(const ArgList &Args, ArgStringList &CmdArgs,
                              const char *ArgName, const char *EnvVar) {
   const char *DirList = ::getenv(EnvVar);
@@ -628,8 +653,7 @@ bool tools::addOpenMPRuntime(ArgStringList &CmdArgs, const ToolChain &TC,
       CmdArgs.push_back("-lrt");
 
   if (IsOffloadingHost) {
-    if (TC.getTriple().isAMDGCN())
-      CmdArgs.push_back("-lhostrpc");
+    CmdArgs.push_back("-lhostrpc");
     CmdArgs.push_back("-lomptarget");
   }
 
@@ -938,10 +962,12 @@ void tools::SplitDebugInfo(const ToolChain &TC, Compilation &C, const Tool &T,
   InputInfo II(types::TY_Object, Output.getFilename(), Output.getFilename());
 
   // First extract the dwo sections.
-  C.addCommand(std::make_unique<Command>(JA, T, Exec, ExtractArgs, II));
+  C.addCommand(std::make_unique<Command>(
+      JA, T, ResponseFileSupport::AtFileCurCP(), Exec, ExtractArgs, II));
 
   // Then remove them from the original .o file.
-  C.addCommand(std::make_unique<Command>(JA, T, Exec, StripArgs, II));
+  C.addCommand(std::make_unique<Command>(
+      JA, T, ResponseFileSupport::AtFileCurCP(), Exec, StripArgs, II));
 }
 
 // Claim options we don't want to warn if they are unused. We do this for
@@ -1054,7 +1080,7 @@ tools::ParsePICArgs(const ToolChain &ToolChain, const ArgList &Args) {
   }
 
   // AMDGPU-specific defaults for PIC.
-  if (Triple.getArch() == llvm::Triple::amdgcn)
+  if (Triple.isAMDGCN())
     PIC = true;
 
   // The last argument relating to either PIC or PIE wins, and no
@@ -1526,7 +1552,6 @@ bool tools::SDLSearch(Compilation &C, const Driver &D, const Tool &T,
                       std::string libname, StringRef ArchName,
                       StringRef GpuArch, bool isBitCodeSDL,
                       bool postClangLink) {
-
   // Try the basic stuff first before looking into archives.
   if (SDLSearch(D, DriverArgs, CC1Args, LibraryPaths, libname, ArchName,
                 GpuArch, isBitCodeSDL, postClangLink))
@@ -1554,8 +1579,6 @@ bool tools::SDLSearch(Compilation &C, const Driver &D, const Tool &T,
         break;
       }
     }
-    const char *UBProgram = DriverArgs.MakeArgString(
-        T.getToolChain().GetProgramPath("clang-unbundle-archive"));
 
     if (ArchiveOfBundles != "") {
       std::string Err;
@@ -1572,16 +1595,30 @@ bool tools::SDLSearch(Compilation &C, const Driver &D, const Tool &T,
       C.addTempFile(C.getArgs().MakeArgString(OutputLib.c_str()));
 
       ArgStringList CmdArgs;
+      SmallString<128> DeviceTriple;
+      DeviceTriple += Action::GetOffloadKindName(JA.getOffloadingDeviceKind());
+      DeviceTriple += '-';
+      DeviceTriple += T.getToolChain().getTriple().normalize();
+      DeviceTriple += '-';
+      DeviceTriple += gpuname;
 
-      std::string InputArg("-input=" + ArchiveOfBundles);
-      std::string OffloadArg("-offload-arch=" + gpuname);
-      std::string OutputArg("-output=" + OutputLib);
+      std::string UnbundleArg("-unbundle");
+      std::string TypeArg("-type=a");
+      std::string InputArg("-inputs=" + ArchiveOfBundles);
+      std::string OffloadArg("-targets=" + std::string(DeviceTriple));
+      std::string OutputArg("-outputs=" + OutputLib);
+
+      const char *UBProgram = DriverArgs.MakeArgString(
+          T.getToolChain().GetProgramPath("clang-offload-bundler"));
 
       ArgStringList UBArgs;
+      UBArgs.push_back(C.getArgs().MakeArgString(UnbundleArg.c_str()));
+      UBArgs.push_back(C.getArgs().MakeArgString(TypeArg.c_str()));
       UBArgs.push_back(C.getArgs().MakeArgString(InputArg.c_str()));
       UBArgs.push_back(C.getArgs().MakeArgString(OffloadArg.c_str()));
       UBArgs.push_back(C.getArgs().MakeArgString(OutputArg.c_str()));
-      C.addCommand(std::make_unique<Command>(JA, T, UBProgram, UBArgs, Inputs));
+      C.addCommand(std::make_unique<Command>(
+          JA, T, ResponseFileSupport::AtFileCurCP(), UBProgram, UBArgs, Inputs));
       if (postClangLink)
         CC1Args.push_back("-mlink-builtin-bitcode");
 

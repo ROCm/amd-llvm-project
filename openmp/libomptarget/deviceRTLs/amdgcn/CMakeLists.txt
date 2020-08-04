@@ -12,6 +12,7 @@
 
 find_package(LLVM QUIET CONFIG
   PATHS
+  ${LLVM_INSTALL_PREFIX}
   $ENV{AOMP}
   $ENV{HOME}/rocm/aomp
   /opt/rocm/aomp
@@ -78,7 +79,6 @@ set(hip_sources
   ${CMAKE_CURRENT_SOURCE_DIR}/src/amdgcn_reduction.hip
   ${CMAKE_CURRENT_SOURCE_DIR}/src/amdgcn_smid.hip
   ${CMAKE_CURRENT_SOURCE_DIR}/src/amdgcn_sync.hip
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/amdgcn_threadfence.hip
   ${CMAKE_CURRENT_SOURCE_DIR}/src/target_impl.hip
   ${devicertl_base_directory}/common/src/cancel.cu
   ${devicertl_base_directory}/common/src/critical.cu
@@ -91,7 +91,8 @@ set(hip_sources
   ${devicertl_base_directory}/common/src/reduction.cu
   ${devicertl_base_directory}/common/src/support.cu
   ${devicertl_base_directory}/common/src/sync.cu
-  ${devicertl_base_directory}/common/src/task.cu)
+  ${devicertl_base_directory}/common/src/task.cu
+  ${devicertl_base_directory}/common/src/ompd-specific.cu)
 
 set(llvm_sources
   ${CMAKE_CURRENT_SOURCE_DIR}/src/atomic_inc.ll)

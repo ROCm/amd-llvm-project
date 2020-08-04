@@ -12,6 +12,7 @@
 ##===----------------------------------------------------------------------===##
 
 cmake_minimum_required(VERSION 3.0 FATAL_ERROR)
+add_subdirectory(services)
 # find the llvm compiler
 find_package(LLVM QUIET CONFIG
   PATHS
@@ -168,11 +169,8 @@ set(libname "hostrpc")
 set(archname "amdgcn")
 add_openmp_library(${libname} ${archname} ${CMAKE_CURRENT_SOURCE_DIR} ${openmp_sources})
 
-install(FILES ${OUTPUTDIR}/hostrpc/lib${libname}.a DESTINATION "lib")
-install(FILES ${OUTPUTDIR}/hostrpc/lib${libname}.a DESTINATION "lib-debug")
-# GPU architecture-specific archives prevent need for unbundle archive
-install(FILES ${OUTPUTDIR}/hostrpc/libbc-${libname}-${archname}.a DESTINATION "lib/libdevice")
-install(FILES ${OUTPUTDIR}/hostrpc/libbc-${libname}-${archname}.a DESTINATION "lib-debug/libdevice")
+install(FILES ${OUTPUTDIR}/hostrpc/lib${libname}.a DESTINATION ${OPENMP_INSTALL_LIBDIR})
+install(FILES ${OUTPUTDIR}/hostrpc/libbc-${libname}-${archname}.a DESTINATION "${OPENMP_INSTALL_LIBDIR}/libdevice")
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/src/hostrpc.h" DESTINATION include)
 
 if("${CMAKE_SOURCE_DIR}" STREQUAL "${CMAKE_CURRENT_SOURCE_DIR}")
