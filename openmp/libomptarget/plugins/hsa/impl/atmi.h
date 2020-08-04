@@ -102,10 +102,6 @@ typedef struct atmi_place_s {
    * The device ordinal number ordered by runtime; -1 for any
    */
   int device_id;
-  /**
-   * Compute Unit Mask (advanced feature)
-   */
-  unsigned long cu_mask;
 } atmi_place_t;
 
 /**
@@ -188,13 +184,11 @@ typedef struct atmi_machine_s {
 // some of the ATMI data structures.
 #define ATMI_PLACE_CPU(node, cpu_id)                                \
   {                                                                 \
-    .node_id = node, .type = ATMI_DEVTYPE_CPU, .device_id = cpu_id, \
-    .cu_mask = 0xFFFFFFFFFFFFFFFF                                   \
+    .node_id = node, .type = ATMI_DEVTYPE_CPU, .device_id = cpu_id  \
   }
 #define ATMI_PLACE_GPU(node, gpu_id)                                \
   {                                                                 \
-    .node_id = node, .type = ATMI_DEVTYPE_GPU, .device_id = gpu_id, \
-    .cu_mask = 0xFFFFFFFFFFFFFFFF                                   \
+    .node_id = node, .type = ATMI_DEVTYPE_GPU, .device_id = gpu_id  \
   }
 #define ATMI_MEM_PLACE_CPU(node, cpu_id)                             \
   {                                                                  \

@@ -70,52 +70,6 @@ void ATLMachine::addProcessor(const ATLGPUProcessor &p) {
   gpu_processors_.push_back(p);
 }
 
-int cu_mask_parser(char *gpu_workers, uint64_t *cu_masks, int count) {
-  int cu_mask_enable = 0;
-
-  if (gpu_workers) {
-    char *pch, *token;
-
-    // skip num_of_workers
-    token = strtok_r(gpu_workers, ":", &pch);
-    // printf("num_queues: %s\n", token);
-
-    int qid = 0;
-    token = strtok_r(NULL, ";", &pch);
-
-    // parse each queue
-    while (token != NULL && qid < count) {
-      // printf("qid: %d %s\n", qid, pch);
-      char *pch2, *token2;
-      cu_mask_enable = 1;
-      token2 = strtok_r(token, ",", &pch2);
-      // fprintf(stderr, "qid: %d cu:", qid);
-      while (token2 != NULL) {
-        char *pch3, *token3;
-        token3 = strtok_r(token2, "-", &pch3);
-        int offset = atoi(token3);
-        token3 = strtok_r(NULL, "-", &pch3);
-        int num_cus = token3 ? atoi(token3) - offset + 1 : 1;
-        token2 = strtok_r(NULL, ",", &pch2);
-
-        // fprintf(stderr, "%d-%d ", offset, num_cus);
-
-        for (int i = 0; i < num_cus; i++) {
-          cu_masks[qid] |= (uint64_t)1 << offset;
-          offset++;
-        }
-      }
-
-      // fprintf(stderr, "mask: %lx\n", cu_masks[qid]);
-
-      token = strtok_r(NULL, ";", &pch);
-      qid++;
-    }
-  }
-
-  return cu_mask_enable;
-}
-
 void callbackQueue(hsa_status_t status, hsa_queue_t *source, void *data) {
   if (status != HSA_STATUS_SUCCESS) {
     fprintf(stderr, "[%s:%d] GPU error in queue %p %d\n", __FILE__, __LINE__,
@@ -125,16 +79,7 @@ void callbackQueue(hsa_status_t status, hsa_queue_t *source, void *data) {
 }
 
 void ATLGPUProcessor::createQueues(const int count) {
-  char *gpu_workers = getenv("ATMI_DEVICE_GPU_WORKERS");
-
   int *num_cus = reinterpret_cast<int *>(calloc(count, sizeof(int)));
-  uint64_t *cu_masks =
-      reinterpret_cast<uint64_t *>(calloc(count, sizeof(uint64_t)));
-
-  int cu_mask_enable = 0;
-
-  if (gpu_workers)
-    cu_mask_enable = cu_mask_parser(gpu_workers, cu_masks, count);
 
   hsa_status_t err;
   /* Query the maximum size of the queue.  */
@@ -157,25 +102,11 @@ void ATLGPUProcessor::createQueues(const int count) {
     err = hsa_amd_profiling_set_profiler_enabled(this_Q, 1);
     ErrorCheck(Enabling profiling support, err);
 
-    if (cu_mask_enable) {
-      if (!cu_masks[qid]) {
-        cu_masks[qid] = -1;
-        fprintf(stderr, "Warning: queue[%d]: cu mask is 0x0\n", qid);
-      }
-
-      uint32_t *this_cu_mask_v = reinterpret_cast<uint32_t *>(&cu_masks[qid]);
-      hsa_status_t ret = hsa_amd_queue_cu_set_mask(this_Q, 64, this_cu_mask_v);
-
-      if (ret != HSA_STATUS_SUCCESS)
-        fprintf(stderr, "Error: hsa_amd_queue_cu_set_mask\n");
-    }
-
     queues_.push_back(this_Q);
 
     DEBUG_PRINT("Queue[%d]: %p\n", qid, this_Q);
   }
 
-  free(cu_masks);
   free(num_cus);
 }
 
