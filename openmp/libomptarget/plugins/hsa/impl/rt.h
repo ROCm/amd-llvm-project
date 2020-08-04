@@ -45,7 +45,6 @@ class Environment {
   // TODO(ashwinma): int may change to enum if we have more debug modes
   int getDebugMode() const { return debug_mode_; }
   // TODO(ashwinma): int may change to enum if we have more profile modes
-  int getProfileMode() const { return profile_mode_; }
 
  private:
   std::string GetEnv(const char *name) {
@@ -66,7 +65,7 @@ class Environment {
   int profile_mode_;
 };
 
-class Runtime {
+class Runtime final {
  public:
   static Runtime &getInstance() {
     static Runtime instance;
@@ -74,20 +73,20 @@ class Runtime {
   }
 
   // init/finalize
-  virtual atmi_status_t Initialize();
-  virtual atmi_status_t Finalize();
-  // machine info
-  atmi_machine_t *GetMachineInfo();
+  static atmi_status_t Initialize();
+  static atmi_status_t Finalize();
+
   // modules
-  atmi_status_t RegisterModuleFromMemory(void *, size_t,
-                                         atmi_place_t);
+  static atmi_status_t RegisterModuleFromMemory(void *, size_t, atmi_place_t);
+  // machine info
+  static atmi_machine_t *GetMachineInfo();
+
   // data
-  atmi_status_t Memcpy(void *, const void *, size_t);
-  atmi_status_t Memfree(void *);
-  atmi_status_t Malloc(void **, size_t, atmi_mem_place_t);
+  static atmi_status_t Memcpy(void *, const void *, size_t);
+  static atmi_status_t Memfree(void *);
+  static atmi_status_t Malloc(void **, size_t, atmi_mem_place_t);
 
   // environment variables
-  const Environment &getEnvironment() const { return env_; }
   int getMaxSignals() const { return env_.getMaxSignals(); }
   int getMaxQueueSize() const { return env_.getMaxQueueSize(); }
   int getMaxKernelTypes() const { return env_.getMaxKernelTypes(); }
@@ -95,9 +94,6 @@ class Runtime {
   int getNumCPUQueues() const { return env_.getNumCPUQueues(); }
   // TODO(ashwinma): int may change to enum if we have more debug modes
   int getDebugMode() const { return env_.getDebugMode(); }
-  // TODO(ashwinma): int may change to enum if we have more profile modes
-  int getProfileMode() const { return env_.getProfileMode(); }
-
 
  protected:
   Runtime() = default;
