@@ -12,6 +12,7 @@
 #include <vector>
 #include "atmi_runtime.h"
 #include "internal.h"
+
 extern ATLMachine g_atl_machine;
 extern hsa_region_t atl_cpu_kernarg_region;
 
