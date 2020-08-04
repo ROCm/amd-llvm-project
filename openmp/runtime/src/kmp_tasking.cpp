@@ -1546,6 +1546,11 @@ static void __kmp_invoke_task(kmp_int32 gtid, kmp_task_t *task,
     if (UNLIKELY(ompt_enabled.enabled))
       __ompt_task_start(task, current_task, gtid);
 #endif
+      
+#if OMPD_SUPPORT
+      if ( ompd_state & OMPD_ENABLE_BP )
+          ompd_bp_task_begin ();
+#endif
 
 #if USE_ITT_BUILD && USE_ITT_NOTIFY
     kmp_uint64 cur_time;
@@ -1581,6 +1586,10 @@ static void __kmp_invoke_task(kmp_int32 gtid, kmp_task_t *task,
 
   }
 
+#if OMPD_SUPPORT
+  if ( ompd_state & OMPD_ENABLE_BP )
+    ompd_bp_task_end ();
+#endif
 
   // Proxy tasks are not handled by the runtime
   if (taskdata->td_flags.proxy != TASK_PROXY) {
