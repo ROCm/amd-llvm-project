@@ -90,7 +90,6 @@ class ATLPointerTracker {
  private:
   MapTrackerType tracker_;
   std::mutex mutex_;
-  // std::shared_timed_mutex _mut;
 };
 
 extern ATLPointerTracker g_data_map;  // Track all am pointer allocations.

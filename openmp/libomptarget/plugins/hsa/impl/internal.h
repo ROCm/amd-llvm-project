@@ -75,7 +75,6 @@ typedef struct atl_context_s {
   bool g_hsa_initialized;
   bool g_gpu_initialized;
   bool g_tasks_initialized;
-  bool g_mutex_dag_initialized;
 } atl_context_t;
 extern atl_context_t atlc;
 extern atl_context_t *atlc_p;

@@ -56,50 +56,6 @@ typedef struct {
 // using llvm::AMDGPU::HSAMD::ValueKind;
 // using llvm::AMDGPU::HSAMD::ValueType;
 
-enum class ArgField : uint8_t {
-  Name = 0,
-  TypeName = 1,
-  Size = 2,
-  Align = 3,
-  ValueKind = 4,
-  ValueType = 5,
-  PointeeAlign = 6,
-  AddrSpaceQual = 7,
-  AccQual = 8,
-  ActualAccQual = 9,
-  IsConst = 10,
-  IsRestrict = 11,
-  IsVolatile = 12,
-  IsPipe = 13,
-  Offset = 14
-};
-
-static const std::map<std::string, ArgField> ArgFieldMap = {
-    // v2
-    {"Name", ArgField::Name},
-    {"TypeName", ArgField::TypeName},
-    {"Size", ArgField::Size},
-    {"Align", ArgField::Align},
-    {"ValueKind", ArgField::ValueKind},
-    {"ValueType", ArgField::ValueType},
-    {"PointeeAlign", ArgField::PointeeAlign},
-    {"AddrSpaceQual", ArgField::AddrSpaceQual},
-    {"AccQual", ArgField::AccQual},
-    {"ActualAccQual", ArgField::ActualAccQual},
-    {"IsConst", ArgField::IsConst},
-    {"IsRestrict", ArgField::IsRestrict},
-    {"IsVolatile", ArgField::IsVolatile},
-    {"IsPipe", ArgField::IsPipe},
-    // v3
-    {".type_name", ArgField::TypeName},
-    {".value_kind", ArgField::ValueKind},
-    {".address_space", ArgField::AddrSpaceQual},
-    {".is_const", ArgField::IsConst},
-    {".offset", ArgField::Offset},
-    {".size", ArgField::Size},
-    {".value_type", ArgField::ValueType},
-    {".name", ArgField::Name}};
-
 class KernelArgMD {
  public:
   enum class ValueKind {
@@ -180,35 +136,6 @@ static const std::map<std::string, KernelArgMD::ValueKind> ArgValueKind = {
      KernelArgMD::ValueKind::HiddenMultiGridSyncArg},
     {"hidden_hostcall_buffer", KernelArgMD::ValueKind::HiddenHostcallBuffer},
 };
-
-enum class CodePropField : uint8_t {
-  KernargSegmentSize = 0,
-  GroupSegmentFixedSize = 1,
-  PrivateSegmentFixedSize = 2,
-  KernargSegmentAlign = 3,
-  WavefrontSize = 4,
-  NumSGPRs = 5,
-  NumVGPRs = 6,
-  MaxFlatWorkGroupSize = 7,
-  IsDynamicCallStack = 8,
-  IsXNACKEnabled = 9,
-  NumSpilledSGPRs = 10,
-  NumSpilledVGPRs = 11
-};
-
-static const std::map<std::string, CodePropField> CodePropFieldMap = {
-    {"KernargSegmentSize", CodePropField::KernargSegmentSize},
-    {"GroupSegmentFixedSize", CodePropField::GroupSegmentFixedSize},
-    {"PrivateSegmentFixedSize", CodePropField::PrivateSegmentFixedSize},
-    {"KernargSegmentAlign", CodePropField::KernargSegmentAlign},
-    {"WavefrontSize", CodePropField::WavefrontSize},
-    {"NumSGPRs", CodePropField::NumSGPRs},
-    {"NumVGPRs", CodePropField::NumVGPRs},
-    {"MaxFlatWorkGroupSize", CodePropField::MaxFlatWorkGroupSize},
-    {"IsDynamicCallStack", CodePropField::IsDynamicCallStack},
-    {"IsXNACKEnabled", CodePropField::IsXNACKEnabled},
-    {"NumSpilledSGPRs", CodePropField::NumSpilledSGPRs},
-    {"NumSpilledVGPRs", CodePropField::NumSpilledVGPRs}};
 
 // public variables -- TODO(ashwinma) move these to a runtime object?
 atmi_machine_t g_atmi_machine;
