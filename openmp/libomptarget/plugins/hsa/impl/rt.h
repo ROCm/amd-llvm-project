@@ -19,7 +19,6 @@ namespace core {
 #define DEFAULT_NUM_GPU_QUEUES -1  // computed in code
 #define DEFAULT_NUM_CPU_QUEUES -1  // computed in code
 #define DEFAULT_DEBUG_MODE 0
-#define DEFAULT_PROFILE_MODE 0
 class Environment {
  public:
   Environment()
@@ -28,8 +27,7 @@ class Environment {
         max_kernel_types_(DEFAULT_MAX_KERNEL_TYPES),
         num_gpu_queues_(DEFAULT_NUM_GPU_QUEUES),
         num_cpu_queues_(DEFAULT_NUM_CPU_QUEUES),
-        debug_mode_(DEFAULT_DEBUG_MODE),
-        profile_mode_(DEFAULT_PROFILE_MODE) {
+        debug_mode_(DEFAULT_DEBUG_MODE) {
     GetEnvAll();
   }
 
@@ -62,7 +60,6 @@ class Environment {
   int num_gpu_queues_;
   int num_cpu_queues_;
   int debug_mode_;
-  int profile_mode_;
 };
 
 class Runtime final {

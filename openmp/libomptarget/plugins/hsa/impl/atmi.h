@@ -29,10 +29,6 @@ typedef enum atmi_status_t {
    * A generic error has occurred.
    */
   ATMI_STATUS_ERROR = 2,
-  /**
-   * Too many kernel/task types have been created.
-   */
-  ATMI_STATUS_KERNELCOUNT_OVERFLOW = 3
 } atmi_status_t;
 
 /**
@@ -54,11 +50,6 @@ typedef enum atmi_memtype_s {
   ATMI_MEMTYPE_COARSE_GRAINED = 1,
   ATMI_MEMTYPE_ANY
 } atmi_memtype_t;
-
-/**
- * @brief ATMI data arg types.
- */
-typedef enum atmi_arg_type_s { ATMI_IN, ATMI_OUT, ATMI_IN_OUT } atmi_arg_type_t;
 
 /**
  * @brief ATMI Memory Fences for Tasks.

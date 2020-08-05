@@ -27,8 +27,6 @@ const char *get_atmi_error_string(atmi_status_t err) {
       return "ATMI_STATUS_UNKNOWN";
     case ATMI_STATUS_ERROR:
       return "ATMI_STATUS_ERROR";
-    case ATMI_STATUS_KERNELCOUNT_OVERFLOW:
-      return "ATMI_STATUS_KERNELCOUNT_OVERFLOW";
     default:
       return "";
   }
@@ -103,8 +101,7 @@ void Environment::GetEnvAll() {
               << "ATMI_MAX_KERNEL_TYPES : positive integer" << std::endl
               << "ATMI_DEVICE_GPU_WORKERS : positive integer" << std::endl
               << "ATMI_DEVICE_CPU_WORKERS : positive integer" << std::endl
-              << "ATMI_DEBUG : 1 for printing out trace/debug info" << std::endl
-              << "ATMI_PROFILE : 1 for printing out timer info" << std::endl;
+              << "ATMI_DEBUG : 1 for printing out trace/debug info" << std::endl;
     exit(0);
   }
 
@@ -133,8 +130,5 @@ void Environment::GetEnvAll() {
 
   var = GetEnv("ATMI_DEBUG");
   if (!var.empty()) debug_mode_ = std::stoi(var);
-
-  var = GetEnv("ATMI_PROFILE");
-  if (!var.empty()) profile_mode_ = std::stoi(var);
 }
 }  // namespace core
