@@ -89,7 +89,6 @@ void ATLGPUProcessor::createQueues(const int count) {
   if (queue_size > core::Runtime::getInstance().getMaxQueueSize()) {
     queue_size = core::Runtime::getInstance().getMaxQueueSize();
   }
-  /* printf("The maximum queue size is %u.\n", (unsigned int) queue_size);  */
 
   /* Create queues for each device. */
   int qid;

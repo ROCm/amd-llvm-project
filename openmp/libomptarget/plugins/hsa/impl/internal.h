@@ -193,16 +193,9 @@ inline T *alignUp(T *value, size_t alignment) {
       alignDown((intptr_t)(value + alignment - 1), alignment));
 }
 
-template <typename T>
-void clear_container(T *q) {
-  T empty;
-  std::swap(*q, empty);
-}
-
 
 extern void register_allocation(void *addr, size_t size,
                                 atmi_mem_place_t place);
-extern hsa_agent_t get_compute_agent(atmi_place_t place);
 extern hsa_amd_memory_pool_t get_memory_pool_by_mem_place(
     atmi_mem_place_t place);
 extern bool atl_is_atmi_initialized();
@@ -237,13 +230,6 @@ const char *get_atmi_error_string(atmi_status_t err);
     exit(1);                                                    \
   } else {                                                      \
     /*  printf("%s succeeded.\n", #msg);*/                      \
-  }
-
-#define ELFErrorReturn(msg, status)                             \
-  {                                                             \
-    printf("[%s:%d] %s failed: %s\n", __FILE__, __LINE__, #msg, \
-           get_error_string(status));                           \
-    return status;                                              \
   }
 
 #define ErrorCheckAndContinue(msg, status)                           \
