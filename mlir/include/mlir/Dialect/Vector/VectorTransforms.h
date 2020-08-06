@@ -17,6 +17,11 @@
 namespace mlir {
 class MLIRContext;
 class OwningRewritePatternList;
+class VectorTransferOpInterface;
+
+namespace scf {
+class IfOp;
+} // namespace scf
 
 /// Collect a set of patterns to convert from the Vector dialect to itself.
 /// Should be merged with populateVectorToSCFLoweringPattern.
@@ -104,6 +109,65 @@ private:
   FilterConstraintType filter;
 };
 
+/// Split a vector.transfer operation into an unmasked fastpath vector.transfer
+/// and a slowpath masked vector.transfer. If `ifOp` is not null and the result
+/// is `success, the `ifOp` points to the newly created conditional upon
+/// function return. To accomodate for the fact that the original
+/// vector.transfer indexing may be arbitrary and the slow path indexes @[0...0]
+/// in the temporary buffer, the scf.if op returns a view and values of type
+/// index. At this time, only vector.transfer_read is implemented.
+///
+/// Example (a 2-D vector.transfer_read):
+/// ```
+///    %1 = vector.transfer_read %0[...], %pad : memref<A...>, vector<...>
+/// ```
+/// is transformed into:
+/// ```
+///    %1:3 = scf.if (%inBounds) {
+///       scf.yield %0 : memref<A...>, index, index
+///     } else {
+///       %2 = vector.transfer_read %0[...], %pad : memref<A...>, vector<...>
+///       %3 = vector.type_cast %extra_alloc : memref<...> to
+///       memref<vector<...>> store %2, %3[] : memref<vector<...>> %4 =
+///       memref_cast %extra_alloc: memref<B...> to memref<A...> scf.yield %4 :
+///       memref<A...>, index, index
+//     }
+///    %0 = vector.transfer_read %1#0[%1#1, %1#2] {masked = [false ... false]}
+/// ```
+/// where `extra_alloc` is a top of the function alloca'ed buffer of one vector.
+///
+/// Preconditions:
+///  1. `xferOp.permutation_map()` must be a minor identity map
+///  2. the rank of the `xferOp.memref()` and the rank of the `xferOp.vector()`
+///  must be equal. This will be relaxed in the future but requires
+///  rank-reducing subviews.
+LogicalResult
+splitFullAndPartialTransferPrecondition(VectorTransferOpInterface xferOp);
+LogicalResult splitFullAndPartialTransfer(OpBuilder &b,
+                                          VectorTransferOpInterface xferOp,
+                                          scf::IfOp *ifOp = nullptr);
+
+/// Apply `splitFullAndPartialTransfer` selectively via a pattern. This pattern
+/// may take an extra filter to perform selection at a finer granularity.
+struct VectorTransferFullPartialRewriter : public RewritePattern {
+  using FilterConstraintType =
+      std::function<LogicalResult(VectorTransferOpInterface op)>;
+
+  explicit VectorTransferFullPartialRewriter(
+      MLIRContext *context,
+      FilterConstraintType filter =
+          [](VectorTransferOpInterface op) { return success(); },
+      PatternBenefit benefit = 1)
+      : RewritePattern(benefit, MatchAnyOpTypeTag()), filter(filter) {}
+
+  /// Performs the rewrite.
+  LogicalResult matchAndRewrite(Operation *op,
+                                PatternRewriter &rewriter) const override;
+
+private:
+  FilterConstraintType filter;
+};
+
 } // namespace vector
 
 //===----------------------------------------------------------------------===//
@@ -127,12 +191,18 @@ class ContractionOpToMatmulOpLowering
     : public OpRewritePattern<vector::ContractionOp> {
 public:
   using OpRewritePattern<vector::ContractionOp>::OpRewritePattern;
+  using FilterConstraintType =
+      std::function<LogicalResult(vector::ContractionOp op)>;
+
+  static LogicalResult defaultFilter(vector::ContractionOp op) {
+    return success();
+  }
 
   ContractionOpToMatmulOpLowering(
       vector::VectorTransformsOptions vectorTransformsOptions,
-      MLIRContext *context)
+      MLIRContext *context, FilterConstraintType constraint = defaultFilter)
       : OpRewritePattern<vector::ContractionOp>(context),
-        vectorTransformsOptions(vectorTransformsOptions) {}
+        vectorTransformsOptions(vectorTransformsOptions), filter(constraint) {}
 
   LogicalResult match(vector::ContractionOp op) const override;
   void rewrite(vector::ContractionOp op,
@@ -141,6 +211,7 @@ public:
 private:
   /// Options to control the vector patterns.
   vector::VectorTransformsOptions vectorTransformsOptions;
+  FilterConstraintType filter;
 };
 
 /// Progressive lowering of a `vector.contract %a, %b, %c` with row-major matmul
@@ -162,11 +233,18 @@ class ContractionOpToOuterProductOpLowering
     : public OpRewritePattern<vector::ContractionOp> {
 public:
   using OpRewritePattern<vector::ContractionOp>::OpRewritePattern;
+  using FilterConstraintType =
+      std::function<LogicalResult(vector::ContractionOp op)>;
+
+  static LogicalResult defaultFilter(vector::ContractionOp op) {
+    return success();
+  }
+
   ContractionOpToOuterProductOpLowering(
       vector::VectorTransformsOptions vectorTransformsOptions,
-      MLIRContext *context)
+      MLIRContext *context, FilterConstraintType constraint = defaultFilter)
       : OpRewritePattern<vector::ContractionOp>(context),
-        vectorTransformsOptions(vectorTransformsOptions) {}
+        vectorTransformsOptions(vectorTransformsOptions), filter(constraint) {}
 
   LogicalResult match(vector::ContractionOp op) const override;
   void rewrite(vector::ContractionOp op,
@@ -175,33 +253,7 @@ public:
 private:
   /// Options to control the vector patterns.
   vector::VectorTransformsOptions vectorTransformsOptions;
-};
-
-/// Progressive lowering of a `vector.contract %a, %b, %c` with
-/// matvec semantics to series of AXPY operations that are chained
-/// through FMA operations.
-///
-/// This only kicks in when VectorTransformsOptions is set to AXPY.
-//
-// TODO: this is very similar, but not quite the same as the outerproduct
-// lowering above; merge the two?
-class ContractionOpToAXPYLowering
-    : public OpRewritePattern<vector::ContractionOp> {
-public:
-  using OpRewritePattern<vector::ContractionOp>::OpRewritePattern;
-  ContractionOpToAXPYLowering(
-      vector::VectorTransformsOptions vectorTransformsOptions,
-      MLIRContext *context)
-      : OpRewritePattern<vector::ContractionOp>(context),
-        vectorTransformsOptions(vectorTransformsOptions) {}
-
-  LogicalResult match(vector::ContractionOp op) const override;
-  void rewrite(vector::ContractionOp op,
-               PatternRewriter &rewriter) const override;
-
-private:
-  /// Options to control the vector patterns.
-  vector::VectorTransformsOptions vectorTransformsOptions;
+  FilterConstraintType filter;
 };
 
 /// Progressive lowering of ContractionOp.
@@ -221,11 +273,18 @@ private:
 class ContractionOpLowering : public OpRewritePattern<vector::ContractionOp> {
 public:
   using OpRewritePattern<vector::ContractionOp>::OpRewritePattern;
+  using FilterConstraintType =
+      std::function<LogicalResult(vector::ContractionOp op)>;
+
+  static LogicalResult defaultFilter(vector::ContractionOp op) {
+    return success();
+  }
 
   ContractionOpLowering(vector::VectorTransformsOptions vectorTransformsOptions,
-                        MLIRContext *context)
+                        MLIRContext *context,
+                        FilterConstraintType constraint = defaultFilter)
       : OpRewritePattern<vector::ContractionOp>(context),
-        vectorTransformsOptions(vectorTransformsOptions) {}
+        vectorTransformsOptions(vectorTransformsOptions), filter(constraint) {}
 
   LogicalResult matchAndRewrite(vector::ContractionOp op,
                                 PatternRewriter &rewriter) const override;
@@ -233,6 +292,7 @@ public:
 private:
   /// Options to control the vector patterns.
   vector::VectorTransformsOptions vectorTransformsOptions;
+  FilterConstraintType filter;
   // Lower one parallel dimension.
   Value lowerParallel(vector::ContractionOp op, int64_t lhsIndex,
                       int64_t rhsIndex, PatternRewriter &rewriter) const;

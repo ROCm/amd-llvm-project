@@ -278,6 +278,7 @@ void SIFrameLowering::emitEntryFunctionFlatScratchInit(
       return;
     }
 
+    // For GFX9.
     BuildMI(MBB, I, DL, TII->get(AMDGPU::S_ADD_U32), AMDGPU::FLAT_SCR_LO)
       .addReg(FlatScrInitLo)
       .addReg(ScratchWaveOffsetReg);
@@ -288,7 +289,7 @@ void SIFrameLowering::emitEntryFunctionFlatScratchInit(
     return;
   }
 
-  assert(ST.getGeneration() < AMDGPUSubtarget::GFX10);
+  assert(ST.getGeneration() < AMDGPUSubtarget::GFX9);
 
   // Copy the size in bytes.
   BuildMI(MBB, I, DL, TII->get(AMDGPU::COPY), AMDGPU::FLAT_SCR_LO)
@@ -919,6 +920,9 @@ void SIFrameLowering::emitPrologue(MachineFunction &MF,
 
   if (TRI.isCFISavedRegsSpillEnabled()) {
     MCRegister ReturnAddressReg = TRI.getReturnAddressReg(MF);
+    if (!MBB.isLiveIn(ReturnAddressReg))
+      MBB.addLiveIn(ReturnAddressReg);
+
     ArrayRef<SIMachineFunctionInfo::SpilledReg> ReturnAddressSpill =
         FuncInfo->getSGPRToVGPRSpills(FuncInfo->ReturnAddressSaveIndex);
     assert(ReturnAddressSpill.size() == 2);
@@ -1286,7 +1290,7 @@ static void allocateCFISave(MachineFunction &MF, int &FI, Register Reg) {
   const SIRegisterInfo *TRI = ST.getRegisterInfo();
   const TargetRegisterClass *RC = TRI->getMinimalPhysRegClass(Reg);
   int NewFI = MF.getFrameInfo().CreateStackObject(
-      TRI->getSpillSize(*RC), TRI->getSpillAlignment(*RC), true);
+      TRI->getSpillSize(*RC), TRI->getSpillAlign(*RC), true);
   if (!MFI->allocateSGPRSpillToVGPR(MF, NewFI))
     llvm_unreachable("allocate SGPR spill should have worked");
   FI = NewFI;

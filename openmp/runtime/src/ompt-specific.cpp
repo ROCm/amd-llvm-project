@@ -30,7 +30,7 @@
 #define THREAD_LOCAL __thread
 #endif
 
-#define OMPT_WEAK_ATTRIBUTE KMP_WEAK_ATTRIBUTE
+#define OMPT_WEAK_ATTRIBUTE KMP_WEAK_ATTRIBUTE_INTERNAL
 
 //******************************************************************************
 // macros

@@ -9,9 +9,9 @@ add_mlir_dialect_library(MLIRVector
 
   DEPENDS
   MLIRVectorOpsIncGen
-  MLIRVectorTransformPatternsIncGen
 
   LINK_LIBS PUBLIC
+  MLIRAffineEDSC
   MLIREDSC
   MLIRIR
   MLIRStandardOps
@@ -19,5 +19,5 @@ add_mlir_dialect_library(MLIRVector
   MLIRSCF
   MLIRLoopAnalysis
   MLIRSideEffectInterfaces
-  MLIRVectorUnrollInterface
+  MLIRVectorInterfaces
   )

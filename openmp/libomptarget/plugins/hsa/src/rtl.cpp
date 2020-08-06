@@ -39,6 +39,8 @@ extern "C" hsa_status_t hostrpc_terminate();
 
 #include "internal.h"
 
+#include "internal.h"
+
 #include "omptargetplugin.h"
 
 // Get static gpu grid values from clang target-specific constants managed

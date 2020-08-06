@@ -49,7 +49,6 @@ if(${AOMP_STANDALONE_BUILD} STREQUAL "0")
 else()
   message("------------- STANDALONE BUILD ---------------")
   # Assome rocm-device-libs repository is next to amd-llvm-project repository
-  set(ROCDL ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../rocm-device-libs)
   set(ROCDL_INC_OCKL ${ROCDL}/ockl/inc)
   set(ROCDL_INC_OCML ${ROCDL}/ocml/inc)
   set(ROCDL_INC_IRIF ${ROCDL}/irif/inc)
@@ -76,7 +75,6 @@ set(hip_sources
   ${CMAKE_CURRENT_SOURCE_DIR}/src/amdgcn_access_dimensions.hip
   ${CMAKE_CURRENT_SOURCE_DIR}/src/amdgcn_libcall.hip
   ${CMAKE_CURRENT_SOURCE_DIR}/src/amdgcn_locks.hip
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/amdgcn_reduction.hip
   ${CMAKE_CURRENT_SOURCE_DIR}/src/amdgcn_smid.hip
   ${CMAKE_CURRENT_SOURCE_DIR}/src/amdgcn_sync.hip
   ${CMAKE_CURRENT_SOURCE_DIR}/src/target_impl.hip

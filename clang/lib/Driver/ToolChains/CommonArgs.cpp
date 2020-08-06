@@ -365,6 +365,11 @@ std::string tools::getCPUName(const ArgList &Args, const llvm::Triple &T,
 
     return TargetCPUName;
   }
+  case llvm::Triple::riscv32:
+  case llvm::Triple::riscv64:
+    if (const Arg *A = Args.getLastArg(options::OPT_mcpu_EQ))
+      return A->getValue();
+    return "";
 
   case llvm::Triple::bpfel:
   case llvm::Triple::bpfeb:
@@ -852,6 +857,9 @@ bool tools::addSanitizerRuntimes(const ToolChain &TC, const ArgList &Args,
       !Args.hasArg(options::OPT_shared)) {
 
     addSanitizerRuntime(TC, Args, CmdArgs, "fuzzer", false, true);
+    if (SanArgs.needsFuzzerInterceptors())
+      addSanitizerRuntime(TC, Args, CmdArgs, "fuzzer_interceptors", false,
+                          true);
     if (!Args.hasArg(clang::driver::options::OPT_nostdlibxx))
       TC.AddCXXStdlibLibArgs(Args, CmdArgs);
   }
@@ -1618,7 +1626,7 @@ bool tools::SDLSearch(Compilation &C, const Driver &D, const Tool &T,
       UBArgs.push_back(C.getArgs().MakeArgString(OffloadArg.c_str()));
       UBArgs.push_back(C.getArgs().MakeArgString(OutputArg.c_str()));
       C.addCommand(std::make_unique<Command>(
-          JA, T, ResponseFileSupport::AtFileCurCP(), UBProgram, UBArgs, Inputs));
+        JA, T, ResponseFileSupport::AtFileCurCP(), UBProgram, UBArgs, Inputs));
       if (postClangLink)
         CC1Args.push_back("-mlink-builtin-bitcode");
 

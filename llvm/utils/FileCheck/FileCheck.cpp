@@ -140,12 +140,11 @@ enum DumpInputFilterValue {
 static cl::list<DumpInputFilterValue> DumpInputFilters(
     "dump-input-filter",
     cl::desc("In the dump requested by -dump-input, print only input lines of\n"
-             "kind <kind> plus any context specified by -dump-input-context.\n"
-             "When there are multiple occurrences of this option, the <kind>\n"
+             "kind <value> plus any context specified by -dump-input-context.\n"
+             "When there are multiple occurrences of this option, the <value>\n"
              "that appears earliest in the list below has precedence.  The\n"
              "default is 'error' when -dump-input=fail, and it's 'all' when\n"
              "-dump-input=always.\n"),
-    cl::value_desc("kind"),
     cl::values(clEnumValN(DumpInputFilterAll, "all", "All input lines"),
                clEnumValN(DumpInputFilterAnnotationFull, "annotation-full",
                           "Input lines with annotations"),
@@ -226,14 +225,21 @@ static void DumpInputAnnotationHelp(raw_ostream &OS) {
      << "explain the input dump printed by FileCheck.\n"
      << "\n"
      << "Related command-line options:\n"
+     << "\n"
      << "  - -dump-input=<value> enables or disables the input dump\n"
-     << "  - -dump-input-filter=<kind> filters the input lines\n"
+     << "  - -dump-input-filter=<value> filters the input lines\n"
      << "  - -dump-input-context=<N> adjusts the context of filtered lines\n"
      << "  - -v and -vv add more annotations\n"
      << "  - -color forces colors to be enabled both in the dump and below\n"
      << "  - -help documents the above options in more detail\n"
      << "\n"
-     << "Input dump annotation format:\n";
+     << "These options can also be set via FILECHECK_OPTS.  For example, for\n"
+     << "maximum debugging output on failures:\n"
+     << "\n"
+     << "  $ FILECHECK_OPTS='-dump-input-filter=all -vv -color' ninja check\n"
+     << "\n"
+     << "Input dump annotation format:\n"
+     << "\n";
 
   // Labels for input lines.
   OS << "  - ";
@@ -396,6 +402,18 @@ BuildInputAnnotations(const SourceMgr &SM, unsigned CheckFileBufferID,
     LabelWidth = std::max((std::string::size_type)LabelWidth, A.Label.size());
 
     A.Marker = GetMarker(DiagItr->MatchTy);
+    if (!DiagItr->Note.empty()) {
+      A.Marker.Note = DiagItr->Note;
+      // It's less confusing if notes that don't actually have ranges don't have
+      // markers.  For example, a marker for 'with "VAR" equal to "5"' would
+      // seem to indicate where "VAR" matches, but the location we actually have
+      // for the marker simply points to the start of the match/search range for
+      // the full pattern of which the substitution is potentially just one
+      // component.
+      if (DiagItr->InputStartLine == DiagItr->InputEndLine &&
+          DiagItr->InputStartCol == DiagItr->InputEndCol)
+        A.Marker.Lead = ' ';
+    }
     A.FoundAndExpectedMatch =
         DiagItr->MatchTy == FileCheckDiag::MatchFoundAndExpected;
 

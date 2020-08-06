@@ -28,7 +28,7 @@ atmi_machine_t *atmi_machine_get_info() {
 atmi_status_t atmi_module_register_from_memory_to_place(void *module_bytes,
                                                         size_t module_size,
                                                         atmi_place_t place) {
-  return core::Runtime::RegisterModuleFromMemory(
+  return core::Runtime::getInstance().RegisterModuleFromMemory(
       module_bytes, module_size, place);
 }
 

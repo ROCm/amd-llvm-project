@@ -52,6 +52,10 @@ def CC1AsOption : OptionFlag;
 // NoDriverOption - This option should not be accepted by the driver.
 def NoDriverOption : OptionFlag;
 
+// If an option affects linking, but has a primary group (so Link_Group cannot
+// be used), add this flag.
+def LinkOption : OptionFlag;
+
 // A short name to show in documentation. The name will be interpreted as rST.
 class DocName<string name> { string DocName = name; }
 
@@ -395,7 +399,12 @@ def I_ : Flag<["-"], "I-">, Group<I_Group>,
              "remove current directory from include path">;
 def I : JoinedOrSeparate<["-"], "I">, Group<I_Group>,
     Flags<[CC1Option,CC1AsOption]>, MetaVarName<"<dir>">,
-    HelpText<"Add directory to include search path">;
+    HelpText<"Add directory to include search path. If there are multiple -I "
+             "options, these directories are searched in the order they are "
+             "given before the standard system directories are searched. "
+             "If the same directory is in the SYSTEM include search paths, for "
+             "example if also specified with -isystem, the -I option will be "
+             "ignored">;
 def L : JoinedOrSeparate<["-"], "L">, Flags<[RenderJoined]>, Group<Link_Group>,
     MetaVarName<"<dir>">, HelpText<"Add directory to library search path">;
 def MD : Flag<["-"], "MD">, Group<M_Group>,
@@ -579,7 +588,7 @@ def config_system_dir_EQ : Joined<["--"], "config-system-dir=">, Flags<[DriverOp
   HelpText<"System directory for configuration files">;
 def config_user_dir_EQ : Joined<["--"], "config-user-dir=">, Flags<[DriverOption, HelpHidden]>,
   HelpText<"User directory for configuration files">;
-def coverage : Flag<["-", "--"], "coverage">, Flags<[CoreOption]>;
+def coverage : Flag<["-", "--"], "coverage">, Group<Link_Group>, Flags<[CoreOption]>;
 def cpp_precomp : Flag<["-"], "cpp-precomp">, Group<clang_ignored_f_Group>;
 def current__version : JoinedOrSeparate<["-"], "current_version">;
 def cxx_isystem : JoinedOrSeparate<["-"], "cxx-isystem">, Group<clang_i_Group>,
@@ -644,15 +653,19 @@ defm cuda_short_ptr : OptInFFlag<"cuda-short-ptr",
   "Use 32-bit pointers for accessing const/local/shared address spaces">;
 def rocm_path_EQ : Joined<["--"], "rocm-path=">, Group<i_Group>,
   HelpText<"ROCm installation path, used for finding and automatically linking required bitcode libraries.">;
-def hip_device_lib_path_EQ : Joined<["--"], "hip-device-lib-path=">, Group<Link_Group>,
-  HelpText<"HIP device library path. Alternative to rocm-path.">;
+def rocm_device_lib_path_EQ : Joined<["--"], "rocm-device-lib-path=">, Group<Link_Group>,
+  HelpText<"ROCm device library path. Alternative to rocm-path.">;
+def : Joined<["--"], "hip-device-lib-path=">, Alias<rocm_device_lib_path_EQ>;
 def hip_device_lib_EQ : Joined<["--"], "hip-device-lib=">, Group<Link_Group>,
   HelpText<"HIP device library">;
+def hip_version_EQ : Joined<["--"], "hip-version=">,
+  HelpText<"HIP version in the format of major.minor.patch">;
 def fhip_dump_offload_linker_script : Flag<["-"], "fhip-dump-offload-linker-script">,
   Group<f_Group>, Flags<[NoArgumentUnused, HelpHidden]>;
 defm hip_new_launch_api : OptInFFlag<"hip-new-launch-api",
-  "Use new kernel launching API for HIP">;
-defm gpu_allow_device_init : OptInFFlag<"gpu-allow-device-init", "Allow device side init function in HIP">;
+  "Use", "Don't use", " new kernel launching API for HIP">;
+defm gpu_allow_device_init : OptInFFlag<"gpu-allow-device-init",
+  "Allow", "Don't allow", " device side init function in HIP">;
 def gpu_max_threads_per_block_EQ : Joined<["--"], "gpu-max-threads-per-block=">,
   Flags<[CC1Option]>,
   HelpText<"Default max threads per block for kernel launch bounds for HIP">;
@@ -692,7 +705,7 @@ def emit_merged_ifs : Flag<["-"], "emit-merged-ifs">,
   HelpText<"Generate Interface Stub Files, emit merged text not binary.">;
 def interface_stub_version_EQ : JoinedOrSeparate<["-"], "interface-stub-version=">, Flags<[CC1Option]>;
 def exported__symbols__list : Separate<["-"], "exported_symbols_list">;
-def e : JoinedOrSeparate<["-"], "e">, Group<Link_Group>;
+def e : JoinedOrSeparate<["-"], "e">, Flags<[LinkerInput]>, Group<Link_Group>;
 def fmax_tokens_EQ : Joined<["-"], "fmax-tokens=">, Group<f_Group>, Flags<[CC1Option]>,
   HelpText<"Max total number of preprocessed tokens for -Wmax-tokens.">;
 def fPIC : Flag<["-"], "fPIC">, Group<f_Group>;
@@ -1243,7 +1256,7 @@ def finline_functions : Flag<["-"], "finline-functions">, Group<f_clang_Group>, 
 def finline_hint_functions: Flag<["-"], "finline-hint-functions">, Group<f_clang_Group>, Flags<[CC1Option]>,
   HelpText<"Inline functions which are (explicitly or implicitly) marked inline">;
 def finline : Flag<["-"], "finline">, Group<clang_ignored_f_Group>;
-def fglobal_isel : Flag<["-"], "fglobal-isel">, Group<f_clang_Group>, 
+def fglobal_isel : Flag<["-"], "fglobal-isel">, Group<f_clang_Group>,
   HelpText<"Enables the global instruction selector">;
 def fexperimental_isel : Flag<["-"], "fexperimental-isel">, Group<f_clang_Group>,
   Alias<fglobal_isel>;
@@ -1443,6 +1456,10 @@ def fpch_instantiate_templates:
 def fno_pch_instantiate_templates:
   Flag <["-"], "fno-pch-instantiate-templates">,
   Group<f_Group>, Flags<[CC1Option]>;
+defm pch_codegen: OptInFFlag<"pch-codegen", "Generate ", "Do not generate ",
+  "code for uses of this PCH that assumes an explicit object file will be built for the PCH">;
+defm pch_debuginfo: OptInFFlag<"pch-debuginfo", "Generate ", "Do not generate ",
+  "debug info for types in an object file built from this PCH and do not generate them elsewhere">;
 
 def fmodules : Flag <["-"], "fmodules">, Group<f_Group>,
   Flags<[DriverOption, CC1Option]>,
@@ -1746,7 +1763,7 @@ def fpass_plugin_EQ : Joined<["-"], "fpass-plugin=">,
   HelpText<"Load pass plugin from a dynamic shared object file (only with new pass manager).">;
 defm preserve_as_comments : OptOutFFlag<"preserve-as-comments", "",
   "Do not preserve comments in inline assembly">;
-def fprofile_arcs : Flag<["-"], "fprofile-arcs">, Group<f_Group>;
+def fprofile_arcs : Flag<["-"], "fprofile-arcs">, Group<f_Group>, Flags<[LinkOption]>;
 def fno_profile_arcs : Flag<["-"], "fno-profile-arcs">, Group<f_Group>;
 def framework : Separate<["-"], "framework">, Flags<[LinkerInput]>;
 def frandom_seed_EQ : Joined<["-"], "frandom-seed=">, Group<clang_ignored_f_Group>;
@@ -2196,6 +2213,7 @@ def municode : Joined<["-"], "municode">, Group<m_Group>, Flags<[DriverOption]>;
 def mthreads : Joined<["-"], "mthreads">, Group<m_Group>, Flags<[DriverOption]>;
 def mcpu_EQ : Joined<["-"], "mcpu=">, Group<m_Group>;
 def mmcu_EQ : Joined<["-"], "mmcu=">, Group<m_Group>;
+def msim : Flag<["-"], "msim">, Group<m_Group>;
 def mdynamic_no_pic : Joined<["-"], "mdynamic-no-pic">, Group<m_Group>;
 def mfix_and_continue : Flag<["-"], "mfix-and-continue">, Group<clang_ignored_m_Group>;
 def mieee_fp : Flag<["-"], "mieee-fp">, Group<clang_ignored_m_Group>;
@@ -2281,9 +2299,9 @@ def m_seses : Flag<["-"], "mseses">, Group<m_Group>, Flags<[CoreOption, DriverOp
 def mno_seses : Flag<["-"], "mno-seses">, Group<m_Group>, Flags<[CoreOption, DriverOption]>,
   HelpText<"Disable speculative execution side effect suppression (SESES)">;
 
-def mrelax : Flag<["-"], "mrelax">, Group<m_riscv_Features_Group>,
+def mrelax : Flag<["-"], "mrelax">, Group<m_Group>,
   HelpText<"Enable linker relaxation">;
-def mno_relax : Flag<["-"], "mno-relax">, Group<m_riscv_Features_Group>,
+def mno_relax : Flag<["-"], "mno-relax">, Group<m_Group>,
   HelpText<"Disable linker relaxation">;
 def msmall_data_limit_EQ : Joined<["-"], "msmall-data-limit=">, Group<m_Group>,
   Alias<G>,
@@ -2345,6 +2363,12 @@ foreach i = {1-31} in
 foreach i = {8-15,18} in
   def fcall_saved_x#i : Flag<["-"], "fcall-saved-x"#i>, Group<m_aarch64_Features_Group>,
     HelpText<"Make the x"#i#" register call-saved (AArch64 only)">;
+
+def msve_vector_bits_EQ : Joined<["-"], "msve-vector-bits=">,
+  Group<m_aarch64_Features_Group>, Flags<[DriverOption,CC1Option]>,
+  HelpText<"Specify the size in bits of an SVE vector register. Defaults to the"
+           " vector length agnostic value of \"scalable\". (AArch64 only)">,
+  Values<"128,256,512,1024,2048,scalable">;
 
 def msign_return_address_EQ : Joined<["-"], "msign-return-address=">,
   Flags<[CC1Option]>, Group<m_Group>, Values<"none,all,non-leaf">,
@@ -2440,6 +2464,10 @@ def mnopower8_crypto : Flag<["-"], "mno-crypto">,
 def mdirect_move : Flag<["-"], "mdirect-move">,
     Group<m_ppc_Features_Group>;
 def mnodirect_move : Flag<["-"], "mno-direct-move">,
+    Group<m_ppc_Features_Group>;
+def mpaired_vector_memops: Flag<["-"], "mpaired-vector-memops">,
+    Group<m_ppc_Features_Group>;
+def mnopaired_vector_memops: Flag<["-"], "mno-paired-vector-memops">,
     Group<m_ppc_Features_Group>;
 def mhtm : Flag<["-"], "mhtm">, Group<m_ppc_Features_Group>;
 def mno_htm : Flag<["-"], "mno-htm">, Group<m_ppc_Features_Group>;
@@ -2716,7 +2744,7 @@ def nostdinc : Flag<["-"], "nostdinc">, Flags<[CoreOption]>;
 def nostdlibinc : Flag<["-"], "nostdlibinc">;
 def nostdincxx : Flag<["-"], "nostdinc++">, Flags<[CC1Option]>,
   HelpText<"Disable standard #include directories for the C++ standard library">;
-def nostdlib : Flag<["-"], "nostdlib">;
+def nostdlib : Flag<["-"], "nostdlib">, Group<Link_Group>;
 def nostdlibxx : Flag<["-"], "nostdlib++">;
 def object : Flag<["-"], "object">;
 def o : JoinedOrSeparate<["-"], "o">, Flags<[DriverOption, RenderAsInput, CC1Option, CC1AsOption]>,
@@ -2760,15 +2788,15 @@ def pthread : Flag<["-"], "pthread">, Flags<[CC1Option]>,
   HelpText<"Support POSIX threads in generated code">;
 def no_pthread : Flag<["-"], "no-pthread">, Flags<[CC1Option]>;
 def p : Flag<["-"], "p">;
-def pie : Flag<["-"], "pie">;
-def static_pie : Flag<["-"], "static-pie">;
+def pie : Flag<["-"], "pie">, Group<Link_Group>;
+def static_pie : Flag<["-"], "static-pie">, Group<Link_Group>;
 def read__only__relocs : Separate<["-"], "read_only_relocs">;
 def remap : Flag<["-"], "remap">;
 def rewrite_objc : Flag<["-"], "rewrite-objc">, Flags<[DriverOption,CC1Option]>,
   HelpText<"Rewrite Objective-C source to C++">, Group<Action_Group>;
 def rewrite_legacy_objc : Flag<["-"], "rewrite-legacy-objc">, Flags<[DriverOption]>,
   HelpText<"Rewrite Legacy Objective-C source to C++">;
-def rdynamic : Flag<["-"], "rdynamic">;
+def rdynamic : Flag<["-"], "rdynamic">, Group<Link_Group>;
 def resource_dir : Separate<["-"], "resource-dir">,
   Flags<[DriverOption, CC1Option, CoreOption, HelpHidden]>,
   HelpText<"The directory which holds the compiler resource files">;
@@ -2810,13 +2838,13 @@ def segs__read__only__addr : Separate<["-"], "segs_read_only_addr">;
 def segs__read__write__addr : Separate<["-"], "segs_read_write_addr">;
 def segs__read__ : Joined<["-"], "segs_read_">;
 def shared_libgcc : Flag<["-"], "shared-libgcc">;
-def shared : Flag<["-", "--"], "shared">;
+def shared : Flag<["-", "--"], "shared">, Group<Link_Group>;
 def single__module : Flag<["-"], "single_module">;
 def specs_EQ : Joined<["-", "--"], "specs=">;
 def specs : Separate<["-", "--"], "specs">, Flags<[Unsupported]>;
 def static_libgcc : Flag<["-"], "static-libgcc">;
 def static_libstdcxx : Flag<["-"], "static-libstdc++">;
-def static : Flag<["-", "--"], "static">, Flags<[NoArgumentUnused]>;
+def static : Flag<["-", "--"], "static">, Group<Link_Group>, Flags<[NoArgumentUnused]>;
 def std_default_EQ : Joined<["-"], "std-default=">;
 def std_EQ : Joined<["-", "--"], "std=">, Flags<[CC1Option]>,
   Group<CompileOnly_Group>, HelpText<"Language standard to compile for">,
@@ -3275,7 +3303,8 @@ defm : BooleanFFlag<"keep-inline-functions">, Group<clang_ignored_gcc_optimizati
 
 def fprofile_dir : Joined<["-"], "fprofile-dir=">, Group<f_Group>;
 
-def fuse_ld_EQ : Joined<["-"], "fuse-ld=">, Group<f_Group>, Flags<[CoreOption]>;
+def fuse_ld_EQ : Joined<["-"], "fuse-ld=">, Group<f_Group>, Flags<[CoreOption, LinkOption]>;
+def ld_path_EQ : Joined<["--"], "ld-path=">, Group<Link_Group>;
 
 defm align_labels : BooleanFFlag<"align-labels">, Group<clang_ignored_gcc_optimization_f_Group>;
 def falign_labels_EQ : Joined<["-"], "falign-labels=">, Group<clang_ignored_gcc_optimization_f_Group>;
@@ -4806,6 +4835,7 @@ def _SLASH_FI : CLJoinedOrSeparate<"FI">,
 def _SLASH_Fe : CLJoined<"Fe">,
   HelpText<"Set output executable file name">,
   MetaVarName<"<file or dir/>">;
+def _SLASH_Fe_COLON : CLJoined<"Fe:">, Alias<_SLASH_Fe>;
 def _SLASH_Fi : CLCompileJoined<"Fi">,
   HelpText<"Set preprocess output file name (with /P)">,
   MetaVarName<"<file>">;

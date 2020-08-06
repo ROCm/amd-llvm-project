@@ -531,6 +531,12 @@ const R600Subtarget *R600TargetMachine::getSubtargetImpl(
   return I.get();
 }
 
+bool AMDGPUTargetMachine::isNoopAddrSpaceCast(unsigned SrcAS,
+                                              unsigned DestAS) const {
+  return AMDGPU::isFlatGlobalAddrSpace(SrcAS) &&
+         AMDGPU::isFlatGlobalAddrSpace(DestAS);
+}
+
 TargetTransformInfo
 R600TargetMachine::getTargetTransformInfo(const Function &F) {
   return TargetTransformInfo(R600TTIImpl(this, F));
@@ -794,10 +800,15 @@ void AMDGPUPassConfig::addCodeGenPrepare() {
 
   if (EnableLoadStoreVectorizer)
     addPass(createLoadStoreVectorizerPass());
+
+  // LowerSwitch pass may introduce unreachable blocks that can
+  // cause unexpected behavior for subsequent passes. Placing it
+  // here seems better that these blocks would get cleaned up by
+  // UnreachableBlockElim inserted next in the pass flow.
+  addPass(createLowerSwitchPass());
 }
 
 bool AMDGPUPassConfig::addPreISel() {
-  addPass(createLowerSwitchPass());
   addPass(createFlattenCFGPass());
   return false;
 }
