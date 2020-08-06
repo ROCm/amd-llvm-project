@@ -1208,18 +1208,7 @@ Compilation *Driver::BuildCompilation(ArrayRef<const char *> ArgList) {
   }
 
   BuildJobs(*C);
-#if 0
-  PrintActions(*C);
-  printf("\n=========================> LOOP PRINT OF JOBS\n");
-  const driver::JobList &Jobs = C->getJobs();
-  for(const driver::Command &Cmd : Jobs) {
-     printf("\nCMD for action %s arch:%s\n",
-        Cmd.getSource().getClassName(),
-        Cmd.getSource().getOffloadingArch());
-     Cmd.Print(llvm::errs(),"\n",true);
-  }
-  printf("=========================> END PRINT OF JOBS\n\n");
-#endif
+
   return C;
 }
 
@@ -1341,10 +1330,6 @@ void Driver::generateCompilationDiagnostics(
 
   // Print the version of the compiler.
   PrintVersion(C, llvm::errs());
-
-  Diag(clang::diag::note_drv_command_failed_diag_msg)
-      << "PLEASE open a git issue at " BUG_REPORT_URL " with a detailed"
-         " description of this problem.";
 
   // Suppress driver output and emit preprocessor output to temp file.
   Mode = CPPMode;
@@ -2474,7 +2459,7 @@ class OffloadingActionBuilder final {
                "We should have at least one GPU architecture.");
 
         // If the host input is not CUDA or HIP, we don't need to bother about
-        // this input. CUDA and HIP are allowed in cpp and c files.
+        // this input.
         if (IA->getType() != types::TY_CUDA &&
             IA->getType() != types::TY_HIP) {
           // The builder will ignore this input.
@@ -4662,7 +4647,7 @@ InputInfo Driver::BuildJobsForActionNoCache(
           NewBI += FinalOutput->getValue();
         else
           NewBI += getDefaultImageName();
-        BaseInput = strdup(NewBI.c_str()); 
+        BaseInput = NewBI.c_str(); 
       } else {
         OffloadingPrefix += "-wrapper";
         if (Arg *FinalOutput = C.getArgs().getLastArg(options::OPT_o))
