@@ -560,6 +560,31 @@ int32_t dataSubmit(int32_t DeviceId, void *TgtPtr, void *HstPtr, int64_t Size,
   }
   return OFFLOAD_SUCCESS;
 }
+
+// Async.
+// The implementation was written with cuda streams in mind. The semantics of
+// that are to execute kernels on a queue in order of insertion. A synchronise
+// call then makes writes visible between host and device. This means a series
+// of N data_submit_async calls are expected to execute serially. HSA offers various options to run the data copies concurrently. This may require changes to libomptarget.
+
+// __tgt_async_info* contains a void * Queue. Queue = 0 is used to indicate that
+// there are no outstanding kernels that need to be synchronized. Any async call
+// may be passed a Queue==0, at which point the cuda implementation will set it
+// to non-null (see getStream). The cuda streams are per-device. Upstream may
+// change this interface to explicitly initialize the async_info_pointer, but
+// until then hsa lazily initializes it as well.
+
+void initAsyncInfoPtr(__tgt_async_info *async_info_ptr) {
+  // set non-null while using async calls, return to null to indicate completion
+  assert(async_info_ptr);
+  assert(!async_info_ptr->Queue);
+  async_info_ptr->Queue = reinterpret_cast<void *>(UINT64_MAX);
+}
+void finiAsyncInfoPtr(__tgt_async_info *async_info_ptr) {
+  assert(async_info_ptr);
+  assert(async_info_ptr->Queue);
+  async_info_ptr->Queue = 0;
+}
 } // namespace
 
 int32_t __tgt_rtl_is_valid_binary(__tgt_device_image *image) {
@@ -1187,6 +1212,7 @@ void *__tgt_rtl_data_alloc(int device_id, int64_t size, void *) {
 
 int32_t __tgt_rtl_data_submit(int device_id, void *tgt_ptr, void *hst_ptr,
                               int64_t size) {
+  assert(device_id < DeviceInfo.NumberOfDevices && "Device ID too large");
   __tgt_async_info async_info;
   int32_t rc = dataSubmit(device_id, tgt_ptr, hst_ptr, size, &async_info);
   if (rc != OFFLOAD_SUCCESS)
@@ -1198,21 +1224,18 @@ int32_t __tgt_rtl_data_submit(int device_id, void *tgt_ptr, void *hst_ptr,
 int32_t __tgt_rtl_data_submit_async(int device_id, void *tgt_ptr, void *hst_ptr,
                                     int64_t size,
                                     __tgt_async_info *async_info_ptr) {
-  if (async_info_ptr)
+  assert(device_id < DeviceInfo.NumberOfDevices && "Device ID too large");
+  if (async_info_ptr) {
+    initAsyncInfoPtr(async_info_ptr);
     return dataSubmit(device_id, tgt_ptr, hst_ptr, size, async_info_ptr);
-
-  __tgt_async_info async_info;
-  int32_t rc = dataSubmit(device_id, tgt_ptr, hst_ptr, size, &async_info);
-  if (rc != OFFLOAD_SUCCESS)
-    return OFFLOAD_FAIL;
-
-  return __tgt_rtl_synchronize(device_id, &async_info);
+  } else {
+    return __tgt_rtl_data_submit(device_id, tgt_ptr, hst_ptr, size);
+  }
 }
 
 int32_t __tgt_rtl_data_retrieve(int device_id, void *hst_ptr, void *tgt_ptr,
                                 int64_t size) {
   assert(device_id < DeviceInfo.NumberOfDevices && "Device ID too large");
-
   __tgt_async_info async_info;
   int32_t rc = dataRetrieve(device_id, hst_ptr, tgt_ptr, size, &async_info);
   if (rc != OFFLOAD_SUCCESS)
@@ -1224,16 +1247,10 @@ int32_t __tgt_rtl_data_retrieve(int device_id, void *hst_ptr, void *tgt_ptr,
 int32_t __tgt_rtl_data_retrieve_async(int device_id, void *hst_ptr,
                                       void *tgt_ptr, int64_t size,
                                       __tgt_async_info *async_info_ptr) {
+  assert(async_info_ptr && "async_info is nullptr");
   assert(device_id < DeviceInfo.NumberOfDevices && "Device ID too large");
-  if (async_info_ptr)
-    return dataRetrieve(device_id, hst_ptr, tgt_ptr, size, async_info_ptr);
-
-  __tgt_async_info async_info;
-  int32_t rc = dataRetrieve(device_id, hst_ptr, tgt_ptr, size, &async_info);
-  if (rc != OFFLOAD_SUCCESS)
-    return OFFLOAD_FAIL;
-
-  return __tgt_rtl_synchronize(device_id, &async_info);
+  initAsyncInfoPtr(async_info_ptr);
+  return dataRetrieve(device_id, hst_ptr, tgt_ptr, size, async_info_ptr);
 }
 
 int32_t __tgt_rtl_data_delete(int device_id, void *tgt_ptr) {
@@ -1630,7 +1647,10 @@ int32_t __tgt_rtl_run_target_region_async(int32_t device_id,
                                           void *tgt_entry_ptr, void **tgt_args,
                                           ptrdiff_t *tgt_offsets,
                                           int32_t arg_num,
-                                          __tgt_async_info *async_info) {
+                                          __tgt_async_info *async_info_ptr) {
+  assert(async_info_ptr && "async_info is nullptr");
+  initAsyncInfoPtr(async_info_ptr);
+
   // use one team and one thread
   // fix thread num
   int32_t team_num = 1;
@@ -1640,7 +1660,10 @@ int32_t __tgt_rtl_run_target_region_async(int32_t device_id,
                                           thread_limit, 0);
 }
 
-int32_t __tgt_rtl_synchronize(int32_t device_id, __tgt_async_info *async_info) {
-  assert(async_info && "async_info is nullptr");
+int32_t __tgt_rtl_synchronize(int32_t device_id,
+                              __tgt_async_info *async_info_ptr) {
+  assert(async_info_ptr && "async_info is nullptr");
+  assert(async_info_ptr->Queue && "async_info_ptr->Queue is nullptr");
+  finiAsyncInfoPtr(async_info_ptr);
   return OFFLOAD_SUCCESS;
 }
