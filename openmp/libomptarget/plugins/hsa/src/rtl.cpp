@@ -1664,7 +1664,12 @@ int32_t __tgt_rtl_run_target_region_async(int32_t device_id,
 int32_t __tgt_rtl_synchronize(int32_t device_id,
                               __tgt_async_info *async_info_ptr) {
   assert(async_info_ptr && "async_info is nullptr");
-  assert(async_info_ptr->Queue && "async_info_ptr->Queue is nullptr");
-  finiAsyncInfoPtr(async_info_ptr);
+
+  // Cuda asserts that async_info_ptr->Queue is non-null, but this invariant
+  // is not ensured by devices.cpp for amdgcn
+  // assert(async_info_ptr->Queue && "async_info_ptr->Queue is nullptr");
+  if (async_info_ptr->Queue) {
+    finiAsyncInfoPtr(async_info_ptr);
+  }
   return OFFLOAD_SUCCESS;
 }
