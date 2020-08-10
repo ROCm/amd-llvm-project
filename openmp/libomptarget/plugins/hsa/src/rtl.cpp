@@ -577,8 +577,9 @@ int32_t dataSubmit(int32_t DeviceId, void *TgtPtr, void *HstPtr, int64_t Size,
 void initAsyncInfoPtr(__tgt_async_info *async_info_ptr) {
   // set non-null while using async calls, return to null to indicate completion
   assert(async_info_ptr);
-  assert(!async_info_ptr->Queue);
-  async_info_ptr->Queue = reinterpret_cast<void *>(UINT64_MAX);
+  if (!async_info_ptr->Queue) {
+    async_info_ptr->Queue = reinterpret_cast<void *>(UINT64_MAX);
+  }
 }
 void finiAsyncInfoPtr(__tgt_async_info *async_info_ptr) {
   assert(async_info_ptr);
