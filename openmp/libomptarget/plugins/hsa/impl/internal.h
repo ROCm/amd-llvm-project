@@ -122,33 +122,60 @@ class Kernel;
 class KernelImpl;
 }  // namespace core
 
-
-extern std::queue<core::TaskImpl *> ReadyTaskQueue;
-
 struct SignalPoolT {
-  SignalPoolT() = default;
+  SignalPoolT() {
+    // If no signals are created, and none can be created later,
+    // will ultimately fail at pop()
+
+    unsigned N = 1024; // default max pool size from atmi
+    for (unsigned i = 0; i < N; i++) {
+      hsa_signal_t new_signal;
+      hsa_status_t err = hsa_signal_create(0, 0, NULL, &new_signal);
+      if (err != HSA_STATUS_SUCCESS) {
+        break;
+      }
+      state.push(new_signal);
+    }
+    DEBUG_PRINT("Signal Pool Initial Size: %lu\n", state.size());
+  }
   SignalPoolT(const SignalPoolT &) = delete;
   SignalPoolT(SignalPoolT &&) = delete;
-
+  ~SignalPoolT() {
+    size_t N = state.size();
+    for (size_t i = 0; i < N; i++) {
+      hsa_signal_t signal = state.front();
+      state.pop();
+      hsa_status_t rc = hsa_signal_destroy(signal);
+      if (rc != HSA_STATUS_SUCCESS) {
+        DEBUG_PRINT("Signal pool destruction failed\n");
+      }
+    }
+  }
   size_t size() {
     lock l(&mutex);
     return state.size();
-  }
-  bool empty() {
-    lock l(&mutex);
-    return state.empty();
   }
   void push(hsa_signal_t s) {
     lock l(&mutex);
     state.push(s);
   }
-  hsa_signal_t front() {
+  hsa_signal_t pop(void) {
     lock l(&mutex);
-    return state.front();
-  }
-  void pop(void) {
-    lock l(&mutex);
-    state.pop();
+    if (!state.empty()) {
+      hsa_signal_t res = state.front();
+      state.pop();
+      return res;
+    }
+
+    // Pool empty, attempt to create another signal
+    hsa_signal_t new_signal;
+    hsa_status_t err = hsa_signal_create(0, 0, NULL, &new_signal);
+    if (err == HSA_STATUS_SUCCESS) {
+      return new_signal;
+    }
+
+    // Fail
+    return {0};
   }
 
 private:
@@ -160,8 +187,6 @@ private:
     pthread_mutex_t *m;
   };
 };
-
-extern SignalPoolT FreeSignalPool;
 
 extern std::vector<hsa_amd_memory_pool_t> atl_gpu_kernarg_pools;
 

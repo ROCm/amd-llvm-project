@@ -326,6 +326,9 @@ public:
   // OpenMP Requires Flags
   int64_t RequiresFlags;
 
+  // Resource pools
+  SignalPoolT FreeSignalPool;
+
   static const int HardTeamLimit = 1 << 20; // 1 Meg
   static const int DefaultNumTeams = 128;
   static const int Max_Teams =
@@ -505,6 +508,9 @@ public:
     atmi_finalize();
   }
 };
+
+
+pthread_mutex_t SignalPoolT::mutex = PTHREAD_MUTEX_INITIALIZER;
 
 #include "../../../src/device_env_struct.h"
 
@@ -1437,8 +1443,6 @@ int32_t __tgt_rtl_run_target_team_region(int32_t device_id, void *tgt_entry_ptr,
   // update thread limit content in gpu memory if un-initialized or specified
   // from host
 
-  static pthread_mutex_t run_target_team_region_mutex = PTHREAD_MUTEX_INITIALIZER;
-
   DP("Run target team region thread_limit %d\n", thread_limit);
 
   // All args are references.
@@ -1572,17 +1576,13 @@ int32_t __tgt_rtl_run_target_team_region(int32_t device_id, void *tgt_entry_ptr,
     }
 
     {
-      pthread_mutex_lock(&run_target_team_region_mutex);
-      if (FreeSignalPool.empty()) {
-        // could add to the pool, but atmi doesn't do so
+      hsa_signal_t s = DeviceInfo.FreeSignalPool.pop();
+      if (s.handle == 0) {
         printf("Failed to get signal instance\n");
-        pthread_mutex_unlock(&run_target_team_region_mutex);
         exit(1);
       }
-      packet->completion_signal = FreeSignalPool.front();
+      packet->completion_signal = s;
       hsa_signal_store_relaxed(packet->completion_signal, 1);
-      FreeSignalPool.pop();
-      pthread_mutex_unlock(&run_target_team_region_mutex);
     }
 
     core::packet_store_release(
@@ -1600,7 +1600,7 @@ int32_t __tgt_rtl_run_target_team_region(int32_t device_id, void *tgt_entry_ptr,
 
     assert(ArgPool);
     ArgPool->deallocate(packet->kernarg_address);
-    FreeSignalPool.push(packet->completion_signal);
+    DeviceInfo.FreeSignalPool.push(packet->completion_signal);
   }
 
   DP("Kernel completed\n");
