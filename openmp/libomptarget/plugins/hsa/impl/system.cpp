@@ -151,9 +151,6 @@ std::map<std::string, std::string> KernelNameMap;
 std::vector<std::map<std::string, atl_kernel_info_t> > KernelInfoTable;
 std::vector<std::map<std::string, atl_symbol_info_t> > SymbolInfoTable;
 
-SignalPoolT FreeSignalPool;
-pthread_mutex_t SignalPoolT::mutex = PTHREAD_MUTEX_INITIALIZER;
-
 bool g_atmi_initialized = false;
 bool g_atmi_hostcall_required = false;
 
@@ -561,16 +558,8 @@ void init_tasks() {
     ATLGPUProcessor &proc = get_processor<ATLGPUProcessor>(place);
     gpu_agents.push_back(proc.agent());
   }
-  int max_signals = core::Runtime::getInstance().getMaxSignals();
-  for (task_num = 0; task_num < max_signals; task_num++) {
-    hsa_signal_t new_signal;
-    err = hsa_signal_create(0, 0, NULL, &new_signal);
-    ErrorCheck(Creating a HSA signal, err);
-    FreeSignalPool.push(new_signal);
-  }
   err = hsa_signal_create(0, 0, NULL, &IdentityCopySignal);
   ErrorCheck(Creating a HSA signal, err);
-  DEBUG_PRINT("Signal Pool Size: %lu\n", FreeSignalPool.size());
   atlc.g_tasks_initialized = true;
 }
 
