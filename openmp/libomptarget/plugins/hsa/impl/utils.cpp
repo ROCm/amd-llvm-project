@@ -96,17 +96,13 @@ namespace core {
 void Environment::GetEnvAll() {
   std::string var = GetEnv("ATMI_HELP");
   if (!var.empty()) {
-    std::cout << "ATMI_MAX_HSA_SIGNALS : positive integer" << std::endl
-              << "ATMI_MAX_HSA_QUEUE_SIZE : positive integer" << std::endl
+    std::cout << "ATMI_MAX_HSA_QUEUE_SIZE : positive integer" << std::endl
               << "ATMI_MAX_KERNEL_TYPES : positive integer" << std::endl
               << "ATMI_DEVICE_GPU_WORKERS : positive integer" << std::endl
               << "ATMI_DEVICE_CPU_WORKERS : positive integer" << std::endl
               << "ATMI_DEBUG : 1 for printing out trace/debug info" << std::endl;
     exit(0);
   }
-
-  var = GetEnv("ATMI_MAX_HSA_SIGNALS");
-  if (!var.empty()) max_signals_ = std::stoi(var);
 
   var = GetEnv("ATMI_MAX_HSA_QUEUE_SIZE");
   if (!var.empty()) max_queue_size_ = std::stoi(var);
