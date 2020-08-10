@@ -13,7 +13,6 @@
 
 namespace core {
 
-#define DEFAULT_MAX_SIGNALS 1024
 #define DEFAULT_MAX_QUEUE_SIZE 4096
 #define DEFAULT_MAX_KERNEL_TYPES 32
 #define DEFAULT_NUM_GPU_QUEUES -1  // computed in code
@@ -22,8 +21,7 @@ namespace core {
 class Environment {
  public:
   Environment()
-      : max_signals_(DEFAULT_MAX_SIGNALS),
-        max_queue_size_(DEFAULT_MAX_QUEUE_SIZE),
+      : max_queue_size_(DEFAULT_MAX_QUEUE_SIZE),
         max_kernel_types_(DEFAULT_MAX_KERNEL_TYPES),
         num_gpu_queues_(DEFAULT_NUM_GPU_QUEUES),
         num_cpu_queues_(DEFAULT_NUM_CPU_QUEUES),
@@ -35,7 +33,6 @@ class Environment {
 
   void GetEnvAll();
 
-  int getMaxSignals() const { return max_signals_; }
   int getMaxQueueSize() const { return max_queue_size_; }
   int getMaxKernelTypes() const { return max_kernel_types_; }
   int getNumGPUQueues() const { return num_gpu_queues_; }
@@ -54,7 +51,6 @@ class Environment {
     return ret;
   }
 
-  int max_signals_;
   int max_queue_size_;
   int max_kernel_types_;
   int num_gpu_queues_;
@@ -84,7 +80,6 @@ class Runtime final {
   static atmi_status_t Malloc(void **, size_t, atmi_mem_place_t);
 
   // environment variables
-  int getMaxSignals() const { return env_.getMaxSignals(); }
   int getMaxQueueSize() const { return env_.getMaxQueueSize(); }
   int getMaxKernelTypes() const { return env_.getMaxKernelTypes(); }
   int getNumGPUQueues() const { return env_.getNumGPUQueues(); }
