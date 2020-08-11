@@ -63,14 +63,11 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "(ppc64le)|(aarch64)$")
 endif()
 
 if(CMAKE_BUILD_TYPE MATCHES Debug)
-  add_definitions(-DHSA_ERROR_REPORT)
   add_definitions(-DDEBUG)
 endif()
 
 include_directories(
   ${LIBOMPTARGET_DEP_LIBHSA_INCLUDE_DIRS}
-  ${CLANG_INCLUDE_DIRS}
-  ${LLVM_INCLUDE_DIRS}
   ${CMAKE_CURRENT_SOURCE_DIR}/impl
 )
 
@@ -89,8 +86,10 @@ add_library(omptarget.rtl.hsa SHARED
 # When we build for debug, OPENMP_LIBDIR_SUFFIX get set to -debug
 install(TARGETS omptarget.rtl.hsa LIBRARY DESTINATION "lib${OPENMP_LIBDIR_SUFFIX}")
 
-# We need the AOMP specific build of ATMI that has HSA_INTEROP turned on. 
-# Also, the AOMP specific build of ATMI has seperate release and debug builds. 
+
+libomptarget_say("Prev rpath: ${LLVM_LIBDIR}${OPENMP_LIBDIR_SUFFIX}")
+libomptarget_say("Prop rpath: ${OPENMP_INSTALL_LIBDIR}")
+
 target_link_libraries(
   omptarget.rtl.hsa
   hostrpc_services
