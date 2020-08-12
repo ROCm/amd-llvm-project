@@ -5400,12 +5400,7 @@ static CudaArch getCudaArch(CodeGenModule &CGM) {
     return CudaArch::UNKNOWN;
   if (CGM.getTriple().isAMDGCN())
     return StringToCudaArch(CGM.getTarget().getTargetOpts().CPU);
-  // FIXME: Can we always just regurn StringToCudaArch(...CPU) here?
-  llvm::StringMap<bool> Features;
-  CGM.getTarget().initFeatureMap(Features, CGM.getDiags(),
-                                 CGM.getTarget().getTargetOpts().CPU,
-                                 CGM.getTarget().getTargetOpts().Features);
-  for (const auto &Feature : Features) {
+  for (const auto &Feature : CGM.getTarget().getTargetOpts().FeatureMap) {
     if (Feature.getValue()) {
       CudaArch Arch = StringToCudaArch(Feature.getKey());
       if (Arch != CudaArch::UNKNOWN)
