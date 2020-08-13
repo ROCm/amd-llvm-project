@@ -1583,15 +1583,11 @@ bool tools::GetSDLFromAOB(Compilation &C, const Driver &D, const Tool &T,
 
     if (FoundAOB) {
       std::string Err;
-      llvm::SmallString<128> TmpDirString;
-      llvm::sys::path::system_temp_directory(true, TmpDirString);
-      std::string TmpDir(TmpDirString.str());
-
-      std::string OutputLib = isBitCodeSDL
-                                  ? TmpDir + "/libbc-" + libname + "-" +
-                                        archname + "-" + gpuname + ".a"
-                                  : TmpDir + "/lib" + libname + "-" + archname +
-                                        "-" + gpuname + ".a";
+      std::string OutputLib = D.GetTemporaryPath(
+          isBitCodeSDL
+              ? "libbc-" + libname + "-" + archname + "-" + gpuname
+              : "lib" + libname + "-" + archname + "-" + gpuname,
+          "a");
 
       C.addTempFile(C.getArgs().MakeArgString(OutputLib.c_str()));
 
