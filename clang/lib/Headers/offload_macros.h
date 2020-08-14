@@ -102,6 +102,8 @@
     #define _DEVICE_GPU 9040
   #elif defined(__gfx906__)
     #define _DEVICE_GPU 9060
+  #elif defined(__gfx908__)
+    #define _DEVICE_GPU 9080
   #elif defined(__gfx909__)
     #define _DEVICE_GPU 9090
   #elif defined(__gfx1010__)
