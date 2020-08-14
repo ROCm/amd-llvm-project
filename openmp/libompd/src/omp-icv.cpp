@@ -17,7 +17,7 @@
     macro (tool_libraries_var, "tool-libraries-var", ompd_scope_address_space, 0)                  \
     macro (levels_var, "levels-var", ompd_scope_parallel, 1)                   \
     macro (active_levels_var, "active-levels-var", ompd_scope_parallel, 0)     \
-    macro (thread_limit_var, "thread-limit-var", ompd_scope_address_space, 0)  \
+    macro (thread_limit_var, "thread-limit-var", ompd_scope_task, 0)           \
     macro (max_active_levels_var, "max-active-levels-var", ompd_scope_task, 0) \
     macro (bind_var, "bind-var", ompd_scope_task, 0)                           \
     macro (num_procs_var, "ompd-num-procs-var", ompd_scope_address_space, 0)   \
@@ -606,24 +606,27 @@ ompd_get_num_procs(ompd_address_space_handle_t
 }
 
 static ompd_rc_t
-ompd_get_thread_limit(ompd_address_space_handle_t
-                          *addr_handle, /* IN: handle for the address space */
-                      ompd_word_t *val  /* OUT: max number of threads */
-                      ) {
-  if (!addr_handle)
+ompd_get_thread_limit(
+    ompd_task_handle_t *task_handle, /* IN: OpenMP task handle*/
+    ompd_word_t *val                 /* OUT: max number of threads */
+    ) {
+  if (!task_handle->ah)
     return ompd_rc_stale_handle;
-  ompd_address_space_context_t *context = addr_handle->context;
-  ompd_rc_t ret;
-
+  ompd_address_space_context_t *context = task_handle->ah->context;
   if (!context)
     return ompd_rc_stale_handle;
 
   assert(callbacks && "Callback table not initialized!");
 
-  int nth;
-  ret =
-      TValue(context, "__kmp_max_nth").castBase("__kmp_max_nth").getValue(nth);
-  *val = nth;
+  ompd_rc_t ret =
+      TValue(context, task_handle->th)
+          .cast("kmp_taskdata_t") // td
+          .access("td_icvs")      // td->td_icvs
+          .cast("kmp_internal_control_t", 0)
+          .access("thread_limit") // td->td_icvs.thread_limit
+          .castBase()
+          .getValue(*val);
+
   return ret;
 }
 
@@ -897,7 +900,7 @@ ompd_rc_t ompd_get_icv_from_scope(void *handle, ompd_scope_t scope,
       case ompd_icv_active_levels_var:
         return ompd_get_active_level((ompd_parallel_handle_t *)handle, icv_value);
       case ompd_icv_thread_limit_var:
-        return ompd_get_thread_limit((ompd_address_space_handle_t*)handle, icv_value);
+        return ompd_get_thread_limit((ompd_task_handle_t*)handle, icv_value);
       case ompd_icv_max_active_levels_var:
         return ompd_get_max_active_levels((ompd_task_handle_t*)handle, icv_value);
       case ompd_icv_bind_var:
