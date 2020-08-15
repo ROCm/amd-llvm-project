@@ -14,29 +14,19 @@
 namespace core {
 
 #define DEFAULT_MAX_QUEUE_SIZE 4096
-#define DEFAULT_MAX_KERNEL_TYPES 32
-#define DEFAULT_NUM_GPU_QUEUES -1  // computed in code
-#define DEFAULT_NUM_CPU_QUEUES -1  // computed in code
 #define DEFAULT_DEBUG_MODE 0
 class Environment {
  public:
   Environment()
       : max_queue_size_(DEFAULT_MAX_QUEUE_SIZE),
-        max_kernel_types_(DEFAULT_MAX_KERNEL_TYPES),
-        num_gpu_queues_(DEFAULT_NUM_GPU_QUEUES),
-        num_cpu_queues_(DEFAULT_NUM_CPU_QUEUES),
         debug_mode_(DEFAULT_DEBUG_MODE) {
     GetEnvAll();
   }
 
-  ~Environment() {}
-
   void GetEnvAll();
 
   int getMaxQueueSize() const { return max_queue_size_; }
-  int getMaxKernelTypes() const { return max_kernel_types_; }
-  int getNumGPUQueues() const { return num_gpu_queues_; }
-  int getNumCPUQueues() const { return num_cpu_queues_; }
+
   // TODO(ashwinma): int may change to enum if we have more debug modes
   int getDebugMode() const { return debug_mode_; }
   // TODO(ashwinma): int may change to enum if we have more profile modes
@@ -52,9 +42,6 @@ class Environment {
   }
 
   int max_queue_size_;
-  int max_kernel_types_;
-  int num_gpu_queues_;
-  int num_cpu_queues_;
   int debug_mode_;
 };
 
@@ -80,9 +67,7 @@ class Runtime final {
 
   // environment variables
   int getMaxQueueSize() const { return env_.getMaxQueueSize(); }
-  int getMaxKernelTypes() const { return env_.getMaxKernelTypes(); }
-  int getNumGPUQueues() const { return env_.getNumGPUQueues(); }
-  int getNumCPUQueues() const { return env_.getNumCPUQueues(); }
+
   // TODO(ashwinma): int may change to enum if we have more debug modes
   int getDebugMode() const { return env_.getDebugMode(); }
 
