@@ -168,8 +168,6 @@ int context_init_time_init = 0;
 atl_context_t atlc = {.struct_initialized = false};
 atl_context_t *atlc_p = NULL;
 
-hsa_signal_t IdentityCopySignal;
-
 namespace core {
 /* Machine Info */
 atmi_machine_t *Runtime::GetMachineInfo() {
@@ -537,7 +535,6 @@ hsa_status_t init_hsa() {
 
 void init_tasks() {
   if (atlc.g_tasks_initialized != false) return;
-  hsa_status_t err;
   std::vector<hsa_agent_t> gpu_agents;
   int gpu_count = g_atl_machine.processorCount<ATLGPUProcessor>();
   for (int gpu = 0; gpu < gpu_count; gpu++) {
@@ -545,8 +542,6 @@ void init_tasks() {
     ATLGPUProcessor &proc = get_processor<ATLGPUProcessor>(place);
     gpu_agents.push_back(proc.agent());
   }
-  err = hsa_signal_create(0, 0, NULL, &IdentityCopySignal);
-  ErrorCheck(Creating a HSA signal, err);
   atlc.g_tasks_initialized = true;
 }
 

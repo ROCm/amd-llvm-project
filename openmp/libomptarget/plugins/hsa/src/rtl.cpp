@@ -340,6 +340,16 @@ public:
   static const int Default_WG_Size =
       llvm::omp::AMDGPUGpuGridValues[llvm::omp::GVIDX::GV_Default_WG_Size];
 
+  atmi_status_t freesignalpool_memcpy(void *dest, const void *src, size_t size) {
+    hsa_signal_t s = FreeSignalPool.pop();
+    if (s.handle == 0) {
+      return ATMI_STATUS_ERROR;
+    }
+    atmi_status_t r = atmi_memcpy(s, dest, src, size);
+    FreeSignalPool.push(s);
+    return r;
+  }
+
   // Record entry point associated with device
   void addOffloadEntry(int32_t device_id, __tgt_offload_entry entry) {
     assert(device_id < (int32_t)FuncGblEntries.size() &&
@@ -529,7 +539,9 @@ int32_t dataRetrieve(int32_t DeviceId, void *HstPtr, void *TgtPtr, int64_t Size,
   DP("Retrieve data %ld bytes, (tgt:%016llx) -> (hst:%016llx).\n", Size,
      (long long unsigned)(Elf64_Addr)TgtPtr,
      (long long unsigned)(Elf64_Addr)HstPtr);
-  err = atmi_memcpy(HstPtr, TgtPtr, (size_t)Size);
+
+  err = DeviceInfo.freesignalpool_memcpy(HstPtr, TgtPtr, (size_t)Size);
+
   if (err != ATMI_STATUS_SUCCESS) {
     DP("Error when copying data from device to host. Pointers: "
        "host = 0x%016lx, device = 0x%016lx, size = %lld\n",
@@ -554,7 +566,7 @@ int32_t dataSubmit(int32_t DeviceId, void *TgtPtr, void *HstPtr, int64_t Size,
   DP("Submit data %ld bytes, (hst:%016llx) -> (tgt:%016llx).\n", Size,
      (long long unsigned)(Elf64_Addr)HstPtr,
      (long long unsigned)(Elf64_Addr)TgtPtr);
-  err = atmi_memcpy(TgtPtr, HstPtr, (size_t)Size);
+  err = DeviceInfo.freesignalpool_memcpy(TgtPtr, HstPtr, (size_t)Size);
   if (err != ATMI_STATUS_SUCCESS) {
     DP("Error when copying data from host to device. Pointers: "
        "host = 0x%016lx, device = 0x%016lx, size = %lld\n",
@@ -825,16 +837,14 @@ atmi_status_t interop_get_symbol_info(char *base, size_t img_size,
 }
 } // namespace
 
-static __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
-                                                 __tgt_device_image *image);
-
+static __tgt_target_table *
+__tgt_rtl_load_binary_locked(int32_t device_id, __tgt_device_image *image);
 
 __tgt_target_table *__tgt_rtl_load_binary(int32_t device_id,
-                                          __tgt_device_image *image)
-{
+                                          __tgt_device_image *image) {
   static pthread_mutex_t load_binary_mutex = PTHREAD_MUTEX_INITIALIZER;
   pthread_mutex_lock(&load_binary_mutex);
-  __tgt_target_table * res = __tgt_rtl_load_binary_locked(device_id, image);
+  __tgt_target_table *res = __tgt_rtl_load_binary_locked(device_id, image);
   pthread_mutex_unlock(&load_binary_mutex);
   return res;
 }
@@ -928,7 +938,7 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
         // If unified memory is present any target link variables
         // can access host addresses directly. There is no longer a
         // need for device copies.
-        err = atmi_memcpy(varptr, e->addr, sizeof(void *));
+        err = DeviceInfo.freesignalpool_memcpy(varptr, e->addr, sizeof(void *));
         if (err != ATMI_STATUS_SUCCESS)
           DP("Error when copying USM\n");
         DP("Copy linked variable host address (" DPxMOD ")"
@@ -1156,7 +1166,7 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
         return NULL;
       }
 
-      err = atmi_memcpy(device_env_Ptr, &host_device_env, (size_t)varsize);
+      err = DeviceInfo.freesignalpool_memcpy(device_env_Ptr, &host_device_env, (size_t)varsize);
       if (err != ATMI_STATUS_SUCCESS) {
         DP("Error when copying data from host to device. Pointers: "
            "host = " DPxMOD ", device = " DPxMOD ", size = %u\n",
@@ -1411,7 +1421,7 @@ static void *AllocateNestedParallelCallMemory(int MaxParLevel, int NumGroups,
   void *TgtPtr = NULL;
   atmi_status_t err =
       atmi_malloc(&TgtPtr, NestedMemSize, get_gpu_mem_place(device_id));
-  err = atmi_memcpy(CallStackAddr, &TgtPtr, sizeof(void *));
+  err = DeviceInfo.freesignalpool_memcpy(CallStackAddr, &TgtPtr, sizeof(void *));
   if (print_kernel_trace > 2)
     fprintf(stderr, "CallSck %lx TgtPtr %lx *TgtPtr %lx \n",
             (long)CallStackAddr, (long)&TgtPtr, (long)TgtPtr);
@@ -1439,6 +1449,8 @@ int32_t __tgt_rtl_run_target_team_region(int32_t device_id, void *tgt_entry_ptr,
                                          int32_t arg_num, int32_t num_teams,
                                          int32_t thread_limit,
                                          uint64_t loop_tripcount) {
+  static pthread_mutex_t nested_parallel_mutex = PTHREAD_MUTEX_INITIALIZER;
+  
   // Set the context we are using
   // update thread limit content in gpu memory if un-initialized or specified
   // from host
@@ -1474,12 +1486,13 @@ int32_t __tgt_rtl_run_target_team_region(int32_t device_id, void *tgt_entry_ptr,
   );
 
   void *TgtCallStack = NULL;
-  if (KernelInfo->MaxParLevel > 0)
+  if (KernelInfo->MaxParLevel > 0) {
+    pthread_mutex_lock(&nested_parallel_mutex);
     TgtCallStack = AllocateNestedParallelCallMemory(
         KernelInfo->MaxParLevel, num_groups, threadsPerGroup,
         KernelInfo->device_id, KernelInfo->CallStackAddr,
         KernelInfo->ExecutionMode);
-
+  }
   if (print_kernel_trace > 0)
     // enum modes are SPMD, GENERIC, NONE 0,1,2
     fprintf(stderr,
@@ -1605,8 +1618,10 @@ int32_t __tgt_rtl_run_target_team_region(int32_t device_id, void *tgt_entry_ptr,
 
   DP("Kernel completed\n");
   // Free call stack for nested
-  if (TgtCallStack)
+  if (TgtCallStack) {
+    pthread_mutex_unlock(&nested_parallel_mutex);
     atmi_free(TgtCallStack);
+  }
 
   return OFFLOAD_SUCCESS;
 }
