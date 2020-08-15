@@ -19,7 +19,6 @@ namespace core {
 #define DEFAULT_NUM_GPU_QUEUES -1  // computed in code
 #define DEFAULT_NUM_CPU_QUEUES -1  // computed in code
 #define DEFAULT_DEBUG_MODE 0
-#define DEFAULT_PROFILE_MODE 0
 class Environment {
  public:
   Environment()
@@ -28,8 +27,7 @@ class Environment {
         max_kernel_types_(DEFAULT_MAX_KERNEL_TYPES),
         num_gpu_queues_(DEFAULT_NUM_GPU_QUEUES),
         num_cpu_queues_(DEFAULT_NUM_CPU_QUEUES),
-        debug_mode_(DEFAULT_DEBUG_MODE),
-        profile_mode_(DEFAULT_PROFILE_MODE) {
+        debug_mode_(DEFAULT_DEBUG_MODE) {
     GetEnvAll();
   }
 
@@ -45,7 +43,6 @@ class Environment {
   // TODO(ashwinma): int may change to enum if we have more debug modes
   int getDebugMode() const { return debug_mode_; }
   // TODO(ashwinma): int may change to enum if we have more profile modes
-  int getProfileMode() const { return profile_mode_; }
 
  private:
   std::string GetEnv(const char *name) {
@@ -63,10 +60,9 @@ class Environment {
   int num_gpu_queues_;
   int num_cpu_queues_;
   int debug_mode_;
-  int profile_mode_;
 };
 
-class Runtime {
+class Runtime final {
  public:
   static Runtime &getInstance() {
     static Runtime instance;
@@ -74,20 +70,19 @@ class Runtime {
   }
 
   // init/finalize
-  virtual atmi_status_t Initialize();
-  virtual atmi_status_t Finalize();
+  static atmi_status_t Initialize();
+  static atmi_status_t Finalize();
   // machine info
-  atmi_machine_t *GetMachineInfo();
+  static atmi_machine_t *GetMachineInfo();
   // modules
   atmi_status_t RegisterModuleFromMemory(void *, size_t,
                                          atmi_place_t);
   // data
-  atmi_status_t Memcpy(void *, const void *, size_t);
-  atmi_status_t Memfree(void *);
-  atmi_status_t Malloc(void **, size_t, atmi_mem_place_t);
+  static atmi_status_t Memcpy(void *, const void *, size_t);
+  static atmi_status_t Memfree(void *);
+  static atmi_status_t Malloc(void **, size_t, atmi_mem_place_t);
 
   // environment variables
-  const Environment &getEnvironment() const { return env_; }
   int getMaxSignals() const { return env_.getMaxSignals(); }
   int getMaxQueueSize() const { return env_.getMaxQueueSize(); }
   int getMaxKernelTypes() const { return env_.getMaxKernelTypes(); }
@@ -95,9 +90,6 @@ class Runtime {
   int getNumCPUQueues() const { return env_.getNumCPUQueues(); }
   // TODO(ashwinma): int may change to enum if we have more debug modes
   int getDebugMode() const { return env_.getDebugMode(); }
-  // TODO(ashwinma): int may change to enum if we have more profile modes
-  int getProfileMode() const { return env_.getProfileMode(); }
-
 
  protected:
   Runtime() = default;

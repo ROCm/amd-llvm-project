@@ -322,7 +322,6 @@ public:
   // OpenMP Requires Flags
   int64_t RequiresFlags;
 
-  // static int EnvNumThreads;
   static const int HardTeamLimit = 1 << 20; // 1 Meg
   static const int DefaultNumTeams = 128;
   static const int Max_Teams =

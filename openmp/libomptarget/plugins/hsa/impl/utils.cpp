@@ -14,13 +14,7 @@
 #include <pthread.h>
 #include <sched.h>
 #include <stdio.h>
-
-#define handle_error_en(en, msg) \
-  do {                           \
-    errno = en;                  \
-    perror(msg);                 \
-    exit(EXIT_FAILURE);          \
-  } while (0)
+#include <iostream>
 
 /*
  * Helper functions
@@ -33,8 +27,6 @@ const char *get_atmi_error_string(atmi_status_t err) {
       return "ATMI_STATUS_UNKNOWN";
     case ATMI_STATUS_ERROR:
       return "ATMI_STATUS_ERROR";
-    case ATMI_STATUS_KERNELCOUNT_OVERFLOW:
-      return "ATMI_STATUS_KERNELCOUNT_OVERFLOW";
     default:
       return "";
   }
@@ -97,49 +89,6 @@ const char *get_error_string(hsa_status_t err) {
   }
 }
 
-int cpu_bindthread(int cpu_index) {
-  cpu_set_t cpuset;
-  int err;
-
-  CPU_ZERO(&cpuset);
-  CPU_SET(cpu_index + 1, &cpuset);
-  err = sched_setaffinity(0, sizeof(cpuset), &cpuset);
-  if (err != 0) {
-    return err;
-  } else {
-    DEBUG_PRINT("cpu %d bind correctly\n", cpu_index);
-    return 0;
-  }
-}
-
-atmi_status_t set_thread_affinity(int id) {
-  int s, j;
-  cpu_set_t cpuset;
-  pthread_t thread;
-
-  thread = pthread_self();
-
-  /* Set affinity mask to include CPUs 0 to 7 */
-
-  CPU_ZERO(&cpuset);
-  CPU_SET(id, &cpuset);
-
-  s = pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset);
-  if (s != 0) handle_error_en(s, "pthread_setaffinity_np");
-
-  /* Check the actual affinity mask
-   * assigned to the thread */
-  s = pthread_getaffinity_np(thread, sizeof(cpu_set_t), &cpuset);
-  if (s != 0) handle_error_en(s, "pthread_getaffinity_np");
-
-  /*printf("Set returned by pthread_getaffinity_np() contained:\n");
-  for (j = 0; j < CPU_SETSIZE; j++)
-      if (CPU_ISSET(j, &cpuset))
-          printf("    CPU %d\n", j);
-  */
-  return ATMI_STATUS_SUCCESS;
-}
-
 namespace core {
 /*
  * Environment variables
@@ -152,8 +101,7 @@ void Environment::GetEnvAll() {
               << "ATMI_MAX_KERNEL_TYPES : positive integer" << std::endl
               << "ATMI_DEVICE_GPU_WORKERS : positive integer" << std::endl
               << "ATMI_DEVICE_CPU_WORKERS : positive integer" << std::endl
-              << "ATMI_DEBUG : 1 for printing out trace/debug info" << std::endl
-              << "ATMI_PROFILE : 1 for printing out timer info" << std::endl;
+              << "ATMI_DEBUG : 1 for printing out trace/debug info" << std::endl;
     exit(0);
   }
 
@@ -182,8 +130,5 @@ void Environment::GetEnvAll() {
 
   var = GetEnv("ATMI_DEBUG");
   if (!var.empty()) debug_mode_ = std::stoi(var);
-
-  var = GetEnv("ATMI_PROFILE");
-  if (!var.empty()) profile_mode_ = std::stoi(var);
 }
 }  // namespace core
