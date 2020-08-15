@@ -25,6 +25,9 @@
 #include <memory>
 #include <unordered_map>
 #include <vector>
+#include <mutex>
+#include <shared_mutex>
+#include <thread>
 
 // Header from ATMI interface
 #include "atmi_interop_hsa.h"
@@ -302,6 +305,10 @@ class RTLDeviceInfoTy {
   std::vector<std::list<FuncOrGblEntryTy>> FuncGblEntries;
 
 public:
+  // load binary populates symbol tables and mutates various global state
+  // run uses those symbol tables
+  std::shared_timed_mutex load_run_lock;
+
   int NumberOfDevices;
 
   // GPU devices
@@ -880,15 +887,15 @@ __tgt_rtl_load_binary_locked(int32_t device_id, __tgt_device_image *image);
 
 __tgt_target_table *__tgt_rtl_load_binary(int32_t device_id,
                                           __tgt_device_image *image) {
-  static pthread_mutex_t load_binary_mutex = PTHREAD_MUTEX_INITIALIZER;
-  pthread_mutex_lock(&load_binary_mutex);
+  DeviceInfo.load_run_lock.lock();
   __tgt_target_table *res = __tgt_rtl_load_binary_locked(device_id, image);
-  pthread_mutex_unlock(&load_binary_mutex);
+  DeviceInfo.load_run_lock.unlock();
   return res;
 }
 
 __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
-                                          __tgt_device_image *image) {
+                                                 __tgt_device_image *image) {
+
   const size_t img_size = (char *)image->ImageEnd - (char *)image->ImageStart;
 
   DeviceInfo.clearOffloadEntriesTable(device_id);
@@ -1459,7 +1466,26 @@ static uint64_t acquire_available_packet_id(hsa_queue_t *queue) {
 
 extern bool g_atmi_hostcall_required; // declared without header by atmi
 
-int32_t __tgt_rtl_run_target_team_region(int32_t device_id, void *tgt_entry_ptr,
+static int32_t __tgt_rtl_run_target_team_region_locked(
+    int32_t device_id, void *tgt_entry_ptr, void **tgt_args,
+    ptrdiff_t *tgt_offsets, int32_t arg_num, int32_t num_teams,
+    int32_t thread_limit, uint64_t loop_tripcount);
+
+int32_t __tgt_rtl_run_target_team_region(
+    int32_t device_id, void *tgt_entry_ptr, void **tgt_args,
+    ptrdiff_t *tgt_offsets, int32_t arg_num, int32_t num_teams,
+    int32_t thread_limit, uint64_t loop_tripcount) {
+
+  DeviceInfo.load_run_lock.lock_shared();
+  int32_t res = __tgt_rtl_run_target_team_region_locked(
+      device_id, tgt_entry_ptr, tgt_args, tgt_offsets, arg_num, num_teams,
+      thread_limit, loop_tripcount);
+
+  DeviceInfo.load_run_lock.unlock_shared();
+  return res;
+}
+
+int32_t __tgt_rtl_run_target_team_region_locked(int32_t device_id, void *tgt_entry_ptr,
                                          void **tgt_args,
                                          ptrdiff_t *tgt_offsets,
                                          int32_t arg_num, int32_t num_teams,
