@@ -38,7 +38,7 @@ const char *getPlaceStr(atmi_devtype_t type) {
 
 std::ostream &operator<<(std::ostream &os, const ATLData *ap) {
   atmi_mem_place_t place = ap->place();
-  os << "hostPointer:" << ap->host_aliasptr() << " devicePointer:" << ap->ptr()
+  os << " devicePointer:" << ap->ptr()
      << " sizeBytes:" << ap->size() << " place:(" << getPlaceStr(place.dev_type)
      << ", " << place.dev_id << ", " << place.mem_id << ")";
   return os;
@@ -67,16 +67,6 @@ ATLData *ATLPointerTracker::find(const void *pointer) {
   return ret;
 }
 
-ATLProcessor &get_processor_by_compute_place(atmi_place_t place) {
-  int dev_id = place.device_id;
-  switch (place.type) {
-    case ATMI_DEVTYPE_CPU:
-      return g_atl_machine.processors<ATLCPUProcessor>()[dev_id];
-    case ATMI_DEVTYPE_GPU:
-      return g_atl_machine.processors<ATLGPUProcessor>()[dev_id];
-  }
-}
-
 ATLProcessor &get_processor_by_mem_place(atmi_mem_place_t place) {
   int dev_id = place.dev_id;
   switch (place.dev_type) {
@@ -85,10 +75,6 @@ ATLProcessor &get_processor_by_mem_place(atmi_mem_place_t place) {
     case ATMI_DEVTYPE_GPU:
       return g_atl_machine.processors<ATLGPUProcessor>()[dev_id];
   }
-}
-
-hsa_agent_t get_compute_agent(atmi_place_t place) {
-  return get_processor_by_compute_place(place).agent();
 }
 
 static hsa_agent_t get_mem_agent(atmi_mem_place_t place) {
@@ -101,7 +87,7 @@ hsa_amd_memory_pool_t get_memory_pool_by_mem_place(atmi_mem_place_t place) {
 }
 
 void register_allocation(void *ptr, size_t size, atmi_mem_place_t place) {
-  ATLData *data = new ATLData(ptr, NULL, size, place, ATMI_IN_OUT);
+  ATLData *data = new ATLData(ptr, size, place);
   g_data_map.insert(ptr, data);
   if (place.dev_type == ATMI_DEVTYPE_CPU) allow_access_to_all_gpu_agents(ptr);
   // TODO(ashwinma): what if one GPU wants to access another GPU?
