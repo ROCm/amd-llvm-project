@@ -55,7 +55,8 @@ class Runtime final {
   // init/finalize
   static atmi_status_t Initialize();
   static atmi_status_t Finalize();
-
+  // machine info
+  static atmi_machine_t *GetMachineInfo();
   // modules
   static atmi_status_t RegisterModuleFromMemory(
       void *, size_t, atmi_place_t,
@@ -63,11 +64,9 @@ class Runtime final {
                                             void *cb_state),
       void *cb_state);
 
-  // machine info
-  static atmi_machine_t *GetMachineInfo();
 
   // data
-  static atmi_status_t Memcpy(void *, const void *, size_t);
+  static atmi_status_t Memcpy(hsa_signal_t, void *, const void *, size_t);
   static atmi_status_t Memfree(void *);
   static atmi_status_t Malloc(void **, size_t, atmi_mem_place_t);
 
