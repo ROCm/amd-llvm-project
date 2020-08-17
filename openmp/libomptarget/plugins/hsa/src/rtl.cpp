@@ -336,13 +336,15 @@ public:
   // Resource pools
   SignalPoolT FreeSignalPool;
 
-  // Clean up manually allocated state
   struct atmiFreePtrDeletor {
     void operator()(void *p) {
       atmi_free(p);  // ignore failure to free      
     }
   };
-  std::vector<std::unique_ptr<void, atmiFreePtrDeletor>> deviceStateStore;
+
+  // device_State shared across loaded binaries, error if inconsistent size
+  std::vector<std::pair<std::unique_ptr<void, atmiFreePtrDeletor>, uint64_t>>
+      deviceStateStore;
 
   static const int HardTeamLimit = 1 << 20; // 1 Meg
   static const int DefaultNumTeams = 128;
@@ -465,7 +467,8 @@ public:
     WarpSize.resize(NumberOfDevices);
     NumTeams.resize(NumberOfDevices);
     NumThreads.resize(NumberOfDevices);
-
+    deviceStateStore.resize(NumberOfDevices);
+    
     for (int i = 0; i < NumberOfDevices; i++) {
       uint32_t queue_size = 0;
       {
@@ -485,6 +488,8 @@ public:
         DP("Failed to create HSA queues\n");
         return;
       }
+
+      deviceStateStore[i] = {nullptr, 0};
     }
 
     for (int i = 0; i < NumberOfDevices; i++) {
@@ -1003,16 +1008,27 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
   // Do this post-load to handle got
   uint64_t device_State_bytes =
       get_device_State_bytes((char *)image->ImageStart, img_size);
+  auto &dss = DeviceInfo.deviceStateStore[device_id];
   if (device_State_bytes != 0) {
-    void *ptr = NULL;
 
-    atmi_status_t err =
-        atmi_malloc(&ptr, device_State_bytes, get_gpu_mem_place(device_id));
-    if (err != ATMI_STATUS_SUCCESS) {
-      fprintf(stderr, "Failed to allocate device_state array\n");
-      return NULL;
+    if (dss.first.get() == nullptr) {
+      assert(dss.second == 0);
+      void *ptr = NULL;
+      atmi_status_t err =
+          atmi_malloc(&ptr, device_State_bytes, get_gpu_mem_place(device_id));
+      if (err != ATMI_STATUS_SUCCESS) {
+        fprintf(stderr, "Failed to allocate device_state array\n");
+        return NULL;
+      }
+      dss = {std::unique_ptr<void, RTLDeviceInfoTy::atmiFreePtrDeletor>{ptr},
+             device_State_bytes};
     }
-    DeviceInfo.deviceStateStore.emplace_back(ptr);
+
+    void *ptr = dss.first.get();
+    if (device_State_bytes != dss.second) {
+      fprintf(stderr, "Inconsistent sizes of device_State unsupported\n");
+      exit(1);
+    }
 
     void *state_ptr;
     uint32_t state_ptr_size;
