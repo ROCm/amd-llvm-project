@@ -710,7 +710,7 @@ int bar(int n){
   // CHECK-LABEL: define {{.*}}void {{@__omp_offloading_.+template.+l57}}(
   //
   // CHECK: call void @__kmpc_spmd_kernel_init(
-  // CHECK: call void @__kmpc_data_sharing_init_stack_spmd()
+  // CHECK: call void @__kmpc_data_sharing_init_stack_spmd
   // CHECK: call void @__kmpc_spmd_kernel_deinit_v2(i16 1)
 
   // CHECK-NOT: call void @{{__kmpc_get_team_static_memory|__kmpc_data_sharing_push_stack}}

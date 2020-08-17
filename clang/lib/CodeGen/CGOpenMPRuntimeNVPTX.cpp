@@ -1449,10 +1449,35 @@ void CGOpenMPRuntimeNVPTX::emitNonSPMDEntryHeader(CodeGenFunction &CGF,
   CGF.EmitRuntimeCall(
       createNVPTXRuntimeFunction(OMPRTL_NVPTX__kmpc_kernel_init), Args);
 
+  StringRef DataSharingMemorySlotName = "openmp.data.sharing.memory.slot";
+  size_t WarpSlotSize =
+      CGF.getTarget().getGridValue(llvm::omp::GV_Warp_Slot_Size);
+  size_t DataSharingMemorySlotSize = WarpSlotSize * 64;
+
+  // creating a global array which will be used for data sharing slots
+  // This will be optimized in clang-build-select-link
+  llvm::Type *Ty =
+      llvm::ArrayType::get(CGF.CGM.Int8Ty,
+                           DataSharingMemorySlotSize);
+  llvm::GlobalVariable *DataSharingMemorySlot = new llvm::GlobalVariable(
+      CGF.CGM.getModule(), Ty,
+      false, llvm::GlobalValue::ExternalLinkage, nullptr,
+      DataSharingMemorySlotName,
+      nullptr, llvm::GlobalValue::NotThreadLocal,
+      CGF.CGM.getContext().getTargetAddressSpace(LangAS::cuda_device));
+
+  DataSharingMemorySlot->setExternallyInitialized(true);
+  DataSharingMemorySlot->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Local);
+  DataSharingMemorySlot->setInitializer(llvm::UndefValue::get(Ty));
+  llvm::Value *DataSharingMemoryAddr = Bld.CreatePointerBitCastOrAddrSpaceCast(
+      DataSharingMemorySlot, CGF.CGM.Int8PtrTy);
+
+  llvm::Value *ArgsForInitStack[] = { DataSharingMemoryAddr,
+                          CGF.Builder.getInt64(DataSharingMemorySlotSize) };
   // For data sharing, we need to initialize the stack.
   CGF.EmitRuntimeCall(
       createNVPTXRuntimeFunction(
-          OMPRTL_NVPTX__kmpc_data_sharing_init_stack));
+          OMPRTL_NVPTX__kmpc_data_sharing_init_stack), ArgsForInitStack);
 
   emitGenericVarsProlog(CGF, WST.Loc);
 }
@@ -1567,8 +1592,33 @@ void CGOpenMPRuntimeNVPTX::emitSPMDEntryHeader(
 
   if (RequiresFullRuntime) {
     // For data sharing, we need to initialize the stack.
+    StringRef DataSharingMemorySlotName = "openmp.data.sharing.memory.slot.spmd";
+    size_t WarpSlotSize =
+        CGF.getTarget().getGridValue(llvm::omp::GV_Warp_Slot_Size);
+    size_t DataSharingMemorySlotSize = WarpSlotSize * 64;
+
+    // creating a global array which will be used for data sharing slots
+    // This will be optimized in clang-build-select-link
+    llvm::Type *Ty =
+        llvm::ArrayType::get(CGF.CGM.Int8Ty,
+                           DataSharingMemorySlotSize);
+    llvm::GlobalVariable *DataSharingMemorySlot = new llvm::GlobalVariable(
+        CGF.CGM.getModule(), Ty,
+        false, llvm::GlobalValue::ExternalLinkage, nullptr,
+        DataSharingMemorySlotName,
+        nullptr, llvm::GlobalValue::NotThreadLocal,
+        CGF.CGM.getContext().getTargetAddressSpace(LangAS::cuda_device));
+
+    DataSharingMemorySlot->setExternallyInitialized(true);
+    DataSharingMemorySlot->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Local);
+    DataSharingMemorySlot->setInitializer(llvm::UndefValue::get(Ty));
+    llvm::Value *DataSharingMemoryAddr = Bld.CreatePointerBitCastOrAddrSpaceCast(
+        DataSharingMemorySlot, CGF.CGM.Int8PtrTy);
+    llvm::Value *ArgsForInitStack[] = { DataSharingMemoryAddr,
+                          CGF.Builder.getInt64(DataSharingMemorySlotSize) };
+
     CGF.EmitRuntimeCall(createNVPTXRuntimeFunction(
-        OMPRTL_NVPTX__kmpc_data_sharing_init_stack_spmd));
+        OMPRTL_NVPTX__kmpc_data_sharing_init_stack_spmd), ArgsForInitStack);
   }
 
   CGF.EmitBranch(ExecuteBB);
@@ -2009,15 +2059,19 @@ CGOpenMPRuntimeNVPTX::createNVPTXRuntimeFunction(unsigned Function) {
   }
   case OMPRTL_NVPTX__kmpc_data_sharing_init_stack: {
     /// Build void __kmpc_data_sharing_init_stack();
+    llvm::Type *TypeParams[] = {CGM.Int8PtrTy,
+                                CGM.Int64Ty};
     auto *FnTy =
-        llvm::FunctionType::get(CGM.VoidTy, llvm::None, /*isVarArg*/ false);
+        llvm::FunctionType::get(CGM.VoidTy, TypeParams, /*isVarArg*/ false);
     RTLFn = CGM.CreateRuntimeFunction(FnTy, "__kmpc_data_sharing_init_stack");
     break;
   }
   case OMPRTL_NVPTX__kmpc_data_sharing_init_stack_spmd: {
     /// Build void __kmpc_data_sharing_init_stack_spmd();
+    llvm::Type *TypeParams[] = {CGM.Int8PtrTy,
+                                CGM.Int64Ty};
     auto *FnTy =
-        llvm::FunctionType::get(CGM.VoidTy, llvm::None, /*isVarArg*/ false);
+        llvm::FunctionType::get(CGM.VoidTy, TypeParams, /*isVarArg*/ false);
     RTLFn =
         CGM.CreateRuntimeFunction(FnTy, "__kmpc_data_sharing_init_stack_spmd");
     break;

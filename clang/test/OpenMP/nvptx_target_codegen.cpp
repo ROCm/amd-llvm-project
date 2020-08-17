@@ -36,7 +36,7 @@ struct TT {
 // CHECK: store i32** [[PTR2_REF]], i32*** [[PTR2_REF_PTR:%.+]],
 // CHECK: [[PTR2_REF:%.+]] = load i32**, i32*** [[PTR2_REF_PTR]],
 // CHECK: call void @__kmpc_spmd_kernel_init(
-// CHECK: call void @__kmpc_data_sharing_init_stack_spmd()
+// CHECK: call void @__kmpc_data_sharing_init_stack_spmd
 // CHECK: [[GTID:%.+]] = call i32 @__kmpc_global_thread_num(%struct.ident_t* @{{.+}})
 // CHECK: store i32 [[GTID]], i32* [[THREADID:%.+]],
 // CHECK: call void @{{.+}}(i32* [[THREADID]], i32* %{{.+}}, i32** [[PTR1_ADDR]], i32** [[PTR2_REF]])

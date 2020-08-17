@@ -47,7 +47,7 @@ int bar(int n){
   // CHECK: [[AA:%.+]] = load i16*, i16** [[AA_ADDR]], align
   // CHECK: [[THREAD_LIMIT:%.+]] = call i32 @llvm.nvvm.read.ptx.sreg.ntid.x()
   // CHECK: call void @__kmpc_spmd_kernel_init(i32 [[THREAD_LIMIT]], i16 1, i16 0)
-  // CHECK: call void @__kmpc_data_sharing_init_stack_spmd()
+  // CHECK: call void @__kmpc_data_sharing_init_stack_spmd
   // CHECK: [[GTID:%.+]] = call i32 @__kmpc_global_thread_num(%struct.ident_t* @{{.+}})
   // CHECK: store i32 [[GTID]], i32* [[THREADID:%.+]],
   // CHECK: call void [[OUTLINED:@.+]](i32* [[THREADID]], i32* %{{.+}}, i16* [[AA]])
@@ -78,7 +78,7 @@ int bar(int n){
   // CHECK: [[B:%.+]] = load [10 x i32]*, [10 x i32]** [[B_ADDR]], align
   // CHECK: [[THREAD_LIMIT:%.+]] = call i32 @llvm.nvvm.read.ptx.sreg.ntid.x()
   // CHECK: call void @__kmpc_spmd_kernel_init(i32 [[THREAD_LIMIT]], i16 1, i16 0)
-  // CHECK: call void @__kmpc_data_sharing_init_stack_spmd()
+  // CHECK: call void @__kmpc_data_sharing_init_stack_spmd(
   // CHECK: [[GTID:%.+]] = call i32 @__kmpc_global_thread_num(%struct.ident_t* @{{.+}})
   // CHECK: store i32 [[GTID]], i32* [[THREADID:%.+]],
   // CHECK: call void [[OUTLINED:@.+]](i32* [[THREADID]], i32* %{{.+}}, i32* [[A]], i16* [[AA]], [10 x i32]* [[B]])
