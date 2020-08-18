@@ -132,6 +132,7 @@ atmi_status_t Runtime::Memfree(void *ptr) {
 static hsa_status_t invoke_hsa_copy(hsa_signal_t sig, void *dest,
                                     const void *src, size_t size,
                                     hsa_agent_t agent) {
+ 
   const hsa_signal_value_t init = 1;
   const hsa_signal_value_t success = 0;
   hsa_signal_store_screlease(sig, init);
@@ -162,12 +163,37 @@ struct atmiFreePtrDeletor {
   }
 };
 
+static
+  bool agent_can_access(hsa_agent_t agent,
+                        const void * ptr)
+  {
+    bool res = false;
+    hsa_amd_pointer_info_t info;
+    hsa_agent_t *accessible=nullptr;
+    uint32_t num_agents=0;
+    hsa_status_t st =    hsa_amd_pointer_info((void*)ptr, &info, malloc, &num_agents, &accessible);
+    if (st == HSA_STATUS_SUCCESS) {
+      for (uint32_t i = 0; i < num_agents; i++)
+        {
+          if (agent.handle == accessible[i].handle)
+            {
+              res = true;
+            }
+        }
+
+    }
+    free(accessible);
+    return res;
+  }
+
 atmi_status_t Runtime::Memcpy(hsa_signal_t sig, void *dest, const void *src,
                               size_t size) {
+  return hsa_memory_copy(dest, src, size) == HSA_STATUS_SUCCESS ? ATMI_STATUS_SUCCESS : ATMI_STATUS_ERROR;
+
   ATLData *src_data = g_data_map.find(src);
   ATLData *dest_data = g_data_map.find(dest);
   atmi_mem_place_t cpu = ATMI_MEM_PLACE_CPU_MEM(0, 0, 0);
-
+  
   void *temp_host_ptr;
   atmi_status_t ret = atmi_malloc(&temp_host_ptr, size, cpu);
   if (ret != ATMI_STATUS_SUCCESS) {
@@ -180,6 +206,10 @@ atmi_status_t Runtime::Memcpy(hsa_signal_t sig, void *dest, const void *src,
     hsa_agent_t agent = get_mem_agent(src_data->place());
     DEBUG_PRINT("Memcpy D2H device agent: %lu\n", agent.handle);
 
+    fprintf(stderr, "D2H: src %u, dest %u\n",
+            agent_can_access(agent, src),
+            agent_can_access(agent, dest));
+                             
     if (invoke_hsa_copy(sig, temp_host_ptr, src, size, agent) !=
         HSA_STATUS_SUCCESS) {
       return ATMI_STATUS_ERROR;
@@ -192,6 +222,10 @@ atmi_status_t Runtime::Memcpy(hsa_signal_t sig, void *dest, const void *src,
     hsa_agent_t agent = get_mem_agent(dest_data->place());
     DEBUG_PRINT("Memcpy H2D device agent: %lu\n", agent.handle);
 
+    fprintf(stderr, "H2D: src %u, dest %u\n",
+            agent_can_access(agent, src),
+            agent_can_access(agent, dest));
+        
     memcpy(temp_host_ptr, src, size);
 
     if (invoke_hsa_copy(sig, dest, temp_host_ptr, size, agent) !=
