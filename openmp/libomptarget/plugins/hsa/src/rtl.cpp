@@ -29,6 +29,108 @@
 #include <shared_mutex>
 #include <thread>
 
+#include <map>
+struct logger_t {
+  static const constexpr bool enable = true;
+  logger_t() {}
+
+  void alloc(size_t i) {
+    if (enable) {
+      lock l(&mutex);
+      alloc_.push_back(i);
+    }
+  }
+
+  void submit(size_t i) {
+    if (enable) {
+      lock l(&mutex);
+      submit_.push_back(i);
+    }
+  }
+
+  void retrieve(size_t i) {
+    if (enable) {
+      lock l(&mutex);
+      retrieve_.push_back(i);
+    }
+  }
+
+  void counter(const char *name) {
+    if (enable) {
+      lock l(&mutex);
+      // printf("%-40s: Invoke\n",name);
+      if (counter_.find(name) == counter_.end()) {
+        counter_[name] = 1;
+      } else {
+        counter_[name] = counter_[name] + 1;
+      }
+    }
+  }
+
+  std::map<std::string, size_t> counter_;
+  std::vector<size_t> alloc_;
+  std::vector<size_t> submit_;
+  std::vector<size_t> retrieve_;
+
+  ~logger_t() {
+    if (enable) {
+      for (auto e : counter_) {
+        printf("%-40s: %lu\n", e.first.c_str(), e.second);
+      }
+
+      const bool brief = true;
+
+      if (brief) {
+        printf("alloc: %lu bytes\n", total(alloc_));
+        printf("submit: %lu bytes\n", total(submit_));
+        printf("retrieve: %lu bytes\n", total(retrieve_));
+      } else {
+        printf("alloc:");
+        for (auto i : alloc_) {
+          printf(" %zu", i);
+        }
+        printf("\n");
+
+        printf("submit:");
+        for (auto i : submit_) {
+          printf(" %zu", i);
+        }
+        printf("\n");
+
+        printf("retrieve:");
+        for (auto i : retrieve_) {
+          printf(" %zu", i);
+        }
+        printf("\n");
+      }
+    }
+  }
+
+  static size_t total(std::vector<size_t> const &v) {
+    size_t t = 0;
+    for (auto i : v) {
+      t += i;
+    }
+    return t;
+  }
+
+  struct lock {
+    lock(pthread_mutex_t *m) : m(m) { pthread_mutex_lock(m); }
+    ~lock() { pthread_mutex_unlock(m); }
+    pthread_mutex_t *m;
+  };
+  static pthread_mutex_t mutex;
+};
+pthread_mutex_t logger_t::mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static logger_t &log()
+{
+  static logger_t s;
+  return s;
+}
+#define count() log().counter(__func__)
+
+
 // Header from ATMI interface
 #include "atmi_interop_hsa.h"
 #include "atmi_runtime.h"
@@ -553,6 +655,7 @@ namespace {
 
 int32_t dataRetrieve(int32_t DeviceId, void *HstPtr, void *TgtPtr, int64_t Size,
                      __tgt_async_info *AsyncInfoPtr) {
+    log().retrieve(Size);
   assert(AsyncInfoPtr && "AsyncInfoPtr is nullptr");
   assert(DeviceId < DeviceInfo.NumberOfDevices && "Device ID too large");
   // Return success if we are not copying back to host from target.
@@ -579,6 +682,7 @@ int32_t dataRetrieve(int32_t DeviceId, void *HstPtr, void *TgtPtr, int64_t Size,
 
 int32_t dataSubmit(int32_t DeviceId, void *TgtPtr, void *HstPtr, int64_t Size,
                    __tgt_async_info *AsyncInfoPtr) {
+  log().submit(Size);
   assert(AsyncInfoPtr && "AsyncInfoPtr is nullptr");
   atmi_status_t err;
   assert(DeviceId < DeviceInfo.NumberOfDevices && "Device ID too large");
@@ -614,14 +718,14 @@ int32_t dataSubmit(int32_t DeviceId, void *TgtPtr, void *HstPtr, int64_t Size,
 // change this interface to explicitly initialize the async_info_pointer, but
 // until then hsa lazily initializes it as well.
 
-void initAsyncInfoPtr(__tgt_async_info *async_info_ptr) {
+static void initAsyncInfoPtr(__tgt_async_info *async_info_ptr) {
   // set non-null while using async calls, return to null to indicate completion
   assert(async_info_ptr);
   if (!async_info_ptr->Queue) {
     async_info_ptr->Queue = reinterpret_cast<void *>(UINT64_MAX);
   }
 }
-void finiAsyncInfoPtr(__tgt_async_info *async_info_ptr) {
+static void finiAsyncInfoPtr(__tgt_async_info *async_info_ptr) {
   assert(async_info_ptr);
   assert(async_info_ptr->Queue);
   async_info_ptr->Queue = 0;
@@ -931,6 +1035,7 @@ static __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
 
 __tgt_target_table *__tgt_rtl_load_binary(int32_t device_id,
                                           __tgt_device_image *image) {
+  count();
   DeviceInfo.load_run_lock.lock();
   __tgt_target_table *res = __tgt_rtl_load_binary_locked(device_id, image);
   DeviceInfo.load_run_lock.unlock();
@@ -1321,6 +1426,8 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
 }
 
 void *__tgt_rtl_data_alloc(int device_id, int64_t size, void *) {
+  count();
+  log().alloc(size);
   void *ptr = NULL;
   assert(device_id < DeviceInfo.NumberOfDevices && "Device ID too large");
   atmi_status_t err = atmi_malloc(&ptr, size, get_gpu_mem_place(device_id));
@@ -1332,6 +1439,7 @@ void *__tgt_rtl_data_alloc(int device_id, int64_t size, void *) {
 
 int32_t __tgt_rtl_data_submit(int device_id, void *tgt_ptr, void *hst_ptr,
                               int64_t size) {
+  count();
   assert(device_id < DeviceInfo.NumberOfDevices && "Device ID too large");
   __tgt_async_info async_info;
   int32_t rc = dataSubmit(device_id, tgt_ptr, hst_ptr, size, &async_info);
@@ -1341,9 +1449,13 @@ int32_t __tgt_rtl_data_submit(int device_id, void *tgt_ptr, void *hst_ptr,
   return __tgt_rtl_synchronize(device_id, &async_info);
 }
 
+
+
+
 int32_t __tgt_rtl_data_submit_async(int device_id, void *tgt_ptr, void *hst_ptr,
                                     int64_t size,
                                     __tgt_async_info *async_info_ptr) {
+  count();
   assert(device_id < DeviceInfo.NumberOfDevices && "Device ID too large");
   if (async_info_ptr) {
     initAsyncInfoPtr(async_info_ptr);
@@ -1355,6 +1467,7 @@ int32_t __tgt_rtl_data_submit_async(int device_id, void *tgt_ptr, void *hst_ptr,
 
 int32_t __tgt_rtl_data_retrieve(int device_id, void *hst_ptr, void *tgt_ptr,
                                 int64_t size) {
+  count();
   assert(device_id < DeviceInfo.NumberOfDevices && "Device ID too large");
   __tgt_async_info async_info;
   int32_t rc = dataRetrieve(device_id, hst_ptr, tgt_ptr, size, &async_info);
@@ -1367,6 +1480,7 @@ int32_t __tgt_rtl_data_retrieve(int device_id, void *hst_ptr, void *tgt_ptr,
 int32_t __tgt_rtl_data_retrieve_async(int device_id, void *hst_ptr,
                                       void *tgt_ptr, int64_t size,
                                       __tgt_async_info *async_info_ptr) {
+  count();
   assert(async_info_ptr && "async_info is nullptr");
   assert(device_id < DeviceInfo.NumberOfDevices && "Device ID too large");
   initAsyncInfoPtr(async_info_ptr);
@@ -1374,6 +1488,7 @@ int32_t __tgt_rtl_data_retrieve_async(int device_id, void *hst_ptr,
 }
 
 int32_t __tgt_rtl_data_delete(int device_id, void *tgt_ptr) {
+  count();
   assert(device_id < DeviceInfo.NumberOfDevices && "Device ID too large");
   atmi_status_t err;
   DP("Tgt free data (tgt:%016llx).\n", (long long unsigned)(Elf64_Addr)tgt_ptr);
@@ -1567,12 +1682,13 @@ static uint64_t acquire_available_packet_id(hsa_queue_t *queue) {
 
 extern bool g_atmi_hostcall_required; // declared without header by atmi
 
+
 static int32_t __tgt_rtl_run_target_team_region_locked(
     int32_t device_id, void *tgt_entry_ptr, void **tgt_args,
     ptrdiff_t *tgt_offsets, int32_t arg_num, int32_t num_teams,
     int32_t thread_limit, uint64_t loop_tripcount);
 
-int32_t __tgt_rtl_run_target_team_region(
+int32_t __tgt_rtl_run_target_team_region_impl(
     int32_t device_id, void *tgt_entry_ptr, void **tgt_args,
     ptrdiff_t *tgt_offsets, int32_t arg_num, int32_t num_teams,
     int32_t thread_limit, uint64_t loop_tripcount) {
@@ -1769,16 +1885,35 @@ int32_t __tgt_rtl_run_target_team_region_locked(int32_t device_id, void *tgt_ent
   return OFFLOAD_SUCCESS;
 }
 
+int32_t __tgt_rtl_run_target_team_region(int32_t device_id, void *tgt_entry_ptr,
+                                         void **tgt_args,
+                                         ptrdiff_t *tgt_offsets,
+                                         int32_t arg_num, int32_t num_teams,
+                                         int32_t thread_limit,
+                                         uint64_t loop_tripcount) {
+  count();
+  int32_t rc = __tgt_rtl_run_target_team_region_impl(device_id,tgt_entry_ptr,tgt_args,tgt_offsets,arg_num,num_teams,thread_limit,loop_tripcount);
+  if (rc != OFFLOAD_SUCCESS)
+    return OFFLOAD_FAIL;
+  __tgt_async_info async_info;
+  return __tgt_rtl_synchronize(device_id, &async_info);  
+}
+
 int32_t __tgt_rtl_run_target_region(int32_t device_id, void *tgt_entry_ptr,
                                     void **tgt_args, ptrdiff_t *tgt_offsets,
                                     int32_t arg_num) {
+  count();
   // use one team and one thread
   // fix thread num
   int32_t team_num = 1;
   int32_t thread_limit = 0; // use default
-  return __tgt_rtl_run_target_team_region(device_id, tgt_entry_ptr, tgt_args,
+  int32_t rc = __tgt_rtl_run_target_team_region_impl(device_id, tgt_entry_ptr, tgt_args,
                                           tgt_offsets, arg_num, team_num,
                                           thread_limit, 0);
+  if (rc != OFFLOAD_SUCCESS)
+    return OFFLOAD_FAIL;
+  __tgt_async_info async_info;
+  return __tgt_rtl_synchronize(device_id, &async_info);  
 }
 
 int32_t __tgt_rtl_run_target_region_async(int32_t device_id,
@@ -1786,20 +1921,21 @@ int32_t __tgt_rtl_run_target_region_async(int32_t device_id,
                                           ptrdiff_t *tgt_offsets,
                                           int32_t arg_num,
                                           __tgt_async_info *async_info_ptr) {
+  count();
   assert(async_info_ptr && "async_info is nullptr");
   initAsyncInfoPtr(async_info_ptr);
-
   // use one team and one thread
   // fix thread num
   int32_t team_num = 1;
   int32_t thread_limit = 0; // use default
-  return __tgt_rtl_run_target_team_region(device_id, tgt_entry_ptr, tgt_args,
+  return __tgt_rtl_run_target_team_region_impl(device_id, tgt_entry_ptr, tgt_args,
                                           tgt_offsets, arg_num, team_num,
                                           thread_limit, 0);
 }
 
 int32_t __tgt_rtl_synchronize(int32_t device_id,
                               __tgt_async_info *async_info_ptr) {
+  count();
   assert(async_info_ptr && "async_info is nullptr");
 
   // Cuda asserts that async_info_ptr->Queue is non-null, but this invariant
@@ -1808,5 +1944,6 @@ int32_t __tgt_rtl_synchronize(int32_t device_id,
   if (async_info_ptr->Queue) {
     finiAsyncInfoPtr(async_info_ptr);
   }
+
   return OFFLOAD_SUCCESS;
 }
