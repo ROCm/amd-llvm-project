@@ -33,27 +33,37 @@ else()
 endif()
 
 # Add check for required libraries
-
 if(NOT LIBOMPTARGET_DEP_LIBELF_FOUND)
   libomptarget_say("Not building HSA plugin: LIBELF not found")
   return()
 endif()
 
-if(NOT ROCM_DIR)
-  libomptarget_say("Not building HSA plugin: ROCM_DIR is not set")
+# rocr cmake uses DHSAKMT_INC_PATH, DHSAKMT_LIB_PATH to find roct
+# following that, look for DHSA_INC_PATH, DHSA_LIB_PATH, which allows
+# builds to use source and library files from various locations
+
+if(ROCM_DIR)
+  set(HSA_INC_PATH ${ROCM_DIR}/hsa/include ${ROCM_DIR}/hsa/include/hsa)
+  set(HSA_LIB_PATH ${ROCM_DIR}/hsa/lib)
+  set(HSAKMT_INC_PATH "")
+  set(HSAKMT_LIB_PATH ${ROCM_DIR}/lib)
+elseif(NOT (HSA_INC_PATH AND HSA_LIB_PATH AND HSAKMT_INC_PATH AND HSAKMT_LIB_PATH))
+  libomptarget_say("Not building HSA plugin: ROCM library paths unspecified")
   return()
 endif()
-set(LIBOMPTARGET_DEP_LIBHSA_INCLUDE_DIRS ${ROCM_DIR}/hsa/include ${ROCM_DIR}/hsa/include/hsa)
-set(LIBOMPTARGET_DEP_LIBHSA_LIBRARIES_DIRS ${ROCM_DIR}/hsa/lib)
-set(LIBOMPTARGET_DEP_LIBHSAKMT_LIBRARIES_DIRS ${ROCM_DIR}/lib)
 
-mark_as_advanced( LIBOMPTARGET_DEP_LIBHSA_INCLUDE_DIRS LIBOMPTARGET_DEP_LIBHSA_LIBRARIES_DIRS)
+mark_as_advanced(HSA_INC_PATH HSA_LIB_PATH HSAKMT_INC_PATH HSAKMT_LIB_PATH)
 
 if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64)|(ppc64le)|(aarch64)$" AND CMAKE_SYSTEM_NAME MATCHES "Linux")
   libomptarget_say("Not building HSA plugin: only support HSA in Linux x86_64, ppc64le , or aarch64 hosts.")
   return()
 endif()
 libomptarget_say("Building HSA offloading plugin")
+
+libomptarget_say("HSA plugin: HSA_INC_PATH: ${HSA_INC_PATH}")
+libomptarget_say("HSA plugin: HSA_LIB_PATH: ${HSA_LIB_PATH}")
+libomptarget_say("HSA plugin: HSAKMT_INC_PATH: ${HSAKMT_INC_PATH}")
+libomptarget_say("HSA plugin: HSAKMT_LIB_PATH: ${HSAKMT_LIB_PATH}")
 
 ################################################################################
 # Define the suffix for the runtime messaging dumps.
@@ -68,7 +78,7 @@ if(CMAKE_BUILD_TYPE MATCHES Debug)
 endif()
 
 include_directories(
-  ${LIBOMPTARGET_DEP_LIBHSA_INCLUDE_DIRS}
+  ${HSA_INC_PATH}
   ${CLANG_INCLUDE_DIRS}
   ${LLVM_INCLUDE_DIRS}
   ${CMAKE_CURRENT_SOURCE_DIR}/impl
@@ -93,11 +103,13 @@ install(TARGETS omptarget.rtl.hsa LIBRARY DESTINATION "lib${OPENMP_LIBDIR_SUFFIX
 
 # We need the AOMP specific build of ATMI that has HSA_INTEROP turned on. 
 # Also, the AOMP specific build of ATMI has seperate release and debug builds. 
+
+add_dependencies(omptarget.rtl.hsa hsa-runtime64 hsakmt)
 target_link_libraries(
   omptarget.rtl.hsa
   hostrpc_services
   -lpthread -ldl -Wl,-rpath,${LLVM_LIBDIR}${OPENMP_LIBDIR_SUFFIX}
-  -L${LIBOMPTARGET_DEP_LIBHSA_LIBRARIES_DIRS} -L${LIBOMPTARGET_DEP_LIBHSAKMT_LIBRARIES_DIRS} -lhsa-runtime64 -lhsakmt -Wl,-rpath,${LIBOMPTARGET_DEP_LIBHSA_LIBRARIES_DIRS},-rpath,${LIBOMPTARGET_DEP_LIBHSAKMT_LIBRARIES_DIRS}
+  -L${HSA_LIB_PATH} -L${HSAKMT_LIB_PATH} -lhsa-runtime64 -lhsakmt -Wl,-rpath,${HSA_LIB_PATH},-rpath,${HSAKMT_LIB_PATH}
   -lelf
   "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/../exports"
   "-Wl,-z,defs"
