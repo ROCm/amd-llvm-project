@@ -20,6 +20,8 @@ set(src_files
   omptarget.cpp
 )
 
+add_definitions(${OPENMP_SOURCE_DEBUG_MAP})
+
 # Build libomptarget library with libdl dependency.
 add_library(omptarget SHARED ${src_files})
 target_link_libraries(omptarget
