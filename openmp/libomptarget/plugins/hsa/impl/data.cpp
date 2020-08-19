@@ -131,7 +131,7 @@ static hsa_status_t invoke_hsa_copy(hsa_signal_t sig, void *dest,
                                     hsa_agent_t agent) {
   const hsa_signal_value_t init = 1;
   const hsa_signal_value_t success = 0;
-  hsa_signal_store_release(sig, init);
+  hsa_signal_store_screlease(sig, init);
 
   hsa_status_t err = hsa_amd_memory_async_copy(dest, agent, src, agent, size, 0,
                                                NULL, sig);
@@ -142,8 +142,8 @@ static hsa_status_t invoke_hsa_copy(hsa_signal_t sig, void *dest,
   // async_copy reports success by decrementing and failure by setting to < 0
   hsa_signal_value_t got = init;
   while (got == init) {
-    got = hsa_signal_wait_acquire(sig, HSA_SIGNAL_CONDITION_NE, init,
-                                  UINT64_MAX, ATMI_WAIT_STATE);
+    got = hsa_signal_wait_scacquire(sig, HSA_SIGNAL_CONDITION_NE, init,
+                                    UINT64_MAX, ATMI_WAIT_STATE);
   }
 
   if (got != success) {
