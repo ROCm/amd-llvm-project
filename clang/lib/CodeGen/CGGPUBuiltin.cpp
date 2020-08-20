@@ -384,7 +384,7 @@ RValue CodeGenFunction::EmitHostrpcVargsFn(const CallExpr *E,
     TotalVarStrsLength = Builder.CreateAdd(
         TotalVarStrsLength,
         llvm::ConstantInt::get(Int32Ty, AllStringsLen_CT + DataLen_CT,
-                               "const_length_adder"),
+                               /* is signeed */ false),
         "total_buffer_size");
   llvm::Value *BufferLen =
       hasVarStrings
