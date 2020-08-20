@@ -36,7 +36,7 @@ INLINE static void data_sharing_init_stack_common() {
   for (int WID = 0; WID < DS_Max_Warp_Number; WID++) {
     __kmpc_data_sharing_slot *RootS = teamDescr->GetPreallocatedSlotAddr(WID);
     DataSharingState.SlotPtr[WID] = RootS;
-    DataSharingState.StackPtr[WID] = (void *)&RootS->Data[0];
+    DataSharingState.StackPtr[WID] = (void *)RootS->Data();
   }
 }
 
@@ -115,16 +115,16 @@ INLINE static void* data_sharing_push_stack_common(size_t PushSize) {
       NewSlot->Next = 0;
       NewSlot->Prev = SlotP;
       NewSlot->PrevSlotStackPtr = StackP;
-      NewSlot->DataEnd = &NewSlot->Data[0] + NewSize;
+      NewSlot->DataEnd = NewSlot->Data() + NewSize;
 
       // Make previous slot point to the newly allocated slot.
       SlotP->Next = NewSlot;
       // The current slot becomes the new slot.
       SlotP = NewSlot;
       // The stack pointer always points to the next free stack frame.
-      StackP = &NewSlot->Data[0] + PushSize;
+      StackP = NewSlot->Data() + PushSize;
       // The frame pointer always points to the beginning of the frame.
-      FrameP = DataSharingState.FramePtr[WID] = &NewSlot->Data[0];
+      FrameP = DataSharingState.FramePtr[WID] = NewSlot->Data();
     } else {
       // Add the data chunk to the current slot. The frame pointer is set to
       // point to the start of the new frame held in StackP.
@@ -197,7 +197,7 @@ EXTERN void __kmpc_data_sharing_pop_stack(void *FrameStart) {
 
     // If the current slot is empty, we need to free the slot after the
     // pop.
-    bool SlotEmpty = (StackP == &SlotP->Data[0]);
+    bool SlotEmpty = (StackP == SlotP->Data());
 
     if (SlotEmpty && SlotP->Prev) {
       // Before removing the slot we need to reset StackP.

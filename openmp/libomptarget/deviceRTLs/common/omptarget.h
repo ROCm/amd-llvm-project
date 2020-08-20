@@ -75,6 +75,17 @@ private:
 extern DEVICE SHARED omptarget_nvptx_SharedArgs
     omptarget_nvptx_globalArgs;
 
+// The slot used for data sharing by the master and worker threads. We use a
+// complete (default size version and an incomplete one so that we allow sizes
+// greater than the default). Is standard layout.
+struct __kmpc_data_sharing_slot {
+  __kmpc_data_sharing_slot *Next;
+  __kmpc_data_sharing_slot *Prev;
+  void *PrevSlotStackPtr;
+  void *DataEnd;
+  DEVICE char *Data() {return reinterpret_cast<char*>(this) + sizeof(__kmpc_data_sharing_slot);}
+};
+
 // Data structure to keep in shared memory that traces the current slot, stack,
 // and frame pointer as well as the active threads that didn't exit the current
 // environment.
@@ -87,19 +98,13 @@ struct DataSharingStateTy {
 // Additional worker slot type which is initialized with the default worker slot
 // size of 4*32 bytes.
 struct __kmpc_data_sharing_worker_slot_static {
-  __kmpc_data_sharing_slot *Next;
-  __kmpc_data_sharing_slot *Prev;
-  void *PrevSlotStackPtr;
-  void *DataEnd;
+  __kmpc_data_sharing_slot b;
   char Data[DS_Worker_Warp_Slot_Size];
 };
 // Additional master slot type which is initialized with the default master slot
 // size of 4 bytes.
 struct __kmpc_data_sharing_master_slot_static {
-  __kmpc_data_sharing_slot *Next;
-  __kmpc_data_sharing_slot *Prev;
-  void *PrevSlotStackPtr;
-  void *DataEnd;
+  __kmpc_data_sharing_slot b;
   char Data[DS_Slot_Size];
 };
 extern DEVICE SHARED DataSharingStateTy DataSharingState;
@@ -230,40 +235,40 @@ public:
     // initialize it with a smaller slot.
     if (IsMasterThread) {
       // Do not initialize this slot again if it has already been initalized.
-      if (master_rootS[0].DataEnd == &master_rootS[0].Data[0] + DS_Slot_Size)
+      if (master_rootS[0].b.DataEnd == master_rootS[0].b.Data() + DS_Slot_Size)
         return 0;
       // Initialize the pointer to the end of the slot given the size of the
       // data section. DataEnd is non-inclusive.
-      master_rootS[0].DataEnd = &master_rootS[0].Data[0] + DS_Slot_Size;
+      master_rootS[0].b.DataEnd = master_rootS[0].b.Data() + DS_Slot_Size;
       // We currently do not have a next slot.
-      master_rootS[0].Next = 0;
-      master_rootS[0].Prev = 0;
-      master_rootS[0].PrevSlotStackPtr = 0;
+      master_rootS[0].b.Next = 0;
+      master_rootS[0].b.Prev = 0;
+      master_rootS[0].b.PrevSlotStackPtr = 0;
       return (__kmpc_data_sharing_slot *)&master_rootS[0];
     }
     // Do not initialize this slot again if it has already been initalized.
-    if (worker_rootS[wid].DataEnd ==
-        &worker_rootS[wid].Data[0] + DS_Worker_Warp_Slot_Size)
+    if (worker_rootS[wid].b.DataEnd ==
+        worker_rootS[wid].b.Data() + DS_Worker_Warp_Slot_Size)
       return 0;
     // Initialize the pointer to the end of the slot given the size of the data
     // section. DataEnd is non-inclusive.
-    worker_rootS[wid].DataEnd =
-        &worker_rootS[wid].Data[0] + DS_Worker_Warp_Slot_Size;
+    worker_rootS[wid].b.DataEnd =
+        worker_rootS[wid].b.Data() + DS_Worker_Warp_Slot_Size;
     // We currently do not have a next slot.
-    worker_rootS[wid].Next = 0;
-    worker_rootS[wid].Prev = 0;
-    worker_rootS[wid].PrevSlotStackPtr = 0;
-    return (__kmpc_data_sharing_slot *)&worker_rootS[wid];
+    worker_rootS[wid].b.Next = 0;
+    worker_rootS[wid].b.Prev = 0;
+    worker_rootS[wid].b.PrevSlotStackPtr = 0;
+    return (__kmpc_data_sharing_slot *)&worker_rootS[wid].b;
   }
 
   INLINE __kmpc_data_sharing_slot *GetPreallocatedSlotAddr(int wid) {
-    worker_rootS[wid].DataEnd =
-        &worker_rootS[wid].Data[0] + DS_Worker_Warp_Slot_Size;
+    worker_rootS[wid].b.DataEnd =
+        worker_rootS[wid].b.Data() + DS_Worker_Warp_Slot_Size;
     // We currently do not have a next slot.
-    worker_rootS[wid].Next = 0;
-    worker_rootS[wid].Prev = 0;
-    worker_rootS[wid].PrevSlotStackPtr = 0;
-    return (__kmpc_data_sharing_slot *)&worker_rootS[wid];
+    worker_rootS[wid].b.Next = 0;
+    worker_rootS[wid].b.Prev = 0;
+    worker_rootS[wid].b.PrevSlotStackPtr = 0;
+    return (__kmpc_data_sharing_slot *)&worker_rootS[wid].b;
   }
 
 private:
