@@ -264,7 +264,7 @@ void Flang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Contiguous pointer checks
   if (Arg *A = Args.getLastArg(options::OPT_fsanitize_EQ)) {
-    for (const StringRef &val : A->getValues()) {
+    for (const StringRef val : A->getValues()) {
       if (val.equals("discontiguous") || val.equals("undefined") ) {
         // -x 54 0x40 -x 54 0x80 -x 54 0x200
         UpperCmdArgs.push_back("-x");

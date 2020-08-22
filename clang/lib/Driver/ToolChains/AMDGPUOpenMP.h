@@ -131,9 +131,6 @@ public:
 
 protected:
   Tool *buildLinker() const override;
-
-private:
-  const Action::OffloadKind OK;
 };
 
 } // end namespace toolchains

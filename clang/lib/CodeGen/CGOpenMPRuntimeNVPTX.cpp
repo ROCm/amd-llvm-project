@@ -1251,7 +1251,6 @@ void CGOpenMPRuntimeNVPTX::GenerateMetaData(CodeGenModule &CGM,
   // Emitting Metadata for thread_limit causes an issue in ISEL, due to
   // an optimization in OPT.
   // See line 230 lib/Target/AMDGPU/AMDGPULowerKernelAttributes.cpp
-  bool enableMetaOptBug = false;
   bool flatAttrEmitted = false;
   int FlatAttr = 0;
   int DefaultWorkGroupSz =
@@ -2867,9 +2866,6 @@ void CGOpenMPRuntimeNVPTX::emitNonSPMDParallelCall(
 
   // Force inline this outlined function at its call site.
   Fn->setLinkage(llvm::GlobalValue::InternalLinkage);
-
-  bool Is_amdgcn =
-      (CGM.getTriple().getArch() == llvm::Triple::amdgcn) ? true : false;
 
   Address ZeroAddr = CGF.CreateDefaultAlignTempAlloca(CGF.Int32Ty,
                                                       /*Name=*/".zero.addr");
