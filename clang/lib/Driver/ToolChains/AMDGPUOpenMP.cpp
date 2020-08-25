@@ -453,7 +453,7 @@ void AMDGPUOpenMPToolChain::addClangTargetOptions(
 
   } else {
     if (!RocmInstallation.hasDeviceLibrary()) {
-      getDriver().Diag(diag::err_drv_no_cuda_installation);
+      getDriver().Diag(diag::err_drv_no_rocm_device_lib) << 0;
       return;
     }
 
