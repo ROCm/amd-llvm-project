@@ -25,13 +25,13 @@ class ompd_address_space(object):
 		self.threads = {}
 		self.states = None
 		self.icv_map = None
-                self.ompd_tool_test_bp = None
+		self.ompd_tool_test_bp = None
 		self.scope_map = {1:'global', 2:'address_space', 3:'thread', 4:'parallel', 5:'implicit_task', 6:'task'}
 		gdb.events.stop.connect(self.handle_stop_event)
 		self.new_thread_breakpoint = gdb.Breakpoint("ompd_bp_thread_begin", internal=True)
-                tool_break_symbol = gdb.lookup_global_symbol("ompd_tool_break")
-                if tool_break_symbol is not None:
-		        self.ompd_tool_test_bp = gdb.Breakpoint("ompd_tool_break", internal=True)
+		tool_break_symbol = gdb.lookup_global_symbol("ompd_tool_break")
+		if (tool_break_symbol is not None):
+			self.ompd_tool_test_bp = gdb.Breakpoint("ompd_tool_break", internal=True)
 	
 	def handle_stop_event(self, event):
 		"""Sets a breakpoint at different events, e.g. when a new OpenMP 
@@ -43,8 +43,11 @@ class ompd_address_space(object):
 				self.add_thread()
 				gdb.execute('continue')
 				return
-			elif(self.ompd_tool_test_bp is not None and self.ompd_tool_test_bp in event.breakpoints):
-				self.compare_ompt_data()
+			elif (self.ompd_tool_test_bp is not None and self.ompd_tool_test_bp in event.breakpoints):
+				try:
+					self.compare_ompt_data()
+				except():
+					traceback.print_exc()
 		elif (isinstance(event, gdb.SignalEvent)):
 			# TODO: what do we need to do on SIGNALS?
 			pass
@@ -213,7 +216,7 @@ class ompd_address_space(object):
 		# compare enter and exit frames
 		if 'ompt_frame_list' in field_names:
 			ompt_task_frame_dict = thread_data['ompt_frame_list'].dereference()
-			ompt_task_frames = (long(ompt_task_frame_dict['enter_frame']), long(ompt_task_frame_dict['exit_frame']))
+			ompt_task_frames = (int(ompt_task_frame_dict['enter_frame']), int(ompt_task_frame_dict['exit_frame']))
 			current_task = curr_thread.get_current_task()
 			ompd_task_frames = current_task.get_task_frame()
 			if ompt_task_frames != ompd_task_frames:
@@ -282,7 +285,7 @@ class ompd_address_space(object):
 		"""
 		if self.states is None:
 			self.states = {}
-			current = long("0x102", 0)
+			current = int("0x102", 0)
 			count = 0
 			more = 1
 			

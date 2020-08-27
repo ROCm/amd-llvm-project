@@ -143,9 +143,10 @@ ompd_rc_t ompd_device_initialize(
   for (uint64_t i = 0; i < ompd_num_cuda_devices; i++) {
     uint64_t cuda_ctx;
 
-    ret = TValue(process_handle->context, "ompd_CudaContextArray").
-          cast("ompd_cuda_context_ptr_t",1).
+    ret = TValue(process_handle->context, "ompd_CudaDeviceDataArray").
+          cast("DeviceDataTy",1).
           getArrayElement(i).
+          access("Context").
           castBase(ompd_type_long_long).
           getValue(cuda_ctx);
 
