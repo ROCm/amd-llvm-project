@@ -23,11 +23,11 @@
 #include <libelf.h>
 #include <list>
 #include <memory>
-#include <unordered_map>
-#include <vector>
 #include <mutex>
 #include <shared_mutex>
 #include <thread>
+#include <unordered_map>
+#include <vector>
 
 // Header from ATMI interface
 #include "atmi_interop_hsa.h"
@@ -116,7 +116,8 @@ enum ExecutionModeType {
 
 struct KernelArgPool {
 private:
-    static pthread_mutex_t mutex;
+  static pthread_mutex_t mutex;
+
 public:
   uint32_t kernarg_segment_size;
   void *kernarg_region = nullptr;
@@ -338,7 +339,7 @@ public:
 
   struct atmiFreePtrDeletor {
     void operator()(void *p) {
-      atmi_free(p);  // ignore failure to free      
+      atmi_free(p); // ignore failure to free
     }
   };
 
@@ -357,7 +358,8 @@ public:
   static const int Default_WG_Size =
       llvm::omp::AMDGPUGpuGridValues[llvm::omp::GVIDX::GV_Default_WG_Size];
 
-  atmi_status_t freesignalpool_memcpy(void *dest, const void *src, size_t size) {
+  atmi_status_t freesignalpool_memcpy(void *dest, const void *src,
+                                      size_t size) {
     hsa_signal_t s = FreeSignalPool.pop();
     if (s.handle == 0) {
       return ATMI_STATUS_ERROR;
@@ -468,7 +470,7 @@ public:
     NumTeams.resize(NumberOfDevices);
     NumThreads.resize(NumberOfDevices);
     deviceStateStore.resize(NumberOfDevices);
-    
+
     for (int i = 0; i < NumberOfDevices; i++) {
       uint32_t queue_size = 0;
       {
@@ -541,7 +543,6 @@ public:
     atmi_finalize();
   }
 };
-
 
 pthread_mutex_t SignalPoolT::mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -925,9 +926,8 @@ static uint64_t get_device_State_bytes(char *ImageStart, size_t img_size) {
 static __tgt_target_table *
 __tgt_rtl_load_binary_locked(int32_t device_id, __tgt_device_image *image);
 
-static __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
-                                                 __tgt_device_image *image);
-
+static __tgt_target_table *
+__tgt_rtl_load_binary_locked(int32_t device_id, __tgt_device_image *image);
 
 __tgt_target_table *__tgt_rtl_load_binary(int32_t device_id,
                                           __tgt_device_image *image) {
@@ -1041,8 +1041,8 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
       return NULL;
     }
     if (state_ptr_size != sizeof(void *)) {
-      fprintf(stderr, "unexpected size of state_ptr %u != %zu\n", state_ptr_size,
-              sizeof(void *));
+      fprintf(stderr, "unexpected size of state_ptr %u != %zu\n",
+              state_ptr_size, sizeof(void *));
       return NULL;
     }
 
@@ -1173,7 +1173,6 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
     err = interop_get_symbol_info((char *)image->ImageStart, img_size,
                                   KernDescName, &KernDescPtr, &KernDescSize);
 
-
     if (err == ATMI_STATUS_SUCCESS) {
       if ((size_t)KernDescSize != sizeof(KernDescVal))
         DP("Loading global computation properties '%s' - size mismatch (%u != "
@@ -1276,8 +1275,8 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
 
       void *WGSizePtr;
       uint32_t WGSize;
-      err = interop_get_symbol_info((char *)image->ImageStart, img_size, WGSizeName,
-                              &WGSizePtr, &WGSize);
+      err = interop_get_symbol_info((char *)image->ImageStart, img_size,
+                                    WGSizeName, &WGSizePtr, &WGSize);
 
       if (err == ATMI_STATUS_SUCCESS) {
         if ((size_t)WGSize != sizeof(int16_t)) {
@@ -1545,7 +1544,8 @@ static void *AllocateNestedParallelCallMemory(int MaxParLevel, int NumGroups,
   void *TgtPtr = NULL;
   atmi_status_t err =
       atmi_malloc(&TgtPtr, NestedMemSize, get_gpu_mem_place(device_id));
-  err = DeviceInfo.freesignalpool_memcpy(CallStackAddr, &TgtPtr, sizeof(void *));
+  err =
+      DeviceInfo.freesignalpool_memcpy(CallStackAddr, &TgtPtr, sizeof(void *));
   if (print_kernel_trace > 2)
     fprintf(stderr, "CallSck %lx TgtPtr %lx *TgtPtr %lx \n",
             (long)CallStackAddr, (long)&TgtPtr, (long)TgtPtr);
@@ -1572,10 +1572,12 @@ static int32_t __tgt_rtl_run_target_team_region_locked(
     ptrdiff_t *tgt_offsets, int32_t arg_num, int32_t num_teams,
     int32_t thread_limit, uint64_t loop_tripcount);
 
-int32_t __tgt_rtl_run_target_team_region(
-    int32_t device_id, void *tgt_entry_ptr, void **tgt_args,
-    ptrdiff_t *tgt_offsets, int32_t arg_num, int32_t num_teams,
-    int32_t thread_limit, uint64_t loop_tripcount) {
+int32_t __tgt_rtl_run_target_team_region(int32_t device_id, void *tgt_entry_ptr,
+                                         void **tgt_args,
+                                         ptrdiff_t *tgt_offsets,
+                                         int32_t arg_num, int32_t num_teams,
+                                         int32_t thread_limit,
+                                         uint64_t loop_tripcount) {
 
   DeviceInfo.load_run_lock.lock_shared();
   int32_t res = __tgt_rtl_run_target_team_region_locked(
@@ -1586,14 +1588,12 @@ int32_t __tgt_rtl_run_target_team_region(
   return res;
 }
 
-int32_t __tgt_rtl_run_target_team_region_locked(int32_t device_id, void *tgt_entry_ptr,
-                                         void **tgt_args,
-                                         ptrdiff_t *tgt_offsets,
-                                         int32_t arg_num, int32_t num_teams,
-                                         int32_t thread_limit,
-                                         uint64_t loop_tripcount) {
+int32_t __tgt_rtl_run_target_team_region_locked(
+    int32_t device_id, void *tgt_entry_ptr, void **tgt_args,
+    ptrdiff_t *tgt_offsets, int32_t arg_num, int32_t num_teams,
+    int32_t thread_limit, uint64_t loop_tripcount) {
   static pthread_mutex_t nested_parallel_mutex = PTHREAD_MUTEX_INITIALIZER;
-  
+
   // Set the context we are using
   // update thread limit content in gpu memory if un-initialized or specified
   // from host
