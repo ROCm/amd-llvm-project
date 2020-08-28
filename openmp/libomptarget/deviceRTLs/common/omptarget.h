@@ -388,8 +388,8 @@ typedef void *omptarget_nvptx_WorkFn;
 extern volatile DEVICE SHARED omptarget_nvptx_WorkFn
     omptarget_nvptx_workFn;
 #ifdef __AMDGCN__
-extern DEVICE SHARED bool omptarget_workers_active;
-extern DEVICE SHARED bool omptarget_master_active;
+extern volatile DEVICE SHARED bool omptarget_workers_active;
+extern volatile DEVICE SHARED bool omptarget_master_active;
 #endif
 
 ////////////////////////////////////////////////////////////////////////////////

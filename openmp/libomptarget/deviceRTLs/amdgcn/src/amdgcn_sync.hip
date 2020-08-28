@@ -27,6 +27,7 @@
 /// barrier.
 EXTERN void __kmpc_amd_worker_start(kmp_Ident *loc_ref, int32_t tid) {
   PRINT0(LD_SYNC, "call kmpc_amd_worker_start\n");
+  omptarget_master_active = true;
   omptarget_workers_active = false;
   __kmpc_impl_syncthreads();
   while(omptarget_master_active) __kmpc_impl_syncthreads();
@@ -51,6 +52,7 @@ EXTERN void __kmpc_amd_worker_end(kmp_Ident *loc_ref, int32_t tid) {
 EXTERN void __kmpc_amd_master_start(kmp_Ident *loc_ref, int32_t tid) {
   PRINT0(LD_SYNC, "call kmpc_amd_master_start\n");
   omptarget_master_active = true;
+  omptarget_workers_active = false;
   PRINT0(LD_SYNC, "completed kmpc_amd_master_start\n");
 }
 
@@ -60,19 +62,28 @@ EXTERN void __kmpc_amd_master_start(kmp_Ident *loc_ref, int32_t tid) {
 /// warps encounter a user barrier (implicitly or explicitly), the master
 /// warp needs to loop at the barrier until it knows the worker is
 /// really done by testing omptarget_workers_active.
+/// A better name for this routine is __kmpc_amd_master_hold_for_workers
 EXTERN void __kmpc_amd_master_end(kmp_Ident *loc_ref, int32_t tid) {
   PRINT0(LD_SYNC, "call kmpc_amd_master_end\n");
   omptarget_master_active = false;
-  __kmpc_impl_syncthreads();
-  __kmpc_impl_syncthreads();
+  omptarget_workers_active = true;
   while(omptarget_workers_active) __kmpc_impl_syncthreads();
+  omptarget_workers_active = true;
+  while(omptarget_workers_active) __kmpc_impl_syncthreads();
+  // The worker encountered worker_end, set workers_active false, and then
+  // issued barrier which equates to barrier above. Now master is active
+  // and the worker waits on another barrier.
+  omptarget_master_active = true;
   PRINT0(LD_SYNC, "completed kmpc_amd_master_end\n");
 }
 
 EXTERN void __kmpc_amd_master_terminate(kmp_Ident *loc_ref, int32_t tid) {
   PRINT0(LD_SYNC, "call kmpc_amd_master_terminate\n");
   omptarget_master_active = false;
+  // This sync needed to get worker out of worker_start.
+  while(omptarget_workers_active) __kmpc_impl_syncthreads();
   __kmpc_impl_syncthreads();
+  // someone should have set work_fn to 0 to force an exit
   PRINT0(LD_SYNC, "completed kmpc_amd_master_terminate\n");
 }
 

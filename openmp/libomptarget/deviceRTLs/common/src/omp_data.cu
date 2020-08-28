@@ -76,8 +76,8 @@ DEVICE SHARED omptarget_nvptx_ThreadPrivateContext
 ////////////////////////////////////////////////////////////////////////////////
 volatile DEVICE SHARED omptarget_nvptx_WorkFn omptarget_nvptx_workFn;
 #ifdef __AMDGCN__
-DEVICE SHARED bool omptarget_workers_active;
-DEVICE SHARED bool omptarget_master_active;
+volatile DEVICE SHARED bool omptarget_workers_active;
+volatile DEVICE SHARED bool omptarget_master_active;
 #endif
 
     ////////////////////////////////////////////////////////////////////////////////
