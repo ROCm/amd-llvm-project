@@ -53,18 +53,6 @@ static int DebugLevel = 0;
 
 #include "../../common/elf_common.c"
 
-#if OMPD_SUPPORT
-#ifdef __cplusplus
-extern "C" {
-#endif
-  /* TODO - Put these OMPD globals someplace cleaner */
-  uint64_t ompd_num_cuda_devices;
-  CUcontext* ompd_CudaContextArray;
-#ifdef __cplusplus
-}
-#endif /* __cplusplus */
-#endif /* OMPD_SUPPORT */
-
 
 /// Keep entries table per device.
 struct FuncOrGblEntryTy {
@@ -141,6 +129,20 @@ struct DeviceDataTy {
   int NumTeams = 0;
   int NumThreads = 0;
 };
+
+#if OMPD_SUPPORT
+#ifdef __cplusplus
+extern "C" {
+#endif
+  /* TODO - Put these OMPD globals someplace cleaner */
+  uint64_t ompd_num_cuda_devices;
+  DeviceDataTy* ompd_CudaDeviceDataArray;
+  uint64_t ompd_access__DeviceDataTy__Context;
+  uint64_t ompd_sizeof__DeviceDataTy__Context;
+#ifdef __cplusplus
+}
+#endif /* __cplusplus */
+#endif /* OMPD_SUPPORT */
 
 class StreamManagerTy {
   int NumberOfDevices;
@@ -369,12 +371,13 @@ public:
       return;
     }
 
-    DeviceData.resize(NumberOfDevices);
 #if OMPD_SUPPORT
-    ompd_num_cuda_devices = (uint64_t) NumberOfDevices;
-    // ompd_CudaContextArray = &DeviceData[0];
-    ompd_CudaContextArray = nullptr; // temp till we figure this out
+    ompd_access__DeviceDataTy__Context = (uint64_t)&(((DeviceDataTy*)0)->Context);
+    ompd_sizeof__DeviceDataTy__Context = sizeof(((DeviceDataTy*)0)->Context);
+    ompd_num_cuda_devices = NumberOfDevices;
+    ompd_CudaDeviceDataArray = &DeviceData[0];
 #endif /* OMPD_SUPPORT */
+    DeviceData.resize(NumberOfDevices);
 
     // Get environment variables regarding teams
     if (const char *EnvStr = getenv("OMP_TEAM_LIMIT")) {

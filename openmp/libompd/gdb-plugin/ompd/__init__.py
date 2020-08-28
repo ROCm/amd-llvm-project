@@ -8,7 +8,7 @@ if __name__ == "__main__":
 		
 		import ompd
 		ompd.main()
-		print 'OMPD GDB support loaded'
+		print('OMPD GDB support loaded')
 	except Exception as e:
 		traceback.print_exc()
 		print('Error: OMPD support could not be loaded', e)
