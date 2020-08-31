@@ -932,8 +932,11 @@ AArch64TargetLowering::AArch64TargetLowering(const TargetMachine &TM,
         setOperationAction(ISD::SHL, VT, Custom);
         setOperationAction(ISD::SRL, VT, Custom);
         setOperationAction(ISD::SRA, VT, Custom);
-        if (VT.getScalarType() == MVT::i1)
+        if (VT.getScalarType() == MVT::i1) {
           setOperationAction(ISD::SETCC, VT, Custom);
+          setOperationAction(ISD::TRUNCATE, VT, Custom);
+          setOperationAction(ISD::CONCAT_VECTORS, VT, Legal);
+        }
       }
     }
 
@@ -963,12 +966,15 @@ AArch64TargetLowering::AArch64TargetLowering(const TargetMachine &TM,
           addTypeForFixedLengthSVE(VT);
 
       // 64bit results can mean a bigger than NEON input.
-      for (auto VT : {MVT::v8i8, MVT::v4i16, MVT::v2i32})
+      for (auto VT : {MVT::v8i8, MVT::v4i16})
         setOperationAction(ISD::TRUNCATE, VT, Custom);
+      setOperationAction(ISD::FP_ROUND, MVT::v4f16, Custom);
 
       // 128bit results imply a bigger than NEON input.
       for (auto VT : {MVT::v16i8, MVT::v8i16, MVT::v4i32})
         setOperationAction(ISD::TRUNCATE, VT, Custom);
+      for (auto VT : {MVT::v8f16, MVT::v4f32})
+        setOperationAction(ISD::FP_ROUND, VT, Expand);
     }
   }
 
@@ -2712,13 +2718,19 @@ SDValue AArch64TargetLowering::LowerFP_ROUND(SDValue Op,
                                              SelectionDAG &DAG) const {
   bool IsStrict = Op->isStrictFPOpcode();
   SDValue SrcVal = Op.getOperand(IsStrict ? 1 : 0);
-  if (SrcVal.getValueType() != MVT::f128) {
+  EVT SrcVT = SrcVal.getValueType();
+
+  if (SrcVT != MVT::f128) {
+    // Expand cases where the input is a vector bigger than NEON.
+    if (useSVEForFixedLengthVectorVT(SrcVT))
+      return SDValue();
+
     // It's legal except when f128 is involved
     return Op;
   }
 
   RTLIB::Libcall LC;
-  LC = RTLIB::getFPROUND(SrcVal.getValueType(), Op.getValueType());
+  LC = RTLIB::getFPROUND(SrcVT, Op.getValueType());
 
   // FP_ROUND node has a second operand indicating whether it is known to be
   // precise. That doesn't take part in the LibCall so we can't directly use
@@ -4095,6 +4107,7 @@ static bool canGuaranteeTCO(CallingConv::ID CC) {
 static bool mayTailCallThisCC(CallingConv::ID CC) {
   switch (CC) {
   case CallingConv::C:
+  case CallingConv::AArch64_SVE_VectorCall:
   case CallingConv::PreserveMost:
   case CallingConv::Swift:
     return true;
@@ -4114,6 +4127,15 @@ bool AArch64TargetLowering::isEligibleForTailCallOptimization(
   MachineFunction &MF = DAG.getMachineFunction();
   const Function &CallerF = MF.getFunction();
   CallingConv::ID CallerCC = CallerF.getCallingConv();
+
+  // If this function uses the C calling convention but has an SVE signature,
+  // then it preserves more registers and should assume the SVE_VectorCall CC.
+  // The check for matching callee-saved regs will determine whether it is
+  // eligible for TCO.
+  if (CallerCC == CallingConv::C &&
+      AArch64RegisterInfo::hasSVEArgsOrReturn(&MF))
+    CallerCC = CallingConv::AArch64_SVE_VectorCall;
+
   bool CCMatch = CallerCC == CalleeCC;
 
   // When using the Windows calling convention on a non-windows OS, we want
@@ -4300,6 +4322,20 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
   AArch64FunctionInfo *FuncInfo = MF.getInfo<AArch64FunctionInfo>();
   bool TailCallOpt = MF.getTarget().Options.GuaranteedTailCallOpt;
   bool IsSibCall = false;
+
+  // Check callee args/returns for SVE registers and set calling convention
+  // accordingly.
+  if (CallConv == CallingConv::C) {
+    bool CalleeOutSVE = any_of(Outs, [](ISD::OutputArg &Out){
+      return Out.VT.isScalableVector();
+    });
+    bool CalleeInSVE = any_of(Ins, [](ISD::InputArg &In){
+      return In.VT.isScalableVector();
+    });
+
+    if (CalleeInSVE || CalleeOutSVE)
+      CallConv = CallingConv::AArch64_SVE_VectorCall;
+  }
 
   if (IsTailCall) {
     // Check if it's really possible to do a tail call.
@@ -4653,20 +4689,6 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
   for (auto &RegToPass : RegsToPass)
     Ops.push_back(DAG.getRegister(RegToPass.first,
                                   RegToPass.second.getValueType()));
-
-  // Check callee args/returns for SVE registers and set calling convention
-  // accordingly.
-  if (CallConv == CallingConv::C) {
-    bool CalleeOutSVE = any_of(Outs, [](ISD::OutputArg &Out){
-      return Out.VT.isScalableVector();
-    });
-    bool CalleeInSVE = any_of(Ins, [](ISD::InputArg &In){
-      return In.VT.isScalableVector();
-    });
-
-    if (CalleeInSVE || CalleeOutSVE)
-      CallConv = CallingConv::AArch64_SVE_VectorCall;
-  }
 
   // Add a register mask operand representing the call-preserved registers.
   const uint32_t *Mask;
@@ -8849,6 +8871,16 @@ SDValue AArch64TargetLowering::LowerTRUNCATE(SDValue Op,
                                              SelectionDAG &DAG) const {
   EVT VT = Op.getValueType();
 
+  if (VT.getScalarType() == MVT::i1) {
+    // Lower i1 truncate to `(x & 1) != 0`.
+    SDLoc dl(Op);
+    EVT OpVT = Op.getOperand(0).getValueType();
+    SDValue Zero = DAG.getConstant(0, dl, OpVT);
+    SDValue One = DAG.getConstant(1, dl, OpVT);
+    SDValue And = DAG.getNode(ISD::AND, dl, OpVT, Op.getOperand(0), One);
+    return DAG.getSetCC(dl, VT, And, Zero, ISD::SETNE);
+  }
+
   if (!VT.isVector() || VT.isScalableVector())
     return Op;
 
@@ -12279,6 +12311,9 @@ static SDValue performLD1ReplicateCombine(SDNode *N, SelectionDAG &DAG) {
                 "Unsupported opcode.");
   SDLoc DL(N);
   EVT VT = N->getValueType(0);
+  if (VT == MVT::nxv8bf16 &&
+      !static_cast<const AArch64Subtarget &>(DAG.getSubtarget()).hasBF16())
+    return SDValue();
 
   EVT LoadVT = VT;
   if (VT.isFloatingPoint())
@@ -14899,6 +14934,11 @@ bool AArch64TargetLowering::fallBackToDAGISel(const Instruction &Inst) const {
   for (unsigned i = 0; i < Inst.getNumOperands(); ++i)
     if (isa<ScalableVectorType>(Inst.getOperand(i)->getType()))
       return true;
+
+  if (const AllocaInst *AI = dyn_cast<AllocaInst>(&Inst)) {
+    if (isa<ScalableVectorType>(AI->getAllocatedType()))
+      return true;
+  }
 
   return false;
 }

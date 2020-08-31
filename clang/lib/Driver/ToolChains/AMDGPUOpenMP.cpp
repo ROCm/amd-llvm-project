@@ -214,10 +214,10 @@ const char *AMDGCN::OpenMPLinker::constructLLVMLinkCommand(
 
   // for OpenMP, we already did this in clang-build-select-link
   if (JA.getOffloadingDeviceKind() != Action::OFK_OpenMP)
-     AddStaticDeviceLibs(C, *this, JA, Inputs, Args, CmdArgs, "amdgcn",
-                      SubArchName,
-                      /* bitcode SDL?*/ true,
-                      /* PostClang Link? */ false);
+    AddStaticDeviceLibs(C, *this, JA, Inputs, Args, CmdArgs, "amdgcn",
+                        SubArchName,
+                        /* bitcode SDL?*/ true,
+                        /* PostClang Link? */ false);
 
   // Add an intermediate output file.
   CmdArgs.push_back("-o");
@@ -439,7 +439,7 @@ void AMDGPUOpenMPToolChain::addClangTargetOptions(
 
   // Find in --hip-device-lib-path and HIP_LIBRARY_PATH.
   for (auto Path :
-       DriverArgs.getAllArgValues(options::OPT_hip_device_lib_path_EQ))
+       DriverArgs.getAllArgValues(options::OPT_rocm_device_lib_path_EQ))
     LibraryPaths.push_back(DriverArgs.MakeArgString(Path));
 
   addDirectoryList(DriverArgs, LibraryPaths, "", "HIP_DEVICE_LIB_PATH");
@@ -452,8 +452,8 @@ void AMDGPUOpenMPToolChain::addClangTargetOptions(
                /* PostClang Link? */ true);
 
   } else {
-    if (!RocmInstallation.isValid()) {
-      getDriver().Diag(diag::err_drv_no_rocm_installation);
+    if (!RocmInstallation.hasDeviceLibrary()) {
+      getDriver().Diag(diag::err_drv_no_cuda_installation);
       return;
     }
 

@@ -465,6 +465,8 @@ protected:
 public:
   OpenBSDTargetInfo(const llvm::Triple &Triple, const TargetOptions &Opts)
       : OSTargetInfo<Target>(Triple, Opts) {
+    this->IntMaxType = TargetInfo::SignedLongLong;
+    this->Int64Type = TargetInfo::SignedLongLong;
     switch (Triple.getArch()) {
     case llvm::Triple::x86:
     case llvm::Triple::x86_64:
@@ -821,7 +823,7 @@ class LLVM_LIBRARY_VISIBILITY WebAssemblyOSTargetInfo
     : public OSTargetInfo<Target> {
 protected:
   void getOSDefines(const LangOptions &Opts, const llvm::Triple &Triple,
-                    MacroBuilder &Builder) const {
+                    MacroBuilder &Builder) const override {
     // A common platform macro.
     if (Opts.POSIXThreads)
       Builder.defineMacro("_REENTRANT");

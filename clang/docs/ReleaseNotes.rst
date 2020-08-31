@@ -108,6 +108,39 @@ New Compiler Flags
   By default, this is ~/.cache but on some platforms or installations, this
   might be elsewhere. The -fmodules-cache-path=... flag continues to work.
 
+- -fpch-instantiate-templates tries to instantiate templates already while
+  generating a precompiled header. Such templates do not need to be
+  instantiated every time the precompiled header is used, which saves compile
+  time. This may result in an error during the precompiled header generation
+  if the source header file is not self-contained. This option is enabled
+  by default for clang-cl.
+
+- -fpch-codegen and -fpch-debuginfo generate shared code and/or debuginfo
+  for contents of a precompiled header in a separate object file. This object
+  file needs to be linked in, but its contents do not need to be generated
+  for other objects using the precompiled header. This should usually save
+  compile time. If not using clang-cl, the separate object file needs to
+  be created explicitly from the precompiled header.
+  Example of use:
+
+  .. code-block:: console
+
+    $ clang++ -x c++-header header.h -o header.pch -fpch-codegen -fpch-debuginfo
+    $ clang++ -c header.pch -o shared.o
+    $ clang++ -c source.cpp -o source.o -include-pch header.pch
+    $ clang++ -o binary source.o shared.o
+
+  - Using -fpch-instantiate-templates when generating the precompiled header
+    usually increases the amount of code/debuginfo that can be shared.
+  - In some cases, especially when building with optimizations enabled, using
+    -fpch-codegen may generate so much code in the shared object that compiling
+    it may be a net loss in build time.
+  - Since headers may bring in private symbols of other libraries, it may be
+    sometimes necessary to discard unused symbols (such as by adding
+    -Wl,--gc-sections on ELF platforms to the linking command, and possibly
+    adding -fdata-sections -ffunction-sections to the command generating
+    the shared object).
+
 Deprecated Compiler Flags
 -------------------------
 
@@ -157,6 +190,16 @@ Attribute Changes in Clang
 
 Windows Support
 ---------------
+
+- Don't warn about `ms_struct may not produce Microsoft-compatible layouts
+  for classes with base classes or virtual functions` if the option is
+  enabled globally, as opposed to enabled on a specific class/struct or
+  on a specific section in the source files. This avoids needing to
+  couple `-mms-bitfields` with `-Wno-incompatible-ms-struct` if building
+  C++ code.
+
+- Enable `-mms-bitfields` by default for MinGW targets, matching a similar
+  change in GCC 4.7.
 
 C Language Changes in Clang
 ---------------------------

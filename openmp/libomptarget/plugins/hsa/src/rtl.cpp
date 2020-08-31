@@ -25,6 +25,9 @@
 #include <memory>
 #include <unordered_map>
 #include <vector>
+#include <mutex>
+#include <shared_mutex>
+#include <thread>
 
 // Header from ATMI interface
 #include "atmi_interop_hsa.h"
@@ -52,7 +55,7 @@ extern "C" hsa_status_t hostrpc_terminate();
 int print_kernel_trace;
 
 // Size of the target call stack struture
-int32_t TgtStackItemSize = 0;
+uint32_t TgtStackItemSize = 0;
 
 #ifdef OMPTARGET_DEBUG
 static int DebugLevel = 0;
@@ -112,8 +115,10 @@ enum ExecutionModeType {
 };
 
 struct KernelArgPool {
+private:
+    static pthread_mutex_t mutex;
+public:
   uint32_t kernarg_segment_size;
-  pthread_mutex_t mutex;
   void *kernarg_region = nullptr;
   std::queue<int> free_kernarg_segments;
 
@@ -127,20 +132,18 @@ struct KernelArgPool {
       assert(r == HSA_STATUS_SUCCESS);
       ErrorCheck(Memory pool free, r);
     }
-    pthread_mutex_destroy(&mutex);
   }
 
   // Can't really copy or move a mutex
+  KernelArgPool() = default;
   KernelArgPool(const KernelArgPool &) = delete;
   KernelArgPool(KernelArgPool &&) = delete;
-  KernelArgPool() { pthread_mutex_init(&mutex, NULL); }
 
   KernelArgPool(uint32_t kernarg_segment_size)
       : kernarg_segment_size(kernarg_segment_size) {
 
     // atmi uses one pool per kernel for all gpus, with a fixed upper size
     // preserving that exact scheme here, including the queue<int>
-    pthread_mutex_init(&mutex, NULL);
     {
       hsa_status_t err = hsa_amd_memory_pool_allocate(
           atl_gpu_kernarg_pools[0],
@@ -157,7 +160,7 @@ struct KernelArgPool {
 
   void *allocate(uint64_t arg_num) {
     assert((arg_num * sizeof(void *)) == kernarg_segment_size);
-    pthread_mutex_lock(&mutex);
+    lock l(&mutex);
     void *res = nullptr;
     if (!free_kernarg_segments.empty()) {
 
@@ -167,15 +170,13 @@ struct KernelArgPool {
       assert(free_idx == pointer_to_index(res));
       free_kernarg_segments.pop();
     }
-    pthread_mutex_unlock(&mutex);
     return res;
   }
 
   void deallocate(void *ptr) {
+    lock l(&mutex);
     int idx = pointer_to_index(ptr);
-    pthread_mutex_lock(&mutex);
     free_kernarg_segments.push(idx);
-    pthread_mutex_unlock(&mutex);
   }
 
 private:
@@ -186,7 +187,13 @@ private:
     assert(bytes % kernarg_size_including_implicit() == 0);
     return bytes / kernarg_size_including_implicit();
   }
+  struct lock {
+    lock(pthread_mutex_t *m) : m(m) { pthread_mutex_lock(m); }
+    ~lock() { pthread_mutex_unlock(m); }
+    pthread_mutex_t *m;
+  };
 };
+pthread_mutex_t KernelArgPool::mutex = PTHREAD_MUTEX_INITIALIZER;
 
 std::unordered_map<std::string /*kernel*/, std::unique_ptr<KernelArgPool>>
     KernelArgPoolMap;
@@ -298,6 +305,10 @@ class RTLDeviceInfoTy {
   std::vector<std::list<FuncOrGblEntryTy>> FuncGblEntries;
 
 public:
+  // load binary populates symbol tables and mutates various global state
+  // run uses those symbol tables
+  std::shared_timed_mutex load_run_lock;
+
   int NumberOfDevices;
 
   // GPU devices
@@ -322,7 +333,19 @@ public:
   // OpenMP Requires Flags
   int64_t RequiresFlags;
 
-  // static int EnvNumThreads;
+  // Resource pools
+  SignalPoolT FreeSignalPool;
+
+  struct atmiFreePtrDeletor {
+    void operator()(void *p) {
+      atmi_free(p);  // ignore failure to free      
+    }
+  };
+
+  // device_State shared across loaded binaries, error if inconsistent size
+  std::vector<std::pair<std::unique_ptr<void, atmiFreePtrDeletor>, uint64_t>>
+      deviceStateStore;
+
   static const int HardTeamLimit = 1 << 20; // 1 Meg
   static const int DefaultNumTeams = 128;
   static const int Max_Teams =
@@ -333,6 +356,16 @@ public:
       llvm::omp::AMDGPUGpuGridValues[llvm::omp::GVIDX::GV_Max_WG_Size];
   static const int Default_WG_Size =
       llvm::omp::AMDGPUGpuGridValues[llvm::omp::GVIDX::GV_Default_WG_Size];
+
+  atmi_status_t freesignalpool_memcpy(void *dest, const void *src, size_t size) {
+    hsa_signal_t s = FreeSignalPool.pop();
+    if (s.handle == 0) {
+      return ATMI_STATUS_ERROR;
+    }
+    atmi_status_t r = atmi_memcpy(s, dest, src, size);
+    FreeSignalPool.push(s);
+    return r;
+  }
 
   // Record entry point associated with device
   void addOffloadEntry(int32_t device_id, __tgt_offload_entry entry) {
@@ -434,7 +467,8 @@ public:
     WarpSize.resize(NumberOfDevices);
     NumTeams.resize(NumberOfDevices);
     NumThreads.resize(NumberOfDevices);
-
+    deviceStateStore.resize(NumberOfDevices);
+    
     for (int i = 0; i < NumberOfDevices; i++) {
       uint32_t queue_size = 0;
       {
@@ -454,6 +488,8 @@ public:
         DP("Failed to create HSA queues\n");
         return;
       }
+
+      deviceStateStore[i] = {nullptr, 0};
     }
 
     for (int i = 0; i < NumberOfDevices; i++) {
@@ -496,12 +532,18 @@ public:
 
   ~RTLDeviceInfoTy() {
     DP("Finalizing the HSA-ATMI DeviceInfo.\n");
-    KernelArgPoolMap.clear(); // calls hsa to free memory
+    // Run destructors on types that use HSA before
+    // atmi_finalize removes access to it
+    deviceStateStore.clear();
+    KernelArgPoolMap.clear();
     // Terminate hostrpc before finalizing ATMI
     hostrpc_terminate();
     atmi_finalize();
   }
 };
+
+
+pthread_mutex_t SignalPoolT::mutex = PTHREAD_MUTEX_INITIALIZER;
 
 #include "../../../src/device_env_struct.h"
 
@@ -520,7 +562,9 @@ int32_t dataRetrieve(int32_t DeviceId, void *HstPtr, void *TgtPtr, int64_t Size,
   DP("Retrieve data %ld bytes, (tgt:%016llx) -> (hst:%016llx).\n", Size,
      (long long unsigned)(Elf64_Addr)TgtPtr,
      (long long unsigned)(Elf64_Addr)HstPtr);
-  err = atmi_memcpy(HstPtr, TgtPtr, (size_t)Size);
+
+  err = DeviceInfo.freesignalpool_memcpy(HstPtr, TgtPtr, (size_t)Size);
+
   if (err != ATMI_STATUS_SUCCESS) {
     DP("Error when copying data from device to host. Pointers: "
        "host = 0x%016lx, device = 0x%016lx, size = %lld\n",
@@ -545,7 +589,7 @@ int32_t dataSubmit(int32_t DeviceId, void *TgtPtr, void *HstPtr, int64_t Size,
   DP("Submit data %ld bytes, (hst:%016llx) -> (tgt:%016llx).\n", Size,
      (long long unsigned)(Elf64_Addr)HstPtr,
      (long long unsigned)(Elf64_Addr)TgtPtr);
-  err = atmi_memcpy(TgtPtr, HstPtr, (size_t)Size);
+  err = DeviceInfo.freesignalpool_memcpy(TgtPtr, HstPtr, (size_t)Size);
   if (err != ATMI_STATUS_SUCCESS) {
     DP("Error when copying data from host to device. Pointers: "
        "host = 0x%016lx, device = 0x%016lx, size = %lld\n",
@@ -553,6 +597,34 @@ int32_t dataSubmit(int32_t DeviceId, void *TgtPtr, void *HstPtr, int64_t Size,
     return OFFLOAD_FAIL;
   }
   return OFFLOAD_SUCCESS;
+}
+
+// Async.
+// The implementation was written with cuda streams in mind. The semantics of
+// that are to execute kernels on a queue in order of insertion. A synchronise
+// call then makes writes visible between host and device. This means a series
+// of N data_submit_async calls are expected to execute serially. HSA offers
+// various options to run the data copies concurrently. This may require changes
+// to libomptarget.
+
+// __tgt_async_info* contains a void * Queue. Queue = 0 is used to indicate that
+// there are no outstanding kernels that need to be synchronized. Any async call
+// may be passed a Queue==0, at which point the cuda implementation will set it
+// to non-null (see getStream). The cuda streams are per-device. Upstream may
+// change this interface to explicitly initialize the async_info_pointer, but
+// until then hsa lazily initializes it as well.
+
+void initAsyncInfoPtr(__tgt_async_info *async_info_ptr) {
+  // set non-null while using async calls, return to null to indicate completion
+  assert(async_info_ptr);
+  if (!async_info_ptr->Queue) {
+    async_info_ptr->Queue = reinterpret_cast<void *>(UINT64_MAX);
+  }
+}
+void finiAsyncInfoPtr(__tgt_async_info *async_info_ptr) {
+  assert(async_info_ptr);
+  assert(async_info_ptr->Queue);
+  async_info_ptr->Queue = 0;
 }
 } // namespace
 
@@ -814,24 +886,60 @@ atmi_status_t interop_get_symbol_info(char *base, size_t img_size,
     return ATMI_STATUS_ERROR;
   }
 }
+
+template <typename C>
+atmi_status_t module_register_from_memory_to_place(void *module_bytes,
+                                                   size_t module_size,
+                                                   atmi_place_t place, C cb) {
+  auto L = [](void *data, size_t size, void *cb_state) -> atmi_status_t {
+    C *unwrapped = static_cast<C *>(cb_state);
+    return (*unwrapped)(data, size);
+  };
+  return atmi_module_register_from_memory_to_place(
+      module_bytes, module_size, place, L, static_cast<void *>(&cb));
+}
 } // namespace
+
+static uint64_t get_device_State_bytes(char *ImageStart, size_t img_size) {
+  uint64_t device_State_bytes = 0;
+  {
+    // If this is the deviceRTL, get the state variable size
+    symbol_info size_si;
+    int rc = get_symbol_info_without_loading(
+        ImageStart, img_size, "omptarget_nvptx_device_State_size", &size_si);
+
+    if (rc == 0) {
+      if (size_si.size != sizeof(uint64_t)) {
+        fprintf(stderr,
+                "Found device_State_size variable with wrong size, aborting\n");
+        exit(1);
+      }
+
+      // Read number of bytes directly from the elf
+      memcpy(&device_State_bytes, size_si.addr, sizeof(uint64_t));
+    }
+  }
+  return device_State_bytes;
+}
+
+static __tgt_target_table *
+__tgt_rtl_load_binary_locked(int32_t device_id, __tgt_device_image *image);
 
 static __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
                                                  __tgt_device_image *image);
 
 
 __tgt_target_table *__tgt_rtl_load_binary(int32_t device_id,
-                                          __tgt_device_image *image)
-{
-  static pthread_mutex_t load_binary_mutex = PTHREAD_MUTEX_INITIALIZER;
-  pthread_mutex_lock(&load_binary_mutex);
-  __tgt_target_table * res = __tgt_rtl_load_binary_locked(device_id, image);
-  pthread_mutex_unlock(&load_binary_mutex);
+                                          __tgt_device_image *image) {
+  DeviceInfo.load_run_lock.lock();
+  __tgt_target_table *res = __tgt_rtl_load_binary_locked(device_id, image);
+  DeviceInfo.load_run_lock.unlock();
   return res;
 }
 
 __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
-                                          __tgt_device_image *image) {
+                                                 __tgt_device_image *image) {
+
   const size_t img_size = (char *)image->ImageEnd - (char *)image->ImageStart;
 
   DeviceInfo.clearOffloadEntriesTable(device_id);
@@ -843,10 +951,42 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
     return NULL;
   }
 
+  omptarget_device_environmentTy host_device_env;
+  host_device_env.num_devices = DeviceInfo.NumberOfDevices;
+  host_device_env.device_num = device_id;
+  host_device_env.debug_level = 0;
+#ifdef OMPTARGET_DEBUG
+  if (char *envStr = getenv("LIBOMPTARGET_DEVICE_RTL_DEBUG")) {
+    host_device_env.debug_level = std::stoi(envStr);
+  }
+#endif
+
+  auto on_deserialized_data = [&](void *data, size_t size) -> atmi_status_t {
+    const char *device_env_Name = "omptarget_device_environment";
+    symbol_info si;
+    int rc = get_symbol_info_without_loading((char *)image->ImageStart,
+                                             img_size, device_env_Name, &si);
+    if (rc != 0) {
+      DP("Finding global device environment '%s' - symbol missing.\n",
+         device_env_Name);
+      // no need to return FAIL, consider this is a not a device debug build.
+      return ATMI_STATUS_SUCCESS;
+    }
+    if (si.size != sizeof(host_device_env)) {
+      return ATMI_STATUS_ERROR;
+    }
+    DP("Setting global device environment %lu bytes\n", si.size);
+    uint64_t offset = (char *)si.addr - (char *)image->ImageStart;
+    void *pos = (char *)data + offset;
+    memcpy(pos, &host_device_env, sizeof(host_device_env));
+    return ATMI_STATUS_SUCCESS;
+  };
+
   atmi_status_t err;
   {
-    err = atmi_module_register_from_memory_to_place(
-        (void *)image->ImageStart, img_size, get_gpu_place(device_id));
+    err = module_register_from_memory_to_place(
+        (void *)image->ImageStart, img_size, get_gpu_place(device_id),
+        on_deserialized_data);
 
     check("Module registering", err);
     if (err != ATMI_STATUS_SUCCESS) {
@@ -863,6 +1003,63 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
   }
 
   DP("ATMI module successfully loaded!\n");
+
+  // Zero the pseudo-bss variable by calling into hsa
+  // Do this post-load to handle got
+  uint64_t device_State_bytes =
+      get_device_State_bytes((char *)image->ImageStart, img_size);
+  auto &dss = DeviceInfo.deviceStateStore[device_id];
+  if (device_State_bytes != 0) {
+
+    if (dss.first.get() == nullptr) {
+      assert(dss.second == 0);
+      void *ptr = NULL;
+      atmi_status_t err =
+          atmi_malloc(&ptr, device_State_bytes, get_gpu_mem_place(device_id));
+      if (err != ATMI_STATUS_SUCCESS) {
+        fprintf(stderr, "Failed to allocate device_state array\n");
+        return NULL;
+      }
+      dss = {std::unique_ptr<void, RTLDeviceInfoTy::atmiFreePtrDeletor>{ptr},
+             device_State_bytes};
+    }
+
+    void *ptr = dss.first.get();
+    if (device_State_bytes != dss.second) {
+      fprintf(stderr, "Inconsistent sizes of device_State unsupported\n");
+      exit(1);
+    }
+
+    void *state_ptr;
+    uint32_t state_ptr_size;
+    err = atmi_interop_hsa_get_symbol_info(get_gpu_mem_place(device_id),
+                                           "omptarget_nvptx_device_State",
+                                           &state_ptr, &state_ptr_size);
+
+    if (err != ATMI_STATUS_SUCCESS) {
+      fprintf(stderr, "failed to find device_state ptr\n");
+      return NULL;
+    }
+    if (state_ptr_size != sizeof(void *)) {
+      fprintf(stderr, "unexpected size of state_ptr %u != %zu\n", state_ptr_size,
+              sizeof(void *));
+      return NULL;
+    }
+
+    // write ptr to device memory so it can be used by later kernels
+    err = DeviceInfo.freesignalpool_memcpy(state_ptr, &ptr, sizeof(void *));
+    if (err != ATMI_STATUS_SUCCESS) {
+      fprintf(stderr, "memcpy install of state_ptr failed\n");
+      return NULL;
+    }
+
+    assert((device_State_bytes & 0x3) == 0); // known >= 4 byte aligned
+    hsa_status_t rc = hsa_amd_memory_fill(ptr, 0, device_State_bytes / 4);
+    if (rc != HSA_STATUS_SUCCESS) {
+      fprintf(stderr, "zero fill device_state failed with %u\n", rc);
+      return NULL;
+    }
+  }
 
   // TODO: Check with Guansong to understand the below comment more thoroughly.
   // Here, we take advantage of the data that is appended after img_end to get
@@ -919,7 +1116,7 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
         // If unified memory is present any target link variables
         // can access host addresses directly. There is no longer a
         // need for device copies.
-        err = atmi_memcpy(varptr, e->addr, sizeof(void *));
+        err = DeviceInfo.freesignalpool_memcpy(varptr, e->addr, sizeof(void *));
         if (err != ATMI_STATUS_SUCCESS)
           DP("Error when copying USM\n");
         DP("Copy linked variable host address (" DPxMOD ")"
@@ -1011,19 +1208,14 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
         }
         void *StructSizePtr;
         const char *SsNam = "omptarget_nest_par_call_struct_size";
-        err = atmi_interop_hsa_get_symbol_info(place, SsNam, &StructSizePtr,
-                                               &varsize);
-        if (err != ATMI_STATUS_SUCCESS) {
+        err = interop_get_symbol_info((char *)image->ImageStart, img_size,
+                                      SsNam, &StructSizePtr, &varsize);
+        if ((err != ATMI_STATUS_SUCCESS) ||
+            (varsize != sizeof(TgtStackItemSize))) {
           fprintf(stderr, "Addr of %s failed\n", SsNam);
           return NULL;
         }
-        err = atmi_memcpy(&TgtStackItemSize, StructSizePtr, (size_t)varsize);
-        if (err != ATMI_STATUS_SUCCESS) {
-          DP("Error when copying data from device to host. Pointers: "
-             "host = " DPxMOD ", device = " DPxMOD ", size = %u\n",
-             DPxPTR(&TgtStackItemSize), DPxPTR(StructSizePtr), varsize);
-          return NULL;
-        }
+        memcpy(&TgtStackItemSize, StructSizePtr, sizeof(TgtStackItemSize));
         DP("Size of our struct is %d\n", TgtStackItemSize);
       }
 
@@ -1125,52 +1317,6 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
     DP("Entry point %ld maps to %s\n", e - HostBegin, e->name);
   }
 
-  { // send device environment here
-
-    omptarget_device_environmentTy host_device_env;
-    host_device_env.num_devices = DeviceInfo.NumberOfDevices;
-    host_device_env.device_num = device_id;
-    host_device_env.debug_level = 0;
-#ifdef OMPTARGET_DEBUG
-    if (char *envStr = getenv("LIBOMPTARGET_DEVICE_RTL_DEBUG")) {
-      host_device_env.debug_level = std::stoi(envStr);
-    }
-#endif
-
-    const char *device_env_Name = "omptarget_device_environment";
-    void *device_env_Ptr;
-    uint32_t varsize;
-
-    atmi_mem_place_t place = get_gpu_mem_place(device_id);
-    err = atmi_interop_hsa_get_symbol_info(place, device_env_Name,
-                                           &device_env_Ptr, &varsize);
-
-    if (err == ATMI_STATUS_SUCCESS) {
-      if ((size_t)varsize != sizeof(host_device_env)) {
-        DP("Global device_environment '%s' - size mismatch (%u != %lu)\n",
-           device_env_Name, varsize, sizeof(int32_t));
-        return NULL;
-      }
-
-      err = atmi_memcpy(device_env_Ptr, &host_device_env, (size_t)varsize);
-      if (err != ATMI_STATUS_SUCCESS) {
-        DP("Error when copying data from host to device. Pointers: "
-           "host = " DPxMOD ", device = " DPxMOD ", size = %u\n",
-           DPxPTR(&host_device_env), DPxPTR(device_env_Ptr), varsize);
-        return NULL;
-      }
-
-      DP("Sending global device environment %lu bytes\n", (size_t)varsize);
-    } else {
-      DP("Finding global device environment '%s' - symbol missing.\n",
-         device_env_Name);
-      // no need to return NULL, consider this is a not a device debug build.
-      // return NULL;
-    }
-
-    check("Sending device environment", err);
-  }
-
   return DeviceInfo.getOffloadEntriesTable(device_id);
 }
 
@@ -1186,6 +1332,7 @@ void *__tgt_rtl_data_alloc(int device_id, int64_t size, void *) {
 
 int32_t __tgt_rtl_data_submit(int device_id, void *tgt_ptr, void *hst_ptr,
                               int64_t size) {
+  assert(device_id < DeviceInfo.NumberOfDevices && "Device ID too large");
   __tgt_async_info async_info;
   int32_t rc = dataSubmit(device_id, tgt_ptr, hst_ptr, size, &async_info);
   if (rc != OFFLOAD_SUCCESS)
@@ -1197,21 +1344,18 @@ int32_t __tgt_rtl_data_submit(int device_id, void *tgt_ptr, void *hst_ptr,
 int32_t __tgt_rtl_data_submit_async(int device_id, void *tgt_ptr, void *hst_ptr,
                                     int64_t size,
                                     __tgt_async_info *async_info_ptr) {
-  if (async_info_ptr)
+  assert(device_id < DeviceInfo.NumberOfDevices && "Device ID too large");
+  if (async_info_ptr) {
+    initAsyncInfoPtr(async_info_ptr);
     return dataSubmit(device_id, tgt_ptr, hst_ptr, size, async_info_ptr);
-
-  __tgt_async_info async_info;
-  int32_t rc = dataSubmit(device_id, tgt_ptr, hst_ptr, size, &async_info);
-  if (rc != OFFLOAD_SUCCESS)
-    return OFFLOAD_FAIL;
-
-  return __tgt_rtl_synchronize(device_id, &async_info);
+  } else {
+    return __tgt_rtl_data_submit(device_id, tgt_ptr, hst_ptr, size);
+  }
 }
 
 int32_t __tgt_rtl_data_retrieve(int device_id, void *hst_ptr, void *tgt_ptr,
                                 int64_t size) {
   assert(device_id < DeviceInfo.NumberOfDevices && "Device ID too large");
-
   __tgt_async_info async_info;
   int32_t rc = dataRetrieve(device_id, hst_ptr, tgt_ptr, size, &async_info);
   if (rc != OFFLOAD_SUCCESS)
@@ -1223,16 +1367,10 @@ int32_t __tgt_rtl_data_retrieve(int device_id, void *hst_ptr, void *tgt_ptr,
 int32_t __tgt_rtl_data_retrieve_async(int device_id, void *hst_ptr,
                                       void *tgt_ptr, int64_t size,
                                       __tgt_async_info *async_info_ptr) {
+  assert(async_info_ptr && "async_info is nullptr");
   assert(device_id < DeviceInfo.NumberOfDevices && "Device ID too large");
-  if (async_info_ptr)
-    return dataRetrieve(device_id, hst_ptr, tgt_ptr, size, async_info_ptr);
-
-  __tgt_async_info async_info;
-  int32_t rc = dataRetrieve(device_id, hst_ptr, tgt_ptr, size, &async_info);
-  if (rc != OFFLOAD_SUCCESS)
-    return OFFLOAD_FAIL;
-
-  return __tgt_rtl_synchronize(device_id, &async_info);
+  initAsyncInfoPtr(async_info_ptr);
+  return dataRetrieve(device_id, hst_ptr, tgt_ptr, size, async_info_ptr);
 }
 
 int32_t __tgt_rtl_data_delete(int device_id, void *tgt_ptr) {
@@ -1407,7 +1545,7 @@ static void *AllocateNestedParallelCallMemory(int MaxParLevel, int NumGroups,
   void *TgtPtr = NULL;
   atmi_status_t err =
       atmi_malloc(&TgtPtr, NestedMemSize, get_gpu_mem_place(device_id));
-  err = atmi_memcpy(CallStackAddr, &TgtPtr, sizeof(void *));
+  err = DeviceInfo.freesignalpool_memcpy(CallStackAddr, &TgtPtr, sizeof(void *));
   if (print_kernel_trace > 2)
     fprintf(stderr, "CallSck %lx TgtPtr %lx *TgtPtr %lx \n",
             (long)CallStackAddr, (long)&TgtPtr, (long)TgtPtr);
@@ -1422,21 +1560,40 @@ static uint64_t acquire_available_packet_id(hsa_queue_t *queue) {
   bool full = true;
   while (full) {
     full =
-        packet_id >= (queue->size + hsa_queue_load_read_index_acquire(queue));
+        packet_id >= (queue->size + hsa_queue_load_read_index_scacquire(queue));
   }
   return packet_id;
 }
 
 extern bool g_atmi_hostcall_required; // declared without header by atmi
 
-static pthread_mutex_t run_target_team_region_mutex = PTHREAD_MUTEX_INITIALIZER;
+static int32_t __tgt_rtl_run_target_team_region_locked(
+    int32_t device_id, void *tgt_entry_ptr, void **tgt_args,
+    ptrdiff_t *tgt_offsets, int32_t arg_num, int32_t num_teams,
+    int32_t thread_limit, uint64_t loop_tripcount);
 
-int32_t __tgt_rtl_run_target_team_region(int32_t device_id, void *tgt_entry_ptr,
+int32_t __tgt_rtl_run_target_team_region(
+    int32_t device_id, void *tgt_entry_ptr, void **tgt_args,
+    ptrdiff_t *tgt_offsets, int32_t arg_num, int32_t num_teams,
+    int32_t thread_limit, uint64_t loop_tripcount) {
+
+  DeviceInfo.load_run_lock.lock_shared();
+  int32_t res = __tgt_rtl_run_target_team_region_locked(
+      device_id, tgt_entry_ptr, tgt_args, tgt_offsets, arg_num, num_teams,
+      thread_limit, loop_tripcount);
+
+  DeviceInfo.load_run_lock.unlock_shared();
+  return res;
+}
+
+int32_t __tgt_rtl_run_target_team_region_locked(int32_t device_id, void *tgt_entry_ptr,
                                          void **tgt_args,
                                          ptrdiff_t *tgt_offsets,
                                          int32_t arg_num, int32_t num_teams,
                                          int32_t thread_limit,
                                          uint64_t loop_tripcount) {
+  static pthread_mutex_t nested_parallel_mutex = PTHREAD_MUTEX_INITIALIZER;
+  
   // Set the context we are using
   // update thread limit content in gpu memory if un-initialized or specified
   // from host
@@ -1472,12 +1629,13 @@ int32_t __tgt_rtl_run_target_team_region(int32_t device_id, void *tgt_entry_ptr,
   );
 
   void *TgtCallStack = NULL;
-  if (KernelInfo->MaxParLevel > 0)
+  if (KernelInfo->MaxParLevel > 0) {
+    pthread_mutex_lock(&nested_parallel_mutex);
     TgtCallStack = AllocateNestedParallelCallMemory(
         KernelInfo->MaxParLevel, num_groups, threadsPerGroup,
         KernelInfo->device_id, KernelInfo->CallStackAddr,
         KernelInfo->ExecutionMode);
-
+  }
   if (print_kernel_trace > 0)
     // enum modes are SPMD, GENERIC, NONE 0,1,2
     fprintf(stderr,
@@ -1574,17 +1732,13 @@ int32_t __tgt_rtl_run_target_team_region(int32_t device_id, void *tgt_entry_ptr,
     }
 
     {
-      pthread_mutex_lock(&run_target_team_region_mutex);
-      if (FreeSignalPool.empty()) {
-        // could add to the pool, but atmi doesn't do so
+      hsa_signal_t s = DeviceInfo.FreeSignalPool.pop();
+      if (s.handle == 0) {
         printf("Failed to get signal instance\n");
-        pthread_mutex_unlock(&run_target_team_region_mutex);
         exit(1);
       }
-      packet->completion_signal = FreeSignalPool.front();
+      packet->completion_signal = s;
       hsa_signal_store_relaxed(packet->completion_signal, 1);
-      FreeSignalPool.pop();
-      pthread_mutex_unlock(&run_target_team_region_mutex);
     }
 
     core::packet_store_release(
@@ -1595,20 +1749,22 @@ int32_t __tgt_rtl_run_target_team_region(int32_t device_id, void *tgt_entry_ptr,
 
     hsa_signal_store_relaxed(queue->doorbell_signal, packet_id);
 
-    while (hsa_signal_wait_acquire(packet->completion_signal,
-                                   HSA_SIGNAL_CONDITION_EQ, 0, UINT64_MAX,
-                                   HSA_WAIT_STATE_BLOCKED) != 0)
+    while (hsa_signal_wait_scacquire(packet->completion_signal,
+                                     HSA_SIGNAL_CONDITION_EQ, 0, UINT64_MAX,
+                                     HSA_WAIT_STATE_BLOCKED) != 0)
       ;
 
     assert(ArgPool);
     ArgPool->deallocate(packet->kernarg_address);
-    FreeSignalPool.push(packet->completion_signal);
+    DeviceInfo.FreeSignalPool.push(packet->completion_signal);
   }
 
   DP("Kernel completed\n");
   // Free call stack for nested
-  if (TgtCallStack)
+  if (TgtCallStack) {
+    pthread_mutex_unlock(&nested_parallel_mutex);
     atmi_free(TgtCallStack);
+  }
 
   return OFFLOAD_SUCCESS;
 }
@@ -1629,7 +1785,10 @@ int32_t __tgt_rtl_run_target_region_async(int32_t device_id,
                                           void *tgt_entry_ptr, void **tgt_args,
                                           ptrdiff_t *tgt_offsets,
                                           int32_t arg_num,
-                                          __tgt_async_info *async_info) {
+                                          __tgt_async_info *async_info_ptr) {
+  assert(async_info_ptr && "async_info is nullptr");
+  initAsyncInfoPtr(async_info_ptr);
+
   // use one team and one thread
   // fix thread num
   int32_t team_num = 1;
@@ -1639,7 +1798,15 @@ int32_t __tgt_rtl_run_target_region_async(int32_t device_id,
                                           thread_limit, 0);
 }
 
-int32_t __tgt_rtl_synchronize(int32_t device_id, __tgt_async_info *async_info) {
-  assert(async_info && "async_info is nullptr");
+int32_t __tgt_rtl_synchronize(int32_t device_id,
+                              __tgt_async_info *async_info_ptr) {
+  assert(async_info_ptr && "async_info is nullptr");
+
+  // Cuda asserts that async_info_ptr->Queue is non-null, but this invariant
+  // is not ensured by devices.cpp for amdgcn
+  // assert(async_info_ptr->Queue && "async_info_ptr->Queue is nullptr");
+  if (async_info_ptr->Queue) {
+    finiAsyncInfoPtr(async_info_ptr);
+  }
   return OFFLOAD_SUCCESS;
 }

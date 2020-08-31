@@ -702,20 +702,11 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
     }
   }
 
-  std::string alt_lld(D.Dir + "/../alt/bin/ld.lld");
-  bool use_alt_LTO_linker = ToolChain.getVFS().exists(alt_lld);
-  const char *Exec = (!D.isUsingLTO())
-                         ? Args.MakeArgString(ToolChain.GetLinkerPath())
-                         // Use LTO linker ld.lld if LTO needed.
-                         // but use alternative ld.lld if available
-                         : use_alt_LTO_linker
-                               ? Args.MakeArgString(alt_lld)
-                               : Args.MakeArgString(D.Dir + "/ld.lld");
+  Args.AddAllArgs(CmdArgs, options::OPT_T);
 
+  const char *Exec = Args.MakeArgString(ToolChain.GetLinkerPath());
   C.addCommand(std::make_unique<Command>(
       JA, *this, ResponseFileSupport::AtFileCurCP(), Exec, CmdArgs, Inputs));
-  Args.AddAllArgs(CmdArgs, options::OPT_T);
-  
 }
 
 void tools::gnutools::Assembler::ConstructJob(Compilation &C,
@@ -2699,6 +2690,7 @@ void Generic_GCC::printVerboseInfo(raw_ostream &OS) const {
   // Print the information about how we detected the GCC installation.
   GCCInstallation.print(OS);
   CudaInstallation.print(OS);
+  RocmInstallation.print(OS);
 }
 
 bool Generic_GCC::IsUnwindTablesDefault(const ArgList &Args) const {

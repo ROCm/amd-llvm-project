@@ -17,20 +17,19 @@
 // global data tables
 ////////////////////////////////////////////////////////////////////////////////
 
+#ifdef __AMDGCN__
+extern DEVICE
+    omptarget_nvptx_Queue<omptarget_nvptx_ThreadPrivateContext, OMP_STATE_COUNT>
+        *omptarget_nvptx_device_State;
+#else
 extern DEVICE
     omptarget_nvptx_Queue<omptarget_nvptx_ThreadPrivateContext, OMP_STATE_COUNT>
         omptarget_nvptx_device_State[MAX_SM];
+#endif
 
 ////////////////////////////////////////////////////////////////////////////////
 // init entry points
 ////////////////////////////////////////////////////////////////////////////////
-
-EXTERN void __kmpc_kernel_init_params(void *Ptr) {
-  PRINT(LD_IO, "call to __kmpc_kernel_init_params with version %f\n",
-        OMPTARGET_NVPTX_VERSION);
-
-  SetTeamsReductionScratchpadPtr(Ptr);
-}
 
 EXTERN void __kmpc_kernel_init(int ThreadLimit, int16_t RequiresOMPRuntime) {
   PRINT(LD_IO, "call to __kmpc_kernel_init with version %f\n",
@@ -169,10 +168,6 @@ EXTERN void __kmpc_spmd_kernel_init(int ThreadLimit, int16_t RequiresOMPRuntime,
                                // spmd mode
   ompd_bp_thread_begin();
 #endif
-}
-
-EXTERN __attribute__((deprecated)) void __kmpc_spmd_kernel_deinit() {
-  __kmpc_spmd_kernel_deinit_v2(isRuntimeInitialized());
 }
 
 EXTERN void __kmpc_spmd_kernel_deinit_v2(int16_t RequiresOMPRuntime) {

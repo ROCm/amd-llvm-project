@@ -644,15 +644,19 @@ defm cuda_short_ptr : OptInFFlag<"cuda-short-ptr",
   "Use 32-bit pointers for accessing const/local/shared address spaces">;
 def rocm_path_EQ : Joined<["--"], "rocm-path=">, Group<i_Group>,
   HelpText<"ROCm installation path, used for finding and automatically linking required bitcode libraries.">;
-def hip_device_lib_path_EQ : Joined<["--"], "hip-device-lib-path=">, Group<Link_Group>,
-  HelpText<"HIP device library path. Alternative to rocm-path.">;
+def rocm_device_lib_path_EQ : Joined<["--"], "rocm-device-lib-path=">, Group<Link_Group>,
+  HelpText<"ROCm device library path. Alternative to rocm-path.">;
+def : Joined<["--"], "hip-device-lib-path=">, Alias<rocm_device_lib_path_EQ>;
 def hip_device_lib_EQ : Joined<["--"], "hip-device-lib=">, Group<Link_Group>,
   HelpText<"HIP device library">;
+def hip_version_EQ : Joined<["--"], "hip-version=">,
+  HelpText<"HIP version in the format of major.minor.patch">;
 def fhip_dump_offload_linker_script : Flag<["-"], "fhip-dump-offload-linker-script">,
   Group<f_Group>, Flags<[NoArgumentUnused, HelpHidden]>;
 defm hip_new_launch_api : OptInFFlag<"hip-new-launch-api",
-  "Use new kernel launching API for HIP">;
-defm gpu_allow_device_init : OptInFFlag<"gpu-allow-device-init", "Allow device side init function in HIP">;
+  "Use", "Don't use", " new kernel launching API for HIP">;
+defm gpu_allow_device_init : OptInFFlag<"gpu-allow-device-init",
+  "Allow", "Don't allow", " device side init function in HIP">;
 def gpu_max_threads_per_block_EQ : Joined<["--"], "gpu-max-threads-per-block=">,
   Flags<[CC1Option]>,
   HelpText<"Default max threads per block for kernel launch bounds for HIP">;
@@ -1443,6 +1447,10 @@ def fpch_instantiate_templates:
 def fno_pch_instantiate_templates:
   Flag <["-"], "fno-pch-instantiate-templates">,
   Group<f_Group>, Flags<[CC1Option]>;
+defm pch_codegen: OptInFFlag<"pch-codegen", "Generate ", "Do not generate ",
+  "code for uses of this PCH that assumes an explicit object file will be built for the PCH">;
+defm pch_debuginfo: OptInFFlag<"pch-debuginfo", "Generate ", "Do not generate ",
+  "debug info for types in an object file built from this PCH and do not generate them elsewhere">;
 
 def fmodules : Flag <["-"], "fmodules">, Group<f_Group>,
   Flags<[DriverOption, CC1Option]>,
@@ -1779,7 +1787,7 @@ def fstack_protector_all : Flag<["-"], "fstack-protector-all">, Group<f_Group>,
   HelpText<"Enable stack protectors for all functions">;
 def fstack_clash_protection : Flag<["-"], "fstack-clash-protection">, Group<f_Group>, Flags<[CC1Option]>,
   HelpText<"Enable stack clash protection">;
-def fnostack_clash_protection : Flag<["-"], "fnostack-clash-protection">, Group<f_Group>,
+def fno_stack_clash_protection : Flag<["-"], "fno-stack-clash-protection">, Group<f_Group>,
   HelpText<"Disable stack clash protection">;
 def fstack_protector_strong : Flag<["-"], "fstack-protector-strong">, Group<f_Group>,
   HelpText<"Enable stack protectors for some functions vulnerable to stack smashing. "

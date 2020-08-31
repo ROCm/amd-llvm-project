@@ -216,7 +216,11 @@ Instruction *InstCombiner::visitMul(BinaryOperator &I) {
 
     if (match(&I, m_Mul(m_Value(NewOp), m_Constant(C1)))) {
       // Replace X*(2^C) with X << C, where C is either a scalar or a vector.
-      if (Constant *NewCst = getLogBase2(NewOp->getType(), C1)) {
+      // Note that we need to sanitize undef multipliers to 1,
+      // to avoid introducing poison.
+      Constant *SafeC1 = Constant::replaceUndefsWith(
+          C1, ConstantInt::get(C1->getType()->getScalarType(), 1));
+      if (Constant *NewCst = getLogBase2(NewOp->getType(), SafeC1)) {
         BinaryOperator *Shl = BinaryOperator::CreateShl(NewOp, NewCst);
 
         if (I.hasNoUnsignedWrap())
@@ -375,6 +379,16 @@ Instruction *InstCombiner::visitMul(BinaryOperator &I) {
       (Op0->hasOneUse() || Op1->hasOneUse())) {
     Value *And = Builder.CreateAnd(X, Y, "mulbool");
     return CastInst::Create(Instruction::ZExt, And, I.getType());
+  }
+  // (sext bool X) * (zext bool Y) --> sext (and X, Y)
+  // (zext bool X) * (sext bool Y) --> sext (and X, Y)
+  // Note: -1 * 1 == 1 * -1  == -1
+  if (((match(Op0, m_SExt(m_Value(X))) && match(Op1, m_ZExt(m_Value(Y)))) ||
+       (match(Op0, m_ZExt(m_Value(X))) && match(Op1, m_SExt(m_Value(Y))))) &&
+      X->getType()->isIntOrIntVectorTy(1) && X->getType() == Y->getType() &&
+      (Op0->hasOneUse() || Op1->hasOneUse())) {
+    Value *And = Builder.CreateAnd(X, Y, "mulbool");
+    return CastInst::Create(Instruction::SExt, And, I.getType());
   }
 
   // (bool X) * Y --> X ? Y : 0

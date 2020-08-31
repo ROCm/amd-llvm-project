@@ -41,6 +41,8 @@ else()
   endif()
 endif()
 
+set(OPENMP_SOURCE_DEBUG_MAP "" CACHE STRING "Map of runtime sources to installed sources to help debugging runtimes")
+
 if((CMAKE_BUILD_TYPE MATCHES Debug) AND (${LIBOMPTARGET_NVPTX_DEBUG}))
   set(OPENMP_LIBDIR_SUFFIX "-debug")
   set(OPENMP_INSTALL_LIBDIR "lib${OPENMP_LIBDIR_SUFFIX}")
