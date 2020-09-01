@@ -5,7 +5,7 @@ set (CMAKE_MODULE_PATH
 
 find_package (Python3 COMPONENTS Interpreter Development)
 
-execute_process(COMMAND "${PYTHON_EXECUTABLE}"
+execute_process(COMMAND "${Python3_EXECUTABLE}"
 	"-mpip"
 	"--version"
 	OUTPUT_VARIABLE PIP_VERSION_INFO
