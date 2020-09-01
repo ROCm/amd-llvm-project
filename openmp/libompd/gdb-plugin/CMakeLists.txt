@@ -13,9 +13,6 @@ execute_process(COMMAND "${PYTHON_EXECUTABLE}"
 string(REGEX REPLACE " " ";" PIP_VERSION_INFO "${PIP_VERSION_INFO}")
 list(GET PIP_VERSION_INFO 1 PIP_VERSION)
 set(PYSYSFLAG "")
-if(PIP_VERSION VERSION_LESS_EQUAL "9.0.1")
-  set(PYSYSFLAG "--system")
-endif()
 
 include_directories (${OMPD_INCLUDE_PATH})
 include_directories (${LIBOMP_INCLUDE_DIR})
