@@ -6,10 +6,10 @@
 #ifndef INCLUDE_ATMI_RUNTIME_H_
 #define INCLUDE_ATMI_RUNTIME_H_
 
-#include <inttypes.h>
-#include <stdlib.h>
 #include "atmi.h"
 #include "hsa.h"
+#include <inttypes.h>
+#include <stdlib.h>
 #ifndef __cplusplus
 #include <stdbool.h>
 #endif
@@ -179,7 +179,8 @@ atmi_status_t atmi_free(void *ptr);
  * @retval ::ATMI_STATUS_UNKNOWN The function encountered errors.
  *
  */
-atmi_status_t atmi_memcpy(hsa_signal_t sig, void *dest, const void *src, size_t size);
+atmi_status_t atmi_memcpy(hsa_signal_t sig, void *dest, const void *src,
+                          size_t size);
 
 static inline atmi_status_t atmi_memcpy_no_signal(void *dest, const void *src,
                                                   size_t size) {
@@ -208,4 +209,4 @@ static inline atmi_status_t atmi_memcpy_no_signal(void *dest, const void *src,
 }
 #endif
 
-#endif  // INCLUDE_ATMI_RUNTIME_H_
+#endif // INCLUDE_ATMI_RUNTIME_H_

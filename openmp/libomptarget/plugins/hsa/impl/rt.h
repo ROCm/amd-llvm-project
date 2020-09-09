@@ -16,7 +16,7 @@ namespace core {
 #define DEFAULT_MAX_QUEUE_SIZE 4096
 #define DEFAULT_DEBUG_MODE 0
 class Environment {
- public:
+public:
   Environment()
       : max_queue_size_(DEFAULT_MAX_QUEUE_SIZE),
         debug_mode_(DEFAULT_DEBUG_MODE) {
@@ -31,7 +31,7 @@ class Environment {
   int getDebugMode() const { return debug_mode_; }
   // TODO(ashwinma): int may change to enum if we have more profile modes
 
- private:
+private:
   std::string GetEnv(const char *name) {
     char *env = getenv(name);
     std::string ret;
@@ -46,7 +46,7 @@ class Environment {
 };
 
 class Runtime final {
- public:
+public:
   static Runtime &getInstance() {
     static Runtime instance;
     return instance;
@@ -64,7 +64,6 @@ class Runtime final {
                                             void *cb_state),
       void *cb_state);
 
-
   // data
   static atmi_status_t Memcpy(hsa_signal_t, void *, const void *, size_t);
   static atmi_status_t Memfree(void *);
@@ -76,17 +75,17 @@ class Runtime final {
   // TODO(ashwinma): int may change to enum if we have more debug modes
   int getDebugMode() const { return env_.getDebugMode(); }
 
- protected:
+protected:
   Runtime() = default;
   ~Runtime() = default;
   Runtime(const Runtime &) = delete;
   Runtime &operator=(const Runtime &) = delete;
 
- protected:
+protected:
   // variable to track environment variables
   Environment env_;
 };
 
-}  // namespace core
+} // namespace core
 
-#endif  // SRC_RUNTIME_INCLUDE_RT_H_
+#endif // SRC_RUNTIME_INCLUDE_RT_H_

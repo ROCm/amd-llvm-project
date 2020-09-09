@@ -113,12 +113,11 @@ INLINE void __kmpc_impl_syncwarp(__kmpc_impl_lanemask_t) {
   // AMDGCN doesn't need to sync threads in a warp
 }
 
-INLINE void __kmpc_impl_named_sync(int barrier, uint32_t num_threads) {
-  // we have protected the master warp from releasing from its barrier
-  // due to a full workgroup barrier in the middle of a work function.
-  // So it is ok to issue a full workgroup barrier here.
-  __builtin_amdgcn_s_barrier();
-}
+
+// TODO: Likely to rename during upstreaming
+DEVICE void __kmpc_impl_init_shared();
+
+DEVICE void __kmpc_impl_named_sync(int barrier, uint32_t num_threads);
 
 INLINE void __kmpc_impl_threadfence() {
   __builtin_amdgcn_fence(__ATOMIC_SEQ_CST, "agent");

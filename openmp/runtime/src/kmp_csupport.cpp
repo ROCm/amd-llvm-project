@@ -19,9 +19,6 @@
 #include "kmp_lock.h"
 #include "kmp_stats.h"
 #include "ompt-specific.h"
-#if OMPD_SUPPORT
-#include "ompd-specific.h"
-#endif
 
 #define MAX_MESSAGE 512
 

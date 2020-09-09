@@ -69,6 +69,7 @@ static const char *getOutputFileName(Compilation &C, StringRef Base,
 
 static void addOptLevelArgs(const llvm::opt::ArgList &Args,
                             llvm::opt::ArgStringList &CmdArgs,
+                           StringRef SubArchName,
                             bool IsLlc = false) {
   if (Arg *A = Args.getLastArg(options::OPT_O_Group)) {
     StringRef OOpt = "3";
@@ -91,6 +92,10 @@ static void addOptLevelArgs(const llvm::opt::ArgList &Args,
                  .Case("g", "1")
                  .Default("2");
     }
+    //FIXME: This is a workaround for a bug in LLC when using gfx908 plus -O0
+    //Remove once bug is fixed.
+    if (IsLlc && OOpt == "0" && SubArchName == "gfx908")
+      OOpt = "1";
     CmdArgs.push_back(Args.MakeArgString("-O" + OOpt));
   }
 }
@@ -239,7 +244,7 @@ const char *AMDGCN::OpenMPLinker::constructOptCommand(
   // The input to opt is the output from llvm-link.
   OptArgs.push_back(InputFileName);
   // Pass optimization arg to opt.
-  addOptLevelArgs(Args, OptArgs);
+  addOptLevelArgs(Args, OptArgs, SubArchName,false);
   OptArgs.push_back("-mtriple=amdgcn-amd-amdhsa");
   OptArgs.push_back(Args.MakeArgString("-mcpu=" + SubArchName));
 
@@ -277,7 +282,7 @@ const char *AMDGCN::OpenMPLinker::constructLlcCommand(
   // The input to llc is the output from opt.
   LlcArgs.push_back(InputFileName);
   // Pass optimization arg to llc.
-  addOptLevelArgs(Args, LlcArgs, /*IsLlc=*/true);
+  addOptLevelArgs(Args, LlcArgs, SubArchName, /*IsLlc=*/true);
   LlcArgs.push_back("-mtriple=amdgcn-amd-amdhsa");
   LlcArgs.push_back(Args.MakeArgString("-mcpu=" + SubArchName));
   LlcArgs.push_back(
@@ -377,7 +382,7 @@ void AMDGCN::OpenMPLinker::ConstructJob(Compilation &C, const JobAction &JA,
 AMDGPUOpenMPToolChain::AMDGPUOpenMPToolChain(const Driver &D, const llvm::Triple &Triple,
                              const ToolChain &HostTC, const ArgList &Args,
                              const Action::OffloadKind OK)
-    : ROCMToolChain(D, Triple, Args), HostTC(HostTC), OK(OK) {
+    : ROCMToolChain(D, Triple, Args), HostTC(HostTC) {
   // Lookup binaries into the driver directory, this is used to
   // discover the clang-offload-bundler executable.
   getProgramPaths().push_back(getDriver().Dir);
@@ -453,7 +458,7 @@ void AMDGPUOpenMPToolChain::addClangTargetOptions(
 
   } else {
     if (!RocmInstallation.hasDeviceLibrary()) {
-      getDriver().Diag(diag::err_drv_no_cuda_installation);
+      getDriver().Diag(diag::err_drv_no_rocm_device_lib) << 0;
       return;
     }
 

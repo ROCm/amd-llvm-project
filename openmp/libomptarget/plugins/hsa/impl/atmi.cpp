@@ -7,13 +7,9 @@
 /*
  * Initialize/Finalize
  */
-atmi_status_t atmi_init() {
-  return core::Runtime::Initialize();
-}
+atmi_status_t atmi_init() { return core::Runtime::Initialize(); }
 
-atmi_status_t atmi_finalize() {
-  return core::Runtime::Finalize();
-}
+atmi_status_t atmi_finalize() { return core::Runtime::Finalize(); }
 
 /*
  * Machine Info
@@ -42,9 +38,7 @@ atmi_status_t atmi_memcpy(hsa_signal_t sig, void *dest, const void *src,
   return core::Runtime::Memcpy(sig, dest, src, size);
 }
 
-atmi_status_t atmi_free(void *ptr) {
-  return core::Runtime::Memfree(ptr);
-}
+atmi_status_t atmi_free(void *ptr) { return core::Runtime::Memfree(ptr); }
 
 atmi_status_t atmi_malloc(void **ptr, size_t size, atmi_mem_place_t place) {
   return core::Runtime::Malloc(ptr, size, place);

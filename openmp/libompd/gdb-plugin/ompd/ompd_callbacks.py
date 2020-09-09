@@ -22,7 +22,7 @@ def _sym_addr(*args):
 	symbol_name = args[1]
 	if(thread_id >= 0):
 		gdb.execute('thread %d\n' % thread_id, to_string=True)
-	return long(gdb.parse_and_eval("&"+symbol_name))
+	return int(gdb.parse_and_eval("&"+symbol_name))
 
 """ Read string from the target and copy it into the provided buffer.
 """
@@ -41,13 +41,14 @@ def _read(*args):
 	# args is a tuple consisting of address and number of bytes to be read
 	addr = args[0]
 	nbytes = args[1]
+#	print("_read(%i,%i)"%(addr, nbytes))
 	ret_buf = bytearray()
-	try:
-		buf = gdb.parse_and_eval('(unsigned char*)%li' % addr)
-		for i in range(nbytes):
-			ret_buf.append(b'%c' % buf[i])
-	except:
-		traceback.print_exc()
+#	try:
+	buf = gdb.parse_and_eval('(unsigned char*)%li' % addr)
+	for i in range(nbytes):
+		ret_buf.append(int(buf[i]))
+#	except:
+#		traceback.print_exc()
 	return ret_buf
 
 

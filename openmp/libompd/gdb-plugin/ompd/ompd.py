@@ -268,14 +268,14 @@ class ompd_bt(gdb.Command):
 class ompd_taskframes(gdb.Command):
 	"""Prints task handles for relevant task frames. Meant for debugging."""
 	def __init__(self):
-		self.__doc__ = 'Prints list of tasks.\usage: ompd taskframes'
+		self.__doc__ = 'Prints list of tasks.\nUsage: ompd taskframes'
 		super(ompd_taskframes, self).__init__('ompd taskframes',
 					gdb.COMMAND_STACK)
 	
 	def invoke(self, arg, from_tty):
 		frame = gdb.newest_frame()
 		while(frame):
-			print frame.read_register('sp')
+			print (frame.read_register('sp'))
 			frame = frame.older()
 		global addr_space
 		curr_thread_handle = curr_thread().thread_handle
@@ -351,7 +351,7 @@ def main():
 if __name__ == "__main__":
 	try:
 		main()
-        except:
+	except:
 		traceback.print_exc()
 
 # NOTE: test code using:

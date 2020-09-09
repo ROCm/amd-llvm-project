@@ -273,7 +273,7 @@ private:
       workDescrForActiveParallel; // one, ONLY for the active par
 
   ALIGN(16)
-  __kmpc_data_sharing_worker_slot_static worker_rootS[WARPSIZE];
+  __kmpc_data_sharing_worker_slot_static worker_rootS[DS_Max_Warp_Number];
   ALIGN(16) __kmpc_data_sharing_master_slot_static master_rootS[1];
 };
 
@@ -387,10 +387,6 @@ extern DEVICE SHARED void *ReductionScratchpadPtr;
 typedef void *omptarget_nvptx_WorkFn;
 extern volatile DEVICE SHARED omptarget_nvptx_WorkFn
     omptarget_nvptx_workFn;
-#ifdef __AMDGCN__
-extern DEVICE SHARED bool omptarget_workers_active;
-extern DEVICE SHARED bool omptarget_master_active;
-#endif
 
 ////////////////////////////////////////////////////////////////////////////////
 // get private data structures

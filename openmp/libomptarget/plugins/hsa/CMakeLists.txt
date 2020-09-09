@@ -14,6 +14,13 @@
 ################################################################################
 # Add check for required compiler
 
+# as of rocm-3.7, hsa is installed with cmake packages and kmt is found via hsa
+find_package(hsa-runtime64 QUIET 1.2.0 HINTS ${CMAKE_INSTALL_PREFIX} PATHS /opt/rocm)
+if (NOT ${hsa-runtime64_FOUND})
+  libomptarget_say("Not building HSA plugin: hsa-runtime64 not found")
+  return()
+endif()
+
 find_package(LLVM QUIET CONFIG PATHS ${LLVM_INSTALL_PREFIX} ${CMAKE_INSTALL_PREFIX} NO_DEFAULT_PATH)
 
 if (LLVM_DIR)
@@ -33,21 +40,11 @@ else()
 endif()
 
 # Add check for required libraries
-
 if(NOT LIBOMPTARGET_DEP_LIBELF_FOUND)
   libomptarget_say("Not building HSA plugin: LIBELF not found")
   return()
 endif()
 
-if(NOT ROCM_DIR)
-  libomptarget_say("Not building HSA plugin: ROCM_DIR is not set")
-  return()
-endif()
-set(LIBOMPTARGET_DEP_LIBHSA_INCLUDE_DIRS ${ROCM_DIR}/hsa/include ${ROCM_DIR}/hsa/include/hsa)
-set(LIBOMPTARGET_DEP_LIBHSA_LIBRARIES_DIRS ${ROCM_DIR}/hsa/lib)
-set(LIBOMPTARGET_DEP_LIBHSAKMT_LIBRARIES_DIRS ${ROCM_DIR}/lib)
-
-mark_as_advanced( LIBOMPTARGET_DEP_LIBHSA_INCLUDE_DIRS LIBOMPTARGET_DEP_LIBHSA_LIBRARIES_DIRS)
 
 if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64)|(ppc64le)|(aarch64)$" AND CMAKE_SYSTEM_NAME MATCHES "Linux")
   libomptarget_say("Not building HSA plugin: only support HSA in Linux x86_64, ppc64le , or aarch64 hosts.")
@@ -63,12 +60,10 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "(ppc64le)|(aarch64)$")
 endif()
 
 if(CMAKE_BUILD_TYPE MATCHES Debug)
-  add_definitions(-DHSA_ERROR_REPORT)
   add_definitions(-DDEBUG)
 endif()
 
 include_directories(
-  ${LIBOMPTARGET_DEP_LIBHSA_INCLUDE_DIRS}
   ${CLANG_INCLUDE_DIRS}
   ${LLVM_INCLUDE_DIRS}
   ${CMAKE_CURRENT_SOURCE_DIR}/impl
@@ -92,14 +87,14 @@ add_definitions(${OPENMP_SOURCE_DEBUG_MAP})
 # When we build for debug, OPENMP_LIBDIR_SUFFIX get set to -debug
 install(TARGETS omptarget.rtl.hsa LIBRARY DESTINATION "lib${OPENMP_LIBDIR_SUFFIX}")
 
-# We need the AOMP specific build of ATMI that has HSA_INTEROP turned on. 
-# Also, the AOMP specific build of ATMI has seperate release and debug builds. 
 target_link_libraries(
   omptarget.rtl.hsa
+  PUBLIC
   hostrpc_services
-  -lpthread -ldl -Wl,-rpath,${LLVM_LIBDIR}${OPENMP_LIBDIR_SUFFIX}
-  -L${LIBOMPTARGET_DEP_LIBHSA_LIBRARIES_DIRS} -L${LIBOMPTARGET_DEP_LIBHSAKMT_LIBRARIES_DIRS} -lhsa-runtime64 -lhsakmt -Wl,-rpath,${LIBOMPTARGET_DEP_LIBHSA_LIBRARIES_DIRS},-rpath,${LIBOMPTARGET_DEP_LIBHSAKMT_LIBRARIES_DIRS}
-  -lelf
+  PRIVATE
+  hsa-runtime64::hsa-runtime64
+  pthread dl elf
+  -Wl,-rpath,${LLVM_LIBDIR}${OPENMP_LIBDIR_SUFFIX}
   "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/../exports"
   "-Wl,-z,defs"
   )

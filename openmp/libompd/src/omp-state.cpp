@@ -10,7 +10,7 @@ static const char *get_ompd_state_name(ompd_word_t state) {
   switch (state) {
 #define ompd_state_macro(state, code) \
     case code: return #state ;
-  FOREACH_OMP_STATE(ompd_state_macro)
+  FOREACH_OMPD_STATE(ompd_state_macro)
 #undef ompd_state_macro
     default: return NULL;
   }
@@ -18,12 +18,12 @@ static const char *get_ompd_state_name(ompd_word_t state) {
 
 static const char *get_ompd_cuda_state_name(ompd_word_t state) {
   switch (state) {
-    case omp_state_work_serial:
-      return "omp_state_work_serial";
-    case omp_state_work_parallel:
-      return "omp_state_work_parallel";
-    case omp_state_work_reduction:
-      return "omp_state_work_reduction";
+    case ompt_state_work_serial:
+      return "ompt_state_work_serial";
+    case ompt_state_work_parallel:
+      return "ompt_state_work_parallel";
+    case ompt_state_work_reduction:
+      return "ompt_state_work_reduction";
     default:
       return NULL;
   }
@@ -38,14 +38,14 @@ ompd_rc_t ompd_enumerate_states(
     // We only support a small number of states for cuda devices
     *more_enums = 1;
     switch (current_state) {
-      case omp_state_undefined:
-        *next_state = omp_state_work_serial;
+      case ompt_state_undefined:
+        *next_state = ompt_state_work_serial;
         break;
-      case omp_state_work_serial:
-        *next_state = omp_state_work_parallel;
+      case ompt_state_work_serial:
+        *next_state = ompt_state_work_parallel;
         break;
-      case omp_state_work_parallel:
-        *next_state = omp_state_work_reduction;
+      case ompt_state_work_parallel:
+        *next_state = ompt_state_work_reduction;
         *more_enums = 0;
         break;
       default:
@@ -61,13 +61,13 @@ ompd_rc_t ompd_enumerate_states(
     strcpy(next_state_name_cpy, get_ompd_cuda_state_name(*next_state));
     *next_state_name = next_state_name_cpy;
   }  else {
-    if (current_state > omp_state_undefined && 
+    if (current_state > ompt_state_undefined && 
         current_state >= OMPD_LAST_OMP_STATE) {
       return ompd_rc_bad_input;
     }
     const char *find_next_state_name;
-    *next_state = (current_state == omp_state_undefined
-                  ? omp_state_work_serial
+    *next_state = (current_state == ompt_state_undefined
+                  ? ompt_state_work_serial
                   : current_state + 1);
     while (!(find_next_state_name = get_ompd_state_name(*next_state))) {
       ++(*next_state);
