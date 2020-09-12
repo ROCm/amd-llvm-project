@@ -48,6 +48,46 @@ Major New Features
 
 - ...
 
+Recovery AST
+^^^^^^^^^^^^
+
+clang's AST now improves support for representing broken C++ code. This improves
+the quality of subsequent diagnostics after an error is encountered. It also
+exposes more information to tools like clang-tidy and clangd that consume
+clang’s AST, allowing them to be more accurate on broken code.
+
+A RecoveryExpr is introduced in clang's AST, marking an expression containing
+semantic errors. This preserves the source range and subexpressions of the
+broken expression in the AST (rather than discarding the whole expression).
+
+For the following invalid code:
+
+  .. code-block:: c++
+
+     int NoArg(); // Line 1
+     int x = NoArg(42); // oops!
+
+clang-10 produces the minimal placeholder:
+
+  .. code-block:: c++
+
+     // VarDecl <line:2:1, col:5> col:5 x 'int'
+
+clang-11 produces a richer AST:
+
+  .. code-block:: c++
+
+     // VarDecl <line:2:1, col:16> col:5 x 'int' cinit
+     // `-RecoveryExpr <col:9, col:16> '<dependent type>' contains-errors lvalue
+     //    `-UnresolvedLookupExpr <col:9> '<overloaded function>' lvalue (ADL) = 'NoArg'
+     //    `-IntegerLiteral <col:15> 'int' 42
+
+Note that error-dependent types and values may now occur outside a template
+context. Tools may need to adjust assumptions about dependent code.
+
+This feature is on by default for C++ code, and can be explicitly controlled
+with `-Xclang -f[no-]recovery-ast`.
+
 Improvements to Clang's diagnostics
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -57,6 +97,10 @@ Improvements to Clang's diagnostics
 - -Wuninitialized-const-reference is a new warning controlled by 
   -Wuninitialized. It warns on cases where uninitialized variables are passed
   as const reference arguments to a function.
+
+- ``-Wimplicit-const-int-float-conversion`` (enabled by default) is a new
+  option controlled by ``-Wimplicit-int-float-conversion``.  It warns on
+  implicit conversion from a floating constant to an integer type.
 
 Non-comprehensive list of changes in this release
 -------------------------------------------------
@@ -89,6 +133,75 @@ Non-comprehensive list of changes in this release
 - Clang's profile files generated through ``-fprofile-instr-generate`` are using
   a fixed hashing algorithm that prevents some collision when loading
   out-of-date profile informations. Clang can still read old profile files.
+
+- Clang adds support for the following macros that enable the
+  C-intrinsics from the `Arm C language extensions for SVE
+  <https://developer.arm.com/documentation/100987/>`_ (version
+  ``00bet5``, see section 2.1 for the list of intrinsics associated to
+  each macro):
+
+
+      =================================  =================
+      Preprocessor macro                 Target feature
+      =================================  =================
+      ``__ARM_FEATURE_SVE``              ``+sve``
+      ``__ARM_FEATURE_SVE_BF16``         ``+sve+bf16``
+      ``__ARM_FEATURE_SVE_MATMUL_FP32``  ``+sve+f32mm``
+      ``__ARM_FEATURE_SVE_MATMUL_FP64``  ``+sve+f64mm``
+      ``__ARM_FEATURE_SVE_MATMUL_INT8``  ``+sve+i8mm``
+      ``__ARM_FEATURE_SVE2``             ``+sve2``
+      ``__ARM_FEATURE_SVE2_AES``         ``+sve2-aes``
+      ``__ARM_FEATURE_SVE2_BITPERM``     ``+sve2-bitperm``
+      ``__ARM_FEATURE_SVE2_SHA3``        ``+sve2-sha3``
+      ``__ARM_FEATURE_SVE2_SM4``         ``+sve2-sm4``
+      =================================  =================
+
+  The macros enable users to write C/C++ `Vector Length Agnostic
+  (VLA)` loops, that can be executed on any CPU that implements the
+  underlying instructions supported by the C intrinsics, independently
+  of the hardware vector register size.
+
+  For example, the ``__ARM_FEATURE_SVE`` macro is enabled when
+  targeting AArch64 code generation by setting ``-march=armv8-a+sve``
+  on the command line.
+
+  .. code-block:: c
+     :caption: Example of VLA addition of two arrays with SVE ACLE.
+
+     // Compile with:
+     // `clang++ -march=armv8a+sve ...` (for c++)
+     // `clang -stc=c11 -march=armv8a+sve ...` (for c)
+     #include <arm_sve.h>
+
+     void VLA_add_arrays(double *x, double *y, double *out, unsigned N) {
+       for (unsigned i = 0; i < N; i += svcntd()) {
+         svbool_t Pg = svwhilelt_b64(i, N);
+         svfloat64_t vx = svld1(Pg, &x[i]);
+         svfloat64_t vy = svld1(Pg, &y[i]);
+         svfloat64_t vout = svadd_x(Pg, vx, vy);
+         svst1(Pg, &out[i], vout);
+       }
+     }
+
+  Please note that support for lazy binding of SVE function calls is
+  incomplete. When you interface user code with SVE functions that are
+  provided through shared libraries, avoid using lazy binding. If you
+  use lazy binding, the results could be corrupted.
+
+- ``-O`` maps to ``-O1`` instead of ``-O2``.
+  (`D79916 <https://reviews.llvm.org/D79916>`_)
+
+- In a ``-flto={full,thin}`` link, ``-Os``, ``-Oz`` and ``-Og`` can be used
+  now. ``-Os`` and ``-Oz`` map to the -O2 pipe line while ``-Og`` maps to the
+  -O1 pipeline.
+  (`D79919 <https://reviews.llvm.org/D79919>`_)
+
+- ``--coverage`` (gcov) defaults to gcov [4.8,8) compatible format now.
+
+- On x86, ``-fpic/-fPIC -fno-semantic-interposition`` assumes a global
+  definition of default visibility non-interposable and allows interprocedural
+  optimizations. In produced assembly ``-Lfunc$local`` local aliases are created
+  for global symbols of default visibility.
 
 New Compiler Flags
 ------------------
@@ -141,6 +254,21 @@ New Compiler Flags
     adding -fdata-sections -ffunction-sections to the command generating
     the shared object).
 
+- ``-fsanitize-coverage-allowlist`` and ``-fsanitize-coverage-blocklist`` are added.
+
+- -mtls-size={12,24,32,48} allows selecting the size of the TLS (thread-local
+  storage) in the local exec TLS model of AArch64, which is the default TLS
+  model for non-PIC objects. Each value represents 4KB, 16MB (default), 4GB,
+  and 256TB (needs -mcmodel=large). This allows large/many thread local
+  variables or a compact/fast code in an executable.
+
+- -menable-experimental-extension` can be used to enable experimental or
+  unratified RISC-V extensions, allowing them to be targeted by specifying the
+  extension name and precise version number in the `-march` string. For these
+  experimental extensions, there is no expectation of ongoing support - the
+  compiler support will continue to change until the specification is
+  finalised.
+
 Deprecated Compiler Flags
 -------------------------
 
@@ -175,6 +303,10 @@ Modified Compiler Flags
   ``char8_t`` as the character type of ``u8`` literals. This restores the
   Clang 8 behavior that regressed in Clang 9 and 10.
 - -print-targets has been added to print the registered targets.
+- -mcpu is now supported for RISC-V, and recognises the generic-rv32,
+  rocket-rv32, sifive-e31, generic-rv64, rocket-rv64, and sifive-u54 target
+  CPUs.
+
 
 New Pragmas in Clang
 --------------------
@@ -261,13 +393,44 @@ C++1z Feature Support
 Objective-C Language Changes in Clang
 -------------------------------------
 
-OpenCL C Language Changes in Clang
-----------------------------------
+OpenCL Kernel Language Changes in Clang
+---------------------------------------
 
-...
+- Added extensions from `cl_khr_subgroup_extensions` to clang and the internal
+  header.
+
+- Added rocm device libs linking for AMDGPU.
+
+- Added diagnostic for OpenCL 2.0 blocks used in function arguments.
+
+- Fixed MS mangling for OpenCL 2.0 pipe type specifier.
+
+- Improved command line options for fast relaxed math.
+
+- Improved `atomic_fetch_min/max` functions in the internal header
+  (`opencl-c.h`).
+
+- Improved size of builtin function table for `TableGen`-based internal header
+  (enabled by `-fdeclare-opencl-builtins`) and added new functionality for
+  OpenCL 2.0 atomics, pipes, enqueue kernel, `cl_khr_subgroups`,
+  `cl_arm_integer_dot_product`.
+
+Changes related to C++ for OpenCL
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- Added `addrspace_cast` operator.
+
+- Improved address space deduction in templates.
+
+- Improved diagnostics of address spaces in nested pointer conversions.
 
 ABI Changes in Clang
 --------------------
+
+- For RISC-V, an ABI bug was fixed when passing complex single-precision
+  floats in RV64 with the hard float ABI. The bug could only be triggered for
+  function calls that exhaust the available FPRs.
+
 
 OpenMP Support in Clang
 -----------------------
