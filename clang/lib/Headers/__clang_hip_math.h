@@ -14,6 +14,7 @@
 #include <limits.h>
 #include <limits>
 #include <stdint.h>
+#include <assert.h>
 
 #pragma push_macro("__DEVICE__")
 #pragma push_macro("__RETURN_TYPE")
@@ -95,8 +96,10 @@ inline uint64_t __make_mantissa(const char *__tagp) {
 }
 
 // BEGIN FLOAT
+#ifdef __cplusplus
 __DEVICE__
 inline float abs(float __x) { return __ocml_fabs_f32(__x); }
+#endif
 __DEVICE__
 inline float acosf(float __x) { return __ocml_acos_f32(__x); }
 __DEVICE__
@@ -293,6 +296,8 @@ normf(int __dim,
 }
 __DEVICE__
 inline float powf(float __x, float __y) { return __ocml_pow_f32(__x, __y); }
+__DEVICE__
+inline float powif(float __x, int __y) { return __ocml_pown_f32(__x, __y); }
 __DEVICE__
 inline float rcbrtf(float __x) { return __ocml_rcbrt_f32(__x); }
 __DEVICE__
@@ -551,8 +556,10 @@ inline float __tanf(float __x) { return __ocml_tan_f32(__x); }
 // END FLOAT
 
 // BEGIN DOUBLE
+#ifdef __cplusplus
 __DEVICE__
 inline double abs(double __x) { return __ocml_fabs_f64(__x); }
+#endif
 __DEVICE__
 inline double acos(double __x) { return __ocml_acos_f64(__x); }
 __DEVICE__
@@ -758,6 +765,8 @@ __DEVICE__
 inline double normcdfinv(double __x) { return __ocml_ncdfinv_f64(__x); }
 __DEVICE__
 inline double pow(double __x, double __y) { return __ocml_pow_f64(__x, __y); }
+__DEVICE__
+inline double powi(double __x, int __y) { return __ocml_pown_f64(__x, __y); }
 __DEVICE__
 inline double rcbrt(double __x) { return __ocml_rcbrt_f64(__x); }
 __DEVICE__
@@ -1134,6 +1143,7 @@ __DEF_FUN1(double, trunc);
   __DEVICE__                                                                   \
   inline float __func(float __x, int __y) { return __func##f(__x, __y); }
 __DEF_FLOAT_FUN2I(scalbn)
+__DEF_FLOAT_FUN2I(ldexp)
 
 template <class T> __DEVICE__ inline T min(T __arg1, T __arg2) {
   return (__arg1 < __arg2) ? __arg1 : __arg2;
@@ -1172,6 +1182,19 @@ __host__ inline static int min(int __arg1, int __arg2) {
 __host__ inline static int max(int __arg1, int __arg2) {
   return std::max(__arg1, __arg2);
 }
+
+#ifdef __cplusplus
+__DEVICE__
+inline float pow(float __base, int __iexp) { return powif(__base, __iexp); }
+
+__DEVICE__
+inline double pow(double __base, int __iexp) { return powi(__base, __iexp); }
+
+__DEVICE__
+inline _Float16 pow(_Float16 __base, int __iexp) {
+  return __ocml_pown_f16(__base, __iexp);
+}
+#endif
 
 #pragma pop_macro("__DEF_FUN1")
 #pragma pop_macro("__DEF_FUN2")
