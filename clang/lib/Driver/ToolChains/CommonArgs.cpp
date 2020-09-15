@@ -1628,6 +1628,10 @@ bool tools::GetSDLFromAOB(Compilation &C, const Driver &D, const Tool &T,
   return FoundAOB;
 }
 
+//  Lets clean up this overloading!
+//
+// 10 args,  adds Driver, called from HIP and
+//  Cuda OpenMPLinkerConstructJob (false,false)
 void tools::AddStaticDeviceLibs(Compilation &C, const Tool &T,
                                 const JobAction &JA,
 				const InputInfoList &Inputs,
@@ -1639,6 +1643,8 @@ void tools::AddStaticDeviceLibs(Compilation &C, const Tool &T,
                       ArchName, GpuArch, isBitCodeSDL, postClangLink);
 }
 
+//  7  args , called from cuda addClangTarget Options for openmp
+//  missing compilation, tool, ja, inputs (true, true)
 void tools::AddStaticDeviceLibs(const Driver &D,
                                 const llvm::opt::ArgList &DriverArgs,
                                 llvm::opt::ArgStringList &CC1Args,
@@ -1648,6 +1654,7 @@ void tools::AddStaticDeviceLibs(const Driver &D,
                       CC1Args, ArchName, GpuArch, isBitCodeSDL, postClangLink);
 }
 
+//  11 args
 void tools::AddStaticDeviceLibs(Compilation *C, const Tool *T,
                                 const JobAction *JA,
                                 const InputInfoList *Inputs, const Driver &D,
@@ -1681,9 +1688,9 @@ void tools::AddStaticDeviceLibs(Compilation *C, const Tool *T,
   SmallVector<std::string, 16> SDL_Names;
   for (std::string SDL_Name : DriverArgs.getAllArgValues(options::OPT_l)) {
     // No Device specific SDL for these libs: omp,cudart,m,gcc,gcc_s,pthread
-    if ( SDL_Name != "omp" && SDL_Name != "cudart" && SDL_Name != "m" &&
-         SDL_Name != "gcc" && SDL_Name != "gcc_s" && SDL_Name != "pthread" &&
-         SDL_Name != "hip_hcc" ) {
+    if (SDL_Name != "omp" && SDL_Name != "cudart" && SDL_Name != "m" &&
+        SDL_Name != "gcc" && SDL_Name != "gcc_s" && SDL_Name != "pthread" &&
+        SDL_Name != "hip_hcc" && SDL_Name != "m") {
       bool inSDL_Names = false;
       for (std::string OldName : SDL_Names) {
         if (OldName == SDL_Name)
@@ -1704,15 +1711,4 @@ void tools::AddStaticDeviceLibs(Compilation *C, const Tool *T,
     }
   }
 
-  if (JA != nullptr) {
-    bool isTargOmp = JA->isDeviceOffloading(Action::OFK_OpenMP);
-
-    // Add the autoinclude that allows system headers to work for devices
-    if (postClangLink && isTargOmp) {
-      CC1Args.push_back("-include");
-      SmallString<128> P(D.ResourceDir);
-      llvm::sys::path::append(P, "/include/__clang_openmp_runtime_wrapper.h");
-      CC1Args.push_back(DriverArgs.MakeArgString(P));
-    }
-  }
 }

@@ -48,4 +48,13 @@
 
 #pragma omp end declare variant
 
+#pragma omp begin declare variant match(                                       \
+    device = {arch(amdgcn)}, implementation = {extension(match_any)})
+#define __HIP__
+#define __OPENMP_AMDGCN__
+#include <__clang_hip_math.h>
+#undef __OPENMP_AMDGCN__
+#undef __HIP__
+#pragma omp end declare variant
+
 #endif

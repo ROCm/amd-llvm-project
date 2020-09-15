@@ -9,9 +9,11 @@
 #ifndef __CLANG_OPENMP_WRAPPERS_NEW
 #define __CLANG_OPENMP_WRAPPERS_NEW
 
+#warning "inside openmp_wrappers/new overlay, calling include_next"
 #include_next <new>
+#warning "DONE include_next <new>"
 
-#if defined(__NVPTX__) && defined(_OPENMP)
+#if (defined(__NVPTX__) || defined(__AMDGCN__))  && defined(_OPENMP)
 
 #include <cstdlib>
 
