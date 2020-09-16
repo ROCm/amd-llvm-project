@@ -78,9 +78,6 @@ add_library(omptarget.rtl.hsa SHARED
       impl/system.cpp
       impl/utils.cpp
       impl/msgpack.cpp
-      impl/atmi_hostcall.c
-      impl/hostcall.cpp
-      impl/hostrpc_handlers.c
       hostrpc/memory.cpp
       hostrpc/hostcall.cpp
       hostrpc/hostcall_interface.cpp

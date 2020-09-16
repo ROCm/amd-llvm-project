@@ -29,14 +29,7 @@ SOFTWARE.
 
 #include "hostrpc_internal.h"
 #include "hsa_ext_amd.h"
-
-#include "../../../hostrpc/src/hostrpc.h"
-#include "amd_hostcall.h"
-#include "atmi_interop_hsa.h"
-#include "atmi_runtime.h"
-#include "hostcall_impl.h"
-#include "hsa/hsa_ext_amd.h"
-#include "../hostrpc/hostcall.h"
+#include "../../plugins/hsa/hostrpc/hostcall.h"
 
 #include <stdio.h>
 #include <stdlib.h>
