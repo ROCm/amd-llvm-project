@@ -2,6 +2,9 @@
 #include "base_types.hpp"
 #include "hostcall_interface.hpp"
 
+// trying to get something running on gfx8
+#define FORCE_QUEUE_ZERO 1
+
 #if defined(__x86_64__)
 #include "hostcall.h"
 #include "hsa.hpp"
@@ -17,14 +20,16 @@ using SZ = hostrpc::size_compiletime<hostrpc::x64_host_amdgcn_array_size>;
 __attribute__((visibility("default")))
 hostrpc::hostcall_interface_t::client_t client_singleton[MAX_NUM_DOORBELLS];
 
-hostrpc::hostcall_interface_t::client_t *get_client_singleton(size_t i)
-{
+hostrpc::hostcall_interface_t::client_t *get_client_singleton(size_t i) {
   return &client_singleton[i];
 }
 
 // Also in hsa.hpp
-static uint16_t get_queue_index()
-{
+static uint16_t get_queue_index() {
+#if FORCE_QUEUE_ZERO
+  return 0;
+#else
+
   static_assert(MAX_NUM_DOORBELLS < UINT16_MAX, "");
   uint32_t tmp0, tmp1;
 
@@ -48,33 +53,48 @@ static uint16_t get_queue_index()
   res %= MAX_NUM_DOORBELLS;
 
   return static_cast<uint16_t>(res);
+#endif
 }
 
-void hostcall_client(uint64_t data[8])
+#if 0
+static uint16_t get_queue_index_gfx8()
 {
+  // Get pointer to the amd_queue_t we are running on
+  __attribute__((address_space(4))) void * q = __builtin_amdgcn_queue_ptr();
+
+  // The first element in that object is a hsa_queue_t
+
+  hsa_queue_t * p = (hsa_queue_t*)q;
+
+  hsa_signal_t db  = {p->doorbell_signal.handle};
+
+  (void)db;
+
+  return 0;
+}
+#endif
+
+void hostcall_client(uint64_t data[8]) {
   hostrpc::hostcall_interface_t::client_t *c =
       get_client_singleton(get_queue_index());
 
   bool success = false;
 
-  while (!success)
-    {
-      void *d = static_cast<void *>(&data[0]);
-      success = c->invoke(d, d);
-    }
+  while (!success) {
+    void *d = static_cast<void *>(&data[0]);
+    success = c->invoke(d, d);
+  }
 }
 
-void hostcall_client_async(uint64_t data[8])
-{
+void hostcall_client_async(uint64_t data[8]) {
   hostrpc::hostcall_interface_t::client_t *c =
       get_client_singleton(get_queue_index());
   bool success = false;
 
-  while (!success)
-    {
-      void *d = static_cast<void *>(&data[0]);
-      success = c->invoke_async(d, d);
-    }
+  while (!success) {
+    void *d = static_cast<void *>(&data[0]);
+    success = c->invoke_async(d, d);
+  }
 }
 
 #else
@@ -84,8 +104,10 @@ const char *hostcall_client_symbol() { return "client_singleton"; }
 
 hostrpc::hostcall_interface_t::server_t server_singleton[MAX_NUM_DOORBELLS];
 
-uint16_t queue_to_index(hsa_queue_t *q)
-{
+uint16_t queue_to_index(hsa_queue_t *q) {
+#if FORCE_QUEUE_ZERO
+  return 0;
+#endif
   char *sig = reinterpret_cast<char *>(q->doorbell_signal.handle);
   int64_t kind;
   __builtin_memcpy(&kind, sig, 8);
@@ -107,21 +129,17 @@ hostrpc::hostcall_interface_t *stored_pairs[MAX_NUM_DOORBELLS] = {0};
 
 #if defined(__x86_64__)
 
-class hostcall_impl
-{
- public:
+class hostcall_impl {
+public:
   hostcall_impl(void *client_symbol_address, hsa_agent_t kernel_agent);
   hostcall_impl(hsa_executable_t executable, hsa_agent_t kernel_agent);
 
   hostcall_impl(hostcall_impl &&o)
-      : clients(std::move(o.clients)),
-        servers(std::move(o.servers)),
+      : clients(std::move(o.clients)), servers(std::move(o.servers)),
         stored_pairs(std::move(o.stored_pairs)),
-        queue_loc(std::move(o.queue_loc)),
-        threads(std::move(o.threads)),
+        queue_loc(std::move(o.queue_loc)), threads(std::move(o.threads)),
         fine_grained_region(std::move(o.fine_grained_region)),
-        coarse_grained_region(std::move(o.coarse_grained_region))
-  {
+        coarse_grained_region(std::move(o.coarse_grained_region)) {
     clients = 0;
     servers = {};
     stored_pairs = {};
@@ -135,22 +153,19 @@ class hostcall_impl
                                       hsa_agent_t kernel_agent,
                                       const char *sym);
 
-  int enable_queue(hsa_queue_t *queue)
-  {
+  int enable_queue(hsa_queue_t *queue) {
     uint16_t queue_id = queue_to_index(queue);
-    if (stored_pairs[queue_id] != 0)
-      {
-        // already enabled
-        return 0;
-      }
+    if (stored_pairs[queue_id] != 0) {
+      // already enabled
+      return 0;
+    }
 
     // TODO: Avoid this heap alloc
     hostrpc::hostcall_interface_t *res = new hostrpc::hostcall_interface_t(
         fine_grained_region.handle, coarse_grained_region.handle);
-    if (!res)
-      {
-        return 1;
-      }
+    if (!res) {
+      return 1;
+    }
 
     clients[queue_id] = res->client();
 
@@ -161,56 +176,47 @@ class hostcall_impl
     return 0;
   }
 
-  int spawn_worker(hsa_queue_t *queue)
-  {
+  int spawn_worker(hsa_queue_t *queue) {
     uint16_t queue_id = queue_to_index(queue);
-    if (stored_pairs[queue_id] == 0)
-      {
-        return 1;
-      }
+    if (stored_pairs[queue_id] == 0) {
+      return 1;
+    }
     return spawn_worker(queue_id);
   }
 
-  ~hostcall_impl()
-  {
-    for (size_t i = 0; i < MAX_NUM_DOORBELLS; i++)
-      {
-        delete stored_pairs[i];
-      }
+  ~hostcall_impl() {
+    for (size_t i = 0; i < MAX_NUM_DOORBELLS; i++) {
+      delete stored_pairs[i];
+    }
     thread_killer = 1;
-    for (size_t i = 0; i < threads.size(); i++)
-      {
-        threads[i].join();
-      }
+    for (size_t i = 0; i < threads.size(); i++) {
+      threads[i].join();
+    }
   }
 
- private:
-  int spawn_worker(uint16_t queue_id)
-  {
+private:
+  int spawn_worker(uint16_t queue_id) {
     _Atomic uint32_t *control = &thread_killer;
     hostrpc::hostcall_interface_t::server_t *server = &servers[queue_id];
     uint64_t *ql = &queue_loc[queue_id];
     // TODO. Can't actually use std::thread because the constructor throws.
     threads.emplace_back([control, server, ql]() {
-      for (;;)
-        {
-          while (server->handle(nullptr, ql))
-            {
-            }
-
-          if (*control != 0)
-            {
-              return;
-            }
-
-          // yield
+      for (;;) {
+        while (server->handle(nullptr, ql)) {
         }
+
+        if (*control != 0) {
+          return;
+        }
+
+        // yield
+      }
     });
-    return 0;  // can't detect errors from std::thread
+    return 0; // can't detect errors from std::thread
   }
 
   // Going to need these to be opaque
-  hostrpc::hostcall_interface_t::client_t *clients;  // statically allocated
+  hostrpc::hostcall_interface_t::client_t *clients; // statically allocated
 
   // heap allocated, may not need the servers() instance
   std::vector<hostrpc::hostcall_interface_t::server_t> servers;
@@ -225,8 +231,7 @@ class hostcall_impl
 
 // todo: port to hsa.h api
 
-hostcall_impl::hostcall_impl(void *client_addr, hsa_agent_t kernel_agent)
-{
+hostcall_impl::hostcall_impl(void *client_addr, hsa_agent_t kernel_agent) {
   // The client_t array is per-gpu-image. Find it.
   clients =
       reinterpret_cast<hostrpc::hostcall_interface_t::client_t *>(client_addr);
@@ -247,52 +252,43 @@ hostcall_impl::hostcall_impl(hsa_executable_t executable,
 
     : hostcall_impl(reinterpret_cast<void *>(find_symbol_address(
                         executable, kernel_agent, hostcall_client_symbol())),
-                    kernel_agent)
-{
-}
+                    kernel_agent) {}
 
 uint64_t hostcall_impl::find_symbol_address(hsa_executable_t &ex,
                                             hsa_agent_t kernel_agent,
-                                            const char *sym)
-{
+                                            const char *sym) {
   // TODO: This was copied from the loader, sort out the error handling
   hsa_executable_symbol_t symbol;
   {
     hsa_status_t rc =
         hsa_executable_get_symbol_by_name(ex, sym, &kernel_agent, &symbol);
-    if (rc != HSA_STATUS_SUCCESS)
-      {
-        fprintf(stderr, "HSA failed to find symbol %s\n", sym);
-        exit(1);
-      }
+    if (rc != HSA_STATUS_SUCCESS) {
+      fprintf(stderr, "HSA failed to find symbol %s\n", sym);
+      exit(1);
+    }
   }
 
   hsa_symbol_kind_t kind = hsa::symbol_get_info_type(symbol);
-  if (kind != HSA_SYMBOL_KIND_VARIABLE)
-    {
-      fprintf(stderr, "Symbol %s is not a variable\n", sym);
-      exit(1);
-    }
+  if (kind != HSA_SYMBOL_KIND_VARIABLE) {
+    fprintf(stderr, "Symbol %s is not a variable\n", sym);
+    exit(1);
+  }
 
   return hsa::symbol_get_info_variable_address(symbol);
 }
 
-template <size_t expect, size_t actual>
-static void assert_size_t_equal()
-{
+template <size_t expect, size_t actual> static void assert_size_t_equal() {
   static_assert(expect == actual, "");
 }
 
-hostcall::hostcall(hsa_executable_t executable, hsa_agent_t kernel_agent)
-{
+hostcall::hostcall(hsa_executable_t executable, hsa_agent_t kernel_agent) {
   assert_size_t_equal<hostcall::state_t::align(), alignof(hostcall_impl)>();
   assert_size_t_equal<hostcall::state_t::size(), sizeof(hostcall_impl)>();
   new (reinterpret_cast<hostcall_impl *>(state.data))
       hostcall_impl(hostcall_impl(executable, kernel_agent));
 }
 
-hostcall::hostcall(void *client_symbol_address, hsa_agent_t kernel_agent)
-{
+hostcall::hostcall(void *client_symbol_address, hsa_agent_t kernel_agent) {
   assert_size_t_equal<hostcall::state_t::align(), alignof(hostcall_impl)>();
   assert_size_t_equal<hostcall::state_t::size(), sizeof(hostcall_impl)>();
   new (reinterpret_cast<hostcall_impl *>(state.data))
@@ -301,12 +297,10 @@ hostcall::hostcall(void *client_symbol_address, hsa_agent_t kernel_agent)
 
 bool hostcall::valid() { return true; }
 
-int hostcall::enable_queue(hsa_queue_t *queue)
-{
+int hostcall::enable_queue(hsa_queue_t *queue) {
   return state.open<hostcall_impl>()->enable_queue(queue);
 }
-int hostcall::spawn_worker(hsa_queue_t *queue)
-{
+int hostcall::spawn_worker(hsa_queue_t *queue) {
   return state.open<hostcall_impl>()->spawn_worker(queue);
 }
 
@@ -314,53 +308,44 @@ int hostcall::spawn_worker(hsa_queue_t *queue)
 
 #if defined(__x86_64__)
 
-static std::vector<std::unique_ptr<hostcall> > state;
+static std::vector<std::unique_ptr<hostcall>> state;
 
 void spawn_hostcall_for_queue(uint32_t device_id, hsa_agent_t agent,
-                              hsa_queue_t *queue, void *client_symbol_address)
-{
+                              hsa_queue_t *queue, void *client_symbol_address) {
   // printf("Setting up hostcall on id %u, queue %lx\n", device_id,
   // (uint64_t)queue);
-  if (device_id >= state.size())
-    {
-      state.resize(device_id + 1);
-    }
+  if (device_id >= state.size()) {
+    state.resize(device_id + 1);
+  }
 
   // Only create a single instance backed by a single thread per queue at
   // present
-  if (state[device_id] != nullptr)
-    {
-      return;
-    }
+  if (state[device_id] != nullptr) {
+    return;
+  }
 
   // make an instance for this device if there isn't already one
-  if (state[device_id] == nullptr)
-    {
-      std::unique_ptr<hostcall> r(new hostcall(client_symbol_address, agent));
-      if (r && r->valid())
-        {
-          state[device_id] = std::move(r);
-        }
-      else
-        {
-          printf("Failed to construct a hostcall, going to assert\n");
-        }
+  if (state[device_id] == nullptr) {
+    std::unique_ptr<hostcall> r(new hostcall(client_symbol_address, agent));
+    if (r && r->valid()) {
+      state[device_id] = std::move(r);
+    } else {
+      printf("Failed to construct a hostcall, going to assert\n");
     }
+  }
 
   assert(state[device_id] != nullptr);
   // enabling it for a queue repeatedly is a no-op
 
-  if (state[device_id]->enable_queue(queue) == 0)
-    {
-      // spawn an additional thread
-      if (state[device_id]->spawn_worker(queue) == 0)
-        {
-          // printf("Success for setup on id %u, queue %lx, ptr %lx\n",
-          // device_id,
-          //      (uint64_t)queue, (uint64_t)client_symbol_address);
-          // all good
-        }
+  if (state[device_id]->enable_queue(queue) == 0) {
+    // spawn an additional thread
+    if (state[device_id]->spawn_worker(queue) == 0) {
+      // printf("Success for setup on id %u, queue %lx, ptr %lx\n",
+      // device_id,
+      //      (uint64_t)queue, (uint64_t)client_symbol_address);
+      // all good
     }
+  }
 
   // TODO: Indicate failure
 }
