@@ -18,7 +18,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#include "../msgpack/msgpack.h"
+#include "../impl/msgpack.h"
 #include "find_metadata.hpp"
 
 namespace hsa
