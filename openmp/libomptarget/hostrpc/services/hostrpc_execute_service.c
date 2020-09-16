@@ -241,10 +241,11 @@ static void hostrpc_handler_SERVICE_NO_OPERATION(uint64_t *payload) {
 }
 
 // FIXME: Clean up this diagnostic and die properly
-static bool hostrpc_version_checked;
+static bool hostrpc_version_checked = false; // version checking is failing, high bits not set from call
 static hostrpc_status_t hostrpc_version_check(unsigned int device_vrm) {
   uint device_version_release = device_vrm >> 6;
   if (device_version_release != HOSTRPC_VERSION_RELEASE) {
+    printf("version check passed %u\n", device_vrm);
     printf("ERROR Incompatible device and host release\n      Device "
            "release(%d)\n      Host release(%d)\n",
            device_version_release, HOSTRPC_VERSION_RELEASE);

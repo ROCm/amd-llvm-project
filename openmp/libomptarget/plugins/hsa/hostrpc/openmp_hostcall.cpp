@@ -17,11 +17,10 @@ void operate(hostrpc::page_t *page)
   for (unsigned c = 0; c < 64; c++)
     {
       hostrpc::cacheline_t &line = page->cacheline[c];
-      uint64_t service_id = line.element[0];
-      uint64_t *payload = &line.element[1];
 
-      service_id = ((uint32_t)service_id << 16u) >> 16u;
-      assert(service_id <= UINT32_MAX);
+      assert(line.element[0] <= UINT32_MAX);
+      uint32_t service_id = (uint32_t)line.element[0];
+      uint64_t *payload = &line.element[1];
 
       // A bit dubious in that the existing code expects payload to have
       // length 8 and we're passing one of length 7, but nothing yet
