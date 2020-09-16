@@ -30,6 +30,7 @@ static __attribute__((noinline)) void sleep_noexcept(unsigned int t) noexcept
 inline void sleep_briefly(void)
 {
   // <thread> conflicts with <stdatomic.h>
+  // stdatomic is no longer in use so may be able to use <thread> again
   // std::this_thread::sleep_for(std::chrono::milliseconds(10));
   sleep_noexcept(10);
 }

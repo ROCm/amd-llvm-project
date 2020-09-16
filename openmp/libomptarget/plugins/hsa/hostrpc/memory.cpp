@@ -3,6 +3,7 @@
 #if defined(__x86_64__)
 #include "hsa.h"
 #include <stdlib.h>
+#include <string.h>
 #endif
 
 namespace hostrpc
@@ -12,7 +13,12 @@ namespace x64_native
 {
 void* allocate(size_t align, size_t bytes)
 {
-  return ::aligned_alloc(align, bytes);
+  void* memory = ::aligned_alloc(align, bytes);
+  if (memory)
+    {
+      memset(memory, 0, bytes);
+    }
+  return memory;
 }
 void deallocate(void* d) { free(d); }
 }  // namespace x64_native
@@ -26,6 +32,7 @@ void* allocate(uint64_t hsa_region_t_handle, size_t align, size_t bytes)
   void* memory;
   if (HSA_STATUS_SUCCESS == hsa_memory_allocate(region, bytes, &memory))
     {
+      memset(memory, 0, bytes);
       return memory;
     }
   else

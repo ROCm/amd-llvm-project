@@ -1,7 +1,6 @@
 #ifndef HOSTRPC_COMMON_H_INCLUDED
 #define HOSTRPC_COMMON_H_INCLUDED
 
-#include <stdatomic.h>
 #include <stdint.h>
 
 #include "../base_types.hpp"
@@ -117,7 +116,14 @@ struct cache
 {
   cache() = default;
 
-  void dump() { printf("[%lu] %lu/%lu/%lu\n", slot, i, o, a); }
+  void dump()
+  {
+#ifndef NDEBUG
+    printf("[%lu] %lu/%lu/%lu\n", slot, i_, o_, a_);
+#else
+    printf("cache dump requires assertions enabled\n");
+#endif
+  }
 
   bool is(uint8_t s)
   {
@@ -127,6 +133,7 @@ struct cache
     if (!r) dump();
     return r;
 #else
+    (void)s;
     return true;
 #endif
   }
@@ -142,48 +149,99 @@ struct cache
 #endif
   }
 
-  uint64_t i = 0;
-  uint64_t o = 0;
-  uint64_t a = 0;
+#ifndef NDEBUG
+  void i(uint64_t x) { i_ = x; }
+  void o(uint64_t x) { o_ = x; }
+  void a(uint64_t x) { a_ = x; }
+#else
+  void i(uint64_t) {}
+  void o(uint64_t) {}
+  void a(uint64_t) {}
+#endif
 
+#ifndef NDEBUG
+ private:
+  uint64_t i_ = 0;
+  uint64_t o_ = 0;
+  uint64_t a_ = 0;
   uint64_t slot = UINT64_MAX;
   uint64_t word = UINT64_MAX;
   uint64_t subindex = UINT64_MAX;
 
- private:
   uint8_t concat()
   {
-    unsigned r = detail::nthbitset64(i, subindex) << 2 |
-                 detail::nthbitset64(o, subindex) << 1 |
-                 detail::nthbitset64(a, subindex) << 0;
+    unsigned r = detail::nthbitset64(i_, subindex) << 2 |
+                 detail::nthbitset64(o_, subindex) << 1 |
+                 detail::nthbitset64(a_, subindex) << 0;
     return static_cast<uint8_t>(r);
   }
+#endif
 };
 
-template <size_t scope>
+namespace properties
+{
+// atomic operations on fine grained memory are limited to those that the
+// pci-e bus supports. There is no cache involved to mask this - fetch_and on
+// the gpu will silently do the wrong thing if the pci-e bus doesn't support
+// it. That means using cas (or swap, or faa) to communicate or buffering. The
+// fetch_and works fine on coarse grained memory, but multiple waves will
+// clobber each other, leaving the flag flickering from the other device
+// perspective. Can downgrade to swap fairly easily, which will be roughly as
+// expensive as a load & store.
+
+template <bool HasFetchOpArg>
+struct base
+{
+  static constexpr bool hasFetchOp() { return HasFetchOpArg; }
+};
+
+struct fine_grain : public base<false>
+{
+  using Ty = _Atomic uint64_t *;
+};
+
+struct coarse_grain : public base<true>
+{
+#if defined(__AMDGCN__)
+  using Ty = __attribute__((address_space(1))) _Atomic uint64_t *;
+#else
+  using Ty = _Atomic uint64_t *;
+#endif
+};
+
+}  // namespace properties
+
+template <size_t scope, typename Prop>
 struct slot_bitmap;
 
-using slot_bitmap_all_svm = slot_bitmap<__OPENCL_MEMORY_SCOPE_ALL_SVM_DEVICES>;
+using slot_bitmap_all_svm =
+    slot_bitmap<__OPENCL_MEMORY_SCOPE_ALL_SVM_DEVICES, properties::fine_grain>;
 
-using slot_bitmap_device = slot_bitmap<__OPENCL_MEMORY_SCOPE_DEVICE>;
+using slot_bitmap_device =
+    slot_bitmap<__OPENCL_MEMORY_SCOPE_DEVICE, properties::fine_grain>;
 
-template <size_t scope>
+// coarse grain here raises a HSAIL hardware exception
+using slot_bitmap_coarse =
+    slot_bitmap<__OPENCL_MEMORY_SCOPE_DEVICE, properties::coarse_grain>;
+
+template <size_t scope, typename Prop>
 struct slot_bitmap
 {
+  using Ty = typename Prop::Ty;
   static_assert(sizeof(uint64_t) == sizeof(_Atomic uint64_t), "");
   static_assert(sizeof(_Atomic uint64_t *) == 8, "");
 
   bool valid(uint64_t N)
   {
     // Notably, default constructed instance isn't valid
-    static_assert(sizeof(slot_bitmap<scope>) == 8, "");
+    static_assert(sizeof(slot_bitmap<scope, Prop>) == 8, "");
     return (a != nullptr) && (N != 0) && (N != SIZE_MAX) && (N % 64 == 0);
   }
-  _Atomic uint64_t *a;
+  Ty a;
 
   slot_bitmap() : a(nullptr) {}
 
-  slot_bitmap(size_t size, _Atomic uint64_t *d) : a(d)
+  slot_bitmap(size_t size, Ty d) : a(d)
   {
     assert(valid(size));
     for (size_t i = 0; i < size / 64; i++)
@@ -192,23 +250,9 @@ struct slot_bitmap
       }
   }
 
-  slot_bitmap(size_t size, void *d) : a(static_cast<_Atomic uint64_t *>(d))
-  {
-    // this is intended for converting back from a cast bitmap, but it's
-    // error prone given then size/uint64_t* constructor that zero initializes
-    assert(valid(size));
-  }
-
-  _Atomic uint64_t *data() { return a; }
+  Ty data() { return a; }
 
   ~slot_bitmap() {}
-
-  bool operator()(size_t size, size_t i) const
-  {
-    size_t w = index_to_element(i);
-    uint64_t d = load_word(size, w);
-    return detail::nthbitset64(d, index_to_subindex(i));
-  }
 
   bool operator()(size_t size, size_t i, uint64_t *loaded) const
   {
@@ -238,26 +282,42 @@ struct slot_bitmap
   }
 
   // cas, true on success
-  bool try_claim_empty_slot(size_t size, size_t i, uint64_t *);
+  bool try_claim_empty_slot(size_t size, size_t i, uint64_t *,
+                            uint64_t *cas_fail_count);
 
   // assumes slot available
-  void claim_slot(size_t size, size_t i)
-  {
-    set_slot_given_already_clear(size, i);
-  }
   uint64_t claim_slot_returning_updated_word(size_t size, size_t i)
   {
-    return set_slot_given_already_clear(size, i);
+    (void)size;
+    assert(i < size);
+    size_t w = index_to_element(i);
+    uint64_t subindex = index_to_subindex(i);
+    assert(!detail::nthbitset64(load_word(size, w), subindex));
+
+    // or with only the slot set
+    uint64_t mask = detail::setnthbit64(0, subindex);
+
+    uint64_t before = fetch_or(w, mask);
+    assert(!detail::nthbitset64(before, subindex));
+    return before | mask;
   }
 
   // assumes slot taken
-  void release_slot(size_t size, size_t i)
-  {
-    clear_slot_given_already_set(size, i);
-  }
   uint64_t release_slot_returning_updated_word(size_t size, size_t i)
   {
-    return clear_slot_given_already_set(size, i);
+    (void)size;
+    assert(i < size);
+    size_t w = index_to_element(i);
+    uint64_t subindex = index_to_subindex(i);
+    assert(detail::nthbitset64(load_word(size, w), subindex));
+
+    // and with everything other than the slot set
+    uint64_t mask = ~detail::setnthbit64(0, subindex);
+
+    uint64_t before = fetch_and(w, mask);
+    // assert(detail::nthbitset64(before, subindex)); // this is firing on the
+    // gpu
+    return before & mask;
   }
 
   uint64_t load_word(size_t size, size_t i) const
@@ -284,23 +344,15 @@ struct slot_bitmap
 #endif
   }
 
-  bool cas(uint64_t element, uint64_t expect, uint64_t replace)
-  {
-    uint64_t loaded;
-    return cas(element, expect, replace, &loaded);
-  }
-
   bool cas(uint64_t element, uint64_t expect, uint64_t replace,
            uint64_t *loaded)
   {
-    _Atomic uint64_t *addr = &a[element];
+    Ty addr = &a[element];
 
-    // cas is not used across devices by this library
+    // this cas function is not used across devices by this library
     bool r = __opencl_atomic_compare_exchange_weak(
         addr, &expect, replace, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED,
-        __OPENCL_MEMORY_SCOPE_DEVICE
-
-    );
+        __OPENCL_MEMORY_SCOPE_DEVICE);
 
     // on success, bits in memory have been set to replace
     // on failure, value found is now in expect
@@ -314,111 +366,194 @@ struct slot_bitmap
   // returns value from before the and/or
   // these are used on memory visible fromi all svm devices
 
-  // atomic operations on fine grained memory are limited to those that the
-  // pci-e bus supports. There is no cache involved to mask this - fetch_and on
-  // the gpu will silently do the wrong thing if the pci-e bus doesn't support
-  // it. That means using cas (or swap, or faa) to communicate or buffering. The
-  // fetch_and works fine on coarse grained memory, but multiple waves will
-  // clobber each other, leaving the flag flickering from the other device
-  // perspective. Can downgrade to swap fairly easily, which will be roughly as
-  // expensive as a load & store.
-
-#ifndef USE_FETCH_OP
-#define USE_FETCH_OP 0
-#endif
-
   __attribute__((used)) uint64_t fetch_and(uint64_t element, uint64_t mask)
   {
-    _Atomic uint64_t *addr = &a[element];
+    Ty addr = &a[element];
 
-#if USE_FETCH_OP
-    // This seems to work on amdgcn, but only with acquire. acq/rel fails
-    return __opencl_atomic_fetch_and(addr, mask,
-                                     __ATOMIC_ACQUIRE,  // __ATOMIC_ACQ_REL,
-                                     __OPENCL_MEMORY_SCOPE_ALL_SVM_DEVICES);
-#else
-    uint64_t current = __opencl_atomic_load(
-        addr, __ATOMIC_RELAXED, __OPENCL_MEMORY_SCOPE_ALL_SVM_DEVICES);
-    while (1)
+    if (Prop::hasFetchOp())
       {
-        uint64_t replace = current & mask;
-
-        bool r = __opencl_atomic_compare_exchange_weak(
-            addr, &current, replace, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED,
-            __OPENCL_MEMORY_SCOPE_ALL_SVM_DEVICES);
-
-        if (r)
+        // This seems to work on amdgcn, but only with acquire. acq/rel fails
+        if (scope == __OPENCL_MEMORY_SCOPE_ALL_SVM_DEVICES)
           {
-            return current;
+            return __opencl_atomic_fetch_and(
+                addr, mask, __ATOMIC_ACQ_REL,
+                __OPENCL_MEMORY_SCOPE_ALL_SVM_DEVICES);
+          }
+        else
+          {
+            return __opencl_atomic_fetch_and(addr, mask, __ATOMIC_ACQ_REL,
+                                             __OPENCL_MEMORY_SCOPE_DEVICE);
           }
       }
+    else
+      {
+        // load and atomic cas have similar cost across pcie, may be faster to
+        // use a (usually wrong) initial guess instead of a load
+        uint64_t current = __opencl_atomic_load(
+            addr, __ATOMIC_RELAXED, __OPENCL_MEMORY_SCOPE_ALL_SVM_DEVICES);
+        while (1)
+          {
+            uint64_t replace = current & mask;
 
-#endif
+            bool r = __opencl_atomic_compare_exchange_weak(
+                addr, &current, replace, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED,
+                __OPENCL_MEMORY_SCOPE_ALL_SVM_DEVICES);
+
+            if (r)
+              {
+                return current;
+              }
+          }
+      }
   }
 
   __attribute__((used)) uint64_t fetch_or(uint64_t element, uint64_t mask)
   {
-    _Atomic uint64_t *addr = &a[element];
+    Ty addr = &a[element];
 
-#if USE_FETCH_OP
-    // the host never sees the value set here
-    return __opencl_atomic_fetch_or(addr, mask, __ATOMIC_ACQ_REL,
-                                    __OPENCL_MEMORY_SCOPE_ALL_SVM_DEVICES);
-#else
-    uint64_t current = __opencl_atomic_load(
-        addr, __ATOMIC_RELAXED, __OPENCL_MEMORY_SCOPE_ALL_SVM_DEVICES);
-    while (1)
+    if (Prop::hasFetchOp())
       {
-        uint64_t replace = current | mask;
-
-        bool r = __opencl_atomic_compare_exchange_weak(
-            addr, &current, replace, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED,
-            __OPENCL_MEMORY_SCOPE_ALL_SVM_DEVICES);
-        if (r)
+        if (scope == __OPENCL_MEMORY_SCOPE_ALL_SVM_DEVICES)
           {
-            return current;
+            return __opencl_atomic_fetch_or(
+                addr, mask, __ATOMIC_ACQ_REL,
+                __OPENCL_MEMORY_SCOPE_ALL_SVM_DEVICES);
+          }
+        else
+          {
+            return __opencl_atomic_fetch_or(addr, mask, __ATOMIC_ACQ_REL,
+                                            __OPENCL_MEMORY_SCOPE_DEVICE);
           }
       }
-#endif
-  }
+    else
+      {
+        uint64_t current = __opencl_atomic_load(
+            addr, __ATOMIC_RELAXED, __OPENCL_MEMORY_SCOPE_ALL_SVM_DEVICES);
+        while (1)
+          {
+            uint64_t replace = current | mask;
 
- private:
-  uint64_t clear_slot_given_already_set(size_t size, size_t i)
-  {
-    assert(i < size);
-    size_t w = index_to_element(i);
-    uint64_t subindex = index_to_subindex(i);
-    assert(detail::nthbitset64(load_word(size, w), subindex));
-
-    // and with everything other than the slot set
-    uint64_t mask = ~detail::setnthbit64(0, subindex);
-
-    uint64_t before = fetch_and(w, mask);
-    // assert(detail::nthbitset64(before, subindex)); // this is firing on the
-    // gpu
-    return before & mask;
-  }
-
-  uint64_t set_slot_given_already_clear(size_t size, size_t i)
-  {
-    assert(i < size);
-    size_t w = index_to_element(i);
-    uint64_t subindex = index_to_subindex(i);
-    assert(!detail::nthbitset64(load_word(size, w), subindex));
-
-    // or with only the slot set
-    uint64_t mask = detail::setnthbit64(0, subindex);
-
-    uint64_t before = fetch_or(w, mask);
-    assert(!detail::nthbitset64(before, subindex));
-    return before | mask;
+            bool r = __opencl_atomic_compare_exchange_weak(
+                addr, &current, replace, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED,
+                __OPENCL_MEMORY_SCOPE_ALL_SVM_DEVICES);
+            if (r)
+              {
+                return current;
+              }
+          }
+      }
   }
 };
 
+template <size_t Sscope, typename SProp, size_t Vscope, typename VProp>
+uint64_t staged_claim_slot_returning_updated_word(
+    size_t size, size_t i, slot_bitmap<Sscope, SProp> *staging,
+    slot_bitmap<Vscope, VProp> *visible, uint64_t *cas_fail_count,
+    uint64_t *cas_help_count)
+{
+  // claim slot in staging (efficiently) then propagage change to visible
+  assert((void *)visible != (void *)staging);
+  assert(i < size);
+  const size_t w = index_to_element(i);
+  const uint64_t subindex = index_to_subindex(i);
+
+  // slot is known clear as lock is held
+  assert(!detail::nthbitset64(staging->load_word(size, w), subindex));
+  assert(!detail::nthbitset64(visible->load_word(size, w), subindex));
+
+  // fetch_or to update staging
+  uint64_t staged_result = staging->claim_slot_returning_updated_word(size, i);
+  assert(detail::nthbitset64(staged_result, subindex));
+
+  // propose a value that could plausibly be in visible
+  // this was returned by fetch_or, can refactor to drop the arithmetic
+  uint64_t guess = detail::clearnthbit64(staged_result, subindex);
+
+  // initialise the value with the latest view of staging that is already
+  // available
+  uint64_t proposed = staged_result;
+
+  uint64_t local_fail_count = 0;
+  uint64_t local_help_count = 0;
+  while (!visible->cas(w, guess, proposed, &guess))
+    {
+      local_fail_count++;
+      if (detail::nthbitset64(guess, subindex))
+        {
+          // Cas failed, but another thread has done our work
+          local_help_count++;
+          proposed = guess;
+          break;
+        }
+
+      // Update our view of proposed and try again
+      proposed = staging->load_word(size, w);
+      assert(detail::nthbitset64(proposed, subindex));
+    }
+  *cas_fail_count = *cas_fail_count + local_fail_count;
+  *cas_help_count = *cas_help_count + local_help_count;
+  assert(detail::nthbitset64(visible->load_word(size, w), subindex));
+  return proposed;
+}
+
+template <size_t Sscope, typename SProp, size_t Vscope, typename VProp>
+uint64_t staged_release_slot_returning_updated_word(
+    size_t size, size_t i, slot_bitmap<Sscope, SProp> *staging,
+    slot_bitmap<Vscope, VProp> *visible, uint64_t *cas_fail_count,
+    uint64_t *cas_help_count)
+{
+  // claim slot in staging (efficiently) then propagage change to visible
+  assert((void *)visible != (void *)staging);
+  assert(i < size);
+  const size_t w = index_to_element(i);
+  const uint64_t subindex = index_to_subindex(i);
+
+  // slot is known set as lock is held
+  assert(detail::nthbitset64(staging->load_word(size, w), subindex));
+  assert(detail::nthbitset64(visible->load_word(size, w), subindex));
+
+  // fetch_and to update staging
+  uint64_t staged_result =
+      staging->release_slot_returning_updated_word(size, i);
+  assert(!detail::nthbitset64(staged_result, subindex));
+
+  // propose a value that could plausibly be in visible
+  // this was returned by fetch_or, can refactor to drop the arithmetic
+  uint64_t guess = detail::setnthbit64(staged_result, subindex);
+
+  // initialise the value with the latest view of staging that is already
+  // available
+  uint64_t proposed = staged_result;
+
+  uint64_t local_fail_count = 0;
+  uint64_t local_help_count = 0;
+  while (!visible->cas(w, guess, proposed, &guess))
+    {
+      local_fail_count++;
+      if (!detail::nthbitset64(guess, subindex))
+        {
+          // Cas failed, but another thread has done our work
+          local_help_count++;
+          proposed = guess;
+          break;
+        }
+
+      // Update our view of proposed and try again
+      proposed = staging->load_word(size, w);
+      assert(!detail::nthbitset64(proposed, subindex));
+    }
+  *cas_fail_count = *cas_fail_count + local_fail_count;
+  *cas_help_count = *cas_help_count + local_help_count;
+
+  assert(!detail::nthbitset64(visible->load_word(size, w), subindex));
+  return proposed;
+}
+
 // on return true, loaded contains active[w]
-template <size_t scope>
-bool slot_bitmap<scope>::try_claim_empty_slot(size_t size, size_t i,
-                                              uint64_t *loaded)
+template <size_t scope, typename Prop>
+bool slot_bitmap<scope, Prop>::try_claim_empty_slot(size_t size, size_t i,
+                                                    uint64_t *loaded,
+                                                    uint64_t *cas_fail_count)
 {
   assert(i < size);
   size_t w = index_to_element(i);
@@ -427,7 +562,7 @@ bool slot_bitmap<scope>::try_claim_empty_slot(size_t size, size_t i,
   uint64_t d = load_word(size, w);
 
   // printf("Slot %lu, w %lu, subindex %lu, d %lu\n", i, w, subindex, d);
-
+  uint64_t local_fail_count = 0;
   for (;;)
     {
       // if the bit was already set then we've lost the race
@@ -437,6 +572,7 @@ bool slot_bitmap<scope>::try_claim_empty_slot(size_t size, size_t i,
       uint64_t proposed = detail::setnthbit64(d, subindex);
       if (proposed == d)
         {
+          *cas_fail_count = *cas_fail_count + local_fail_count;
           return false;
         }
 
@@ -453,9 +589,11 @@ bool slot_bitmap<scope>::try_claim_empty_slot(size_t size, size_t i,
         {
           // success, got the lock, and active word was set to proposed
           *loaded = proposed;
+          *cas_fail_count = *cas_fail_count + local_fail_count;
           return true;
         }
 
+      local_fail_count++;
       // cas failed. reasons:
       // we lost the slot
       // another slot in the same word changed
@@ -553,82 +691,14 @@ inline slot_owner tracker()
   return t;
 }
 
-template <typename G>
-void try_garbage_collect_word(size_t size, G garbage_bits,
-                              slot_bitmap_all_svm inbox,
-                              slot_bitmap_all_svm outbox,
-                              slot_bitmap_device active, uint64_t w)
-{
-  if (platform::is_master_lane())
-    {
-      uint64_t i = inbox.load_word(size, w);
-      uint64_t o = outbox.load_word(size, w);
-      uint64_t a = active.load_word(size, w);
-      __c11_atomic_thread_fence(__ATOMIC_ACQUIRE);
-
-      uint64_t garbage_visible = garbage_bits(i, o);
-      uint64_t garbage_available = garbage_visible & ~a;
-
-#if 0
-#if defined(__AMDGCN__)
-  // Need to enable the other lanes, broadcast the result,
-  // possibly return to the caller, then disable the other lanes
-  // Leaving this until there are benchmarks for x86 to help choose
-  // between early exit and cache line thrashing
-#endif
-
-  // if there's no garbage, this function will cas a with a, fetch-add ~0 twice
-  // early exit means loading three cache lines then branch
-  // continuing takes an exclusive lock on active[slot], outbox[slot]
-  if (garbage_available == 0)
-    {
-      return;
-    }
-#endif
-
-      // proposed set of locks is the current set and the ones we're claiming
-      assert((garbage_available & a) == 0);  // disjoint
-      uint64_t proposed = garbage_available | a;
-      uint64_t result;
-      bool won_cas = active.cas(w, a, proposed, &result);
-
-#if 0
-  // if (!won_cas) can return false immediately, or set locks_held to zero
-  // if chosing to continue, fetch_and with ~0 is a potentially expensive no-op
-  if (!won_cas)
-    {
-      return;
-    }
-#endif
-
-      uint64_t locks_held = won_cas ? garbage_available : 0;
-
-      // Some of the slots may have already been garbage collected
-      // in which case some of the input may be work-available again
-      i = inbox.load_word(size, w);
-      o = outbox.load_word(size, w);
-      __c11_atomic_thread_fence(__ATOMIC_ACQUIRE);
-
-      uint64_t garbage_and_locked = garbage_bits(i, o) & locks_held;
-
-      // clear locked bits in outbox
-      __c11_atomic_thread_fence(__ATOMIC_RELEASE);
-      uint64_t before = outbox.fetch_and(w, ~garbage_and_locked);
-      (void)before;
-
-      // drop locks
-      active.fetch_and(w, ~locks_held);
-    }
-}
-
 inline void step(_Atomic(uint64_t) * steps_left)
 {
-  if (atomic_load(steps_left) == UINT64_MAX)
+  if (__c11_atomic_load(steps_left, __ATOMIC_SEQ_CST) == UINT64_MAX)
     {
       // Disable stepping
       return;
     }
-  while (atomic_load(steps_left) == 0)
+  while (__c11_atomic_load(steps_left, __ATOMIC_SEQ_CST) == 0)
     {
       // Don't burn all the cpu waiting for a step
       platform::sleep_briefly();
@@ -676,24 +746,23 @@ struct default_stepper
 template <typename T>
 struct copy_functor_interface
 {
-  // Function type is that of memcpy, i.e. dst first, N in bytes
+  // dst then src, memcpy style. Copies a single page
+  static void push_from_client_to_server(page_t *dst, const page_t *src)
+  {
+    T::push_from_client_to_server_impl(dst, src);
+  }
+  static void pull_to_client_from_server(page_t *dst, const page_t *src)
+  {
+    T::pull_to_client_from_server_impl(dst, src);
+  }
 
-  static void push_from_client_to_server(void *dst, const void *src, size_t N)
+  static void push_from_server_to_client(page_t *dst, const page_t *src)
   {
-    T::push_from_client_to_server_impl(dst, src, N);
+    T::push_from_server_to_client_impl(dst, src);
   }
-  static void pull_to_client_from_server(void *dst, const void *src, size_t N)
+  static void pull_to_server_from_client(page_t *dst, const page_t *src)
   {
-    T::pull_to_client_from_server_impl(dst, src, N);
-  }
-
-  static void push_from_server_to_client(void *dst, const void *src, size_t N)
-  {
-    T::push_from_server_to_client_impl(dst, src, N);
-  }
-  static void pull_to_server_from_client(void *dst, const void *src, size_t N)
-  {
-    T::pull_to_server_from_client_impl(dst, src, N);
+    T::pull_to_server_from_client_impl(dst, src);
   }
 
  private:
@@ -701,10 +770,10 @@ struct copy_functor_interface
   copy_functor_interface() = default;
 
   // Default implementations are no-ops
-  static void push_from_client_to_server_impl(void *, const void *, size_t) {}
-  static void pull_to_client_from_server_impl(void *, const void *, size_t) {}
-  static void push_from_server_to_client_impl(void *, const void *, size_t) {}
-  static void pull_to_server_from_client_impl(void *, const void *, size_t) {}
+  static void push_from_client_to_server_impl(page_t *, const page_t *) {}
+  static void pull_to_client_from_server_impl(page_t *, const page_t *) {}
+  static void push_from_server_to_client_impl(page_t *, const page_t *) {}
+  static void pull_to_server_from_client_impl(page_t *, const page_t *) {}
 };
 
 struct copy_functor_memcpy_pull
@@ -713,14 +782,14 @@ struct copy_functor_memcpy_pull
   friend struct copy_functor_interface<copy_functor_memcpy_pull>;
 
  private:
-  static void pull_to_client_from_server_impl(void *dst, const void *src,
-                                              size_t N)
+  static void pull_to_client_from_server_impl(page_t *dst, const page_t *src)
   {
+    size_t N = sizeof(page_t);
     __builtin_memcpy(dst, src, N);
   }
-  static void pull_to_server_from_client_impl(void *dst, const void *src,
-                                              size_t N)
+  static void pull_to_server_from_client_impl(page_t *dst, const page_t *src)
   {
+    size_t N = sizeof(page_t);
     __builtin_memcpy(dst, src, N);
   }
 };
@@ -730,25 +799,29 @@ struct copy_functor_given_alias
 {
   friend struct copy_functor_interface<copy_functor_given_alias>;
 
-  static void push_from_client_to_server_impl(void *dst, const void *src,
-                                              size_t)
+  static void push_from_client_to_server_impl(page_t *dst, const page_t *src)
   {
     assert(src == dst);
+    (void)src;
+    (void)dst;
   }
-  static void pull_to_client_from_server_impl(void *dst, const void *src,
-                                              size_t)
+  static void pull_to_client_from_server_impl(page_t *dst, const page_t *src)
   {
     assert(src == dst);
+    (void)src;
+    (void)dst;
   }
-  static void push_from_server_to_client_impl(void *dst, const void *src,
-                                              size_t)
+  static void push_from_server_to_client_impl(page_t *dst, const page_t *src)
   {
     assert(src == dst);
+    (void)src;
+    (void)dst;
   }
-  static void pull_to_server_from_client_impl(void *dst, const void *src,
-                                              size_t)
+  static void pull_to_server_from_client_impl(page_t *dst, const page_t *src)
   {
     assert(src == dst);
+    (void)src;
+    (void)dst;
   }
 };
 

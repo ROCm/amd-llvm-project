@@ -38,41 +38,175 @@ enum class client_state : uint8_t
 // garbage that is, can't claim the slot for a new thread is that a sufficient
 // criteria for the slot to be awaiting gc?
 
+namespace counters
+{
+// client_nop compiles to no code
+// both are default-constructed
+
+struct client
+{
+  // Probably want this in the interface, partly to keep size
+  // lined up (this will be multiple words)
+  client() = default;
+  client(const client& o) = default;
+  client& operator=(const client& o) = default;
+
+  void no_candidate_slot()
+  {
+    inc(&state[client_counters::cc_no_candidate_slot]);
+  }
+  void missed_lock_on_candidate_slot()
+  {
+    inc(&state[client_counters::cc_missed_lock_on_candidate_slot]);
+  }
+  void got_lock_after_work_done()
+  {
+    inc(&state[client_counters::cc_got_lock_after_work_done]);
+  }
+  void waiting_for_result()
+  {
+    inc(&state[client_counters::cc_waiting_for_result]);
+  }
+  void cas_lock_fail(uint64_t c)
+  {
+    add(&state[client_counters::cc_cas_lock_fail], c);
+  }
+  void garbage_cas_fail(uint64_t c)
+  {
+    add(&state[client_counters::cc_garbage_cas_fail], c);
+  }
+  void publish_cas_fail(uint64_t c)
+  {
+    add(&state[client_counters::cc_publish_cas_fail], c);
+  }
+  void finished_cas_fail(uint64_t c)
+  {
+    // triggers an infinite loop on amdgcn trunk but not amd-stg-open
+    add(&state[client_counters::cc_finished_cas_fail], c);
+  }
+
+  void garbage_cas_help(uint64_t c)
+  {
+    add(&state[client_counters::cc_garbage_cas_help], c);
+  }
+  void publish_cas_help(uint64_t c)
+  {
+    add(&state[client_counters::cc_publish_cas_help], c);
+  }
+  void finished_cas_help(uint64_t c)
+  {
+    add(&state[client_counters::cc_finished_cas_help], c);
+  }
+
+  // client_counters contains non-atomic, const version of this state
+  // defined in base_types
+  client_counters get()
+  {
+    __c11_atomic_thread_fence(__ATOMIC_RELEASE);
+    client_counters res;
+    for (unsigned i = 0; i < client_counters::cc_total_count; i++)
+      {
+        res.state[i] = state[i];
+      }
+    return res;
+  }
+
+ private:
+  _Atomic uint64_t state[client_counters::cc_total_count] = {0u};
+
+  static void add(_Atomic uint64_t* addr, uint64_t v)
+  {
+    if (platform::is_master_lane())
+      {
+        __opencl_atomic_fetch_add(addr, v, __ATOMIC_RELAXED,
+                                  __OPENCL_MEMORY_SCOPE_DEVICE);
+      }
+  }
+
+  static void inc(_Atomic uint64_t* addr)
+  {
+    uint64_t v = 1;
+    add(addr, v);
+  }
+};
+
+struct client_nop
+{
+  client_nop() {}
+  client_counters get() { return {}; }
+
+  void no_candidate_slot() {}
+  void missed_lock_on_candidate_slot() {}
+  void got_lock_after_work_done() {}
+  void waiting_for_result() {}
+  void cas_lock_fail(uint64_t) {}
+
+  void garbage_cas_fail(uint64_t) {}
+  void publish_cas_fail(uint64_t) {}
+  void finished_cas_fail(uint64_t) {}
+  void garbage_cas_help(uint64_t) {}
+  void publish_cas_help(uint64_t) {}
+  void finished_cas_help(uint64_t) {}
+};
+
+}  // namespace counters
+
+// enabling counters breaks codegen for amdgcn,
 template <typename SZ, typename Copy, typename Fill, typename Use,
-          typename Step>
-struct client_impl : public SZ
+          typename Step, typename Counter = counters::client>
+struct client_impl : public SZ, public Counter
 {
   using inbox_t = slot_bitmap_all_svm;
   using outbox_t = slot_bitmap_all_svm;
   using locks_t = slot_bitmap_device;
+  using outbox_staging_t = slot_bitmap_coarse;
 
   client_impl(SZ sz, inbox_t inbox, outbox_t outbox, locks_t active,
-              page_t* remote_buffer, page_t* local_buffer)
+              outbox_staging_t outbox_staging, page_t* remote_buffer,
+              page_t* local_buffer)
 
       : SZ{sz},
+        Counter{},
         remote_buffer(remote_buffer),
         local_buffer(local_buffer),
         inbox(inbox),
         outbox(outbox),
-        active(active)
+        active(active),
+        outbox_staging(outbox_staging)
   {
+    constexpr size_t client_size = 48;
+
     // SZ is expected to be zero bytes or a uint64_t
-    struct local : public SZ
+    struct SZ_local : public SZ
     {
       float x;
     };
-    constexpr bool sz_empty = sizeof(local) == sizeof(float);
-    static_assert(sizeof(client_impl) == (sz_empty ? 40 : 48), "");
+    // Counter is zero bytes for nop or potentially many
+    struct Counter_local : public Counter
+    {
+      float x;
+    };
+    constexpr bool SZ_empty = sizeof(SZ_local) == sizeof(float);
+    constexpr bool Counter_empty = sizeof(Counter_local) == sizeof(float);
+
+    constexpr size_t SZ_size = SZ_empty ? 0 : sizeof(SZ);
+    constexpr size_t Counter_size = Counter_empty ? 0 : sizeof(Counter);
+
+    constexpr size_t total_size = client_size + SZ_size + Counter_size;
+
+    static_assert(sizeof(client_impl) == total_size, "");
     static_assert(alignof(client_impl) == 8, "");
   }
 
   client_impl()
       : SZ{0},
+        Counter{},
         remote_buffer(nullptr),
         local_buffer(nullptr),
         inbox{},
         outbox{},
-        active{}
+        active{},
+        outbox_staging{}
   {
   }
 
@@ -84,20 +218,30 @@ struct client_impl : public SZ
     Step::call(x, z);
   }
 
+  client_counters get_counters() { return Counter::get(); }
+
   size_t size() { return SZ::N(); }
   size_t words() { return size() / 64; }
 
   size_t find_candidate_client_slot(uint64_t w)
   {
     uint64_t i = inbox.load_word(size(), w);
-    uint64_t o = outbox.load_word(size(), w);
+    uint64_t o = outbox_staging.load_word(size(), w);
     uint64_t a = active.load_word(size(), w);
     __c11_atomic_thread_fence(__ATOMIC_ACQUIRE);
 
-    uint64_t available = ~o & ~a;
-    uint64_t garbage = i & o & ~a;
+    // inbox == outbox == 0 => available for use
+    uint64_t available = ~i & ~o & ~a;
 
-    uint64_t candidate = available | garbage;
+    // 1 0 => garbage waiting on server
+    // 1 1 => garbage that client can act on
+    // Take those that client can act on and are not locked
+    uint64_t garbage_todo = i & o & ~a;
+
+    // could also let through inbox == 1 on the basis that
+    // the client may have
+
+    uint64_t candidate = available | garbage_todo;
     if (candidate != 0)
       {
         return 64 * w + detail::ctz64(candidate);
@@ -106,28 +250,20 @@ struct client_impl : public SZ
     return SIZE_MAX;
   }
 
-  // return true if no garbage (briefly) during call
-  void try_garbage_collect_word_client(size_t size, uint64_t w)
-  {
-    auto c = [](uint64_t i, uint64_t) -> uint64_t { return i; };
-    try_garbage_collect_word<decltype(c)>(size, c, inbox, outbox, active, w);
-  }
-
   void dump_word(size_t size, uint64_t word)
   {
     uint64_t i = inbox.load_word(size, word);
-    uint64_t o = outbox.load_word(size, word);
+    uint64_t o = outbox_staging.load_word(size, word);
     uint64_t a = active.load_word(size, word);
     (void)(i + o + a);
     printf("%lu %lu %lu\n", i, o, a);
   }
 
-  // true if did work
+  // true if it successfully made a call, false if no work to do or only gc
   // If there's no continuation, shouldn't require a use_application_state
   template <bool have_continuation>
-  __attribute__((noinline)) bool rpc_invoke_given_slot(
-      void* fill_application_state, void* use_application_state,
-      size_t slot) noexcept
+  bool rpc_invoke_given_slot(void* fill_application_state,
+                             void* use_application_state, size_t slot) noexcept
   {
     assert(slot != SIZE_MAX);
     const uint64_t element = index_to_element(slot);
@@ -137,12 +273,12 @@ struct client_impl : public SZ
     c.init(slot);
     const size_t size = this->size();
     uint64_t i = inbox.load_word(size, element);
-    uint64_t o = outbox.load_word(size, element);
+    uint64_t o = outbox_staging.load_word(size, element);
     uint64_t a = active.load_word(size, element);
     __c11_atomic_thread_fence(__ATOMIC_ACQUIRE);
-    c.i = i;
-    c.o = o;
-    c.a = a;
+    c.i(i);
+    c.o(o);
+    c.a(a);
 
     // Called with a lock. The corresponding slot can be:
     //  inbox outbox    state  action
@@ -162,15 +298,24 @@ struct client_impl : public SZ
     if (garbage_todo)
       {
         __c11_atomic_thread_fence(__ATOMIC_RELEASE);
-        if (platform::is_master_lane())
-          {
-            outbox.release_slot_returning_updated_word(size, slot);
-          }
+        uint64_t cas_fail_count = 0;
+        uint64_t cas_help_count = 0;
+        platform::critical<uint64_t>([&]() {
+          return staged_release_slot_returning_updated_word(
+              size, slot, &outbox_staging, &outbox, &cas_fail_count,
+              &cas_help_count);
+          // outbox.release_slot_returning_updated_word(size, slot);
+        });
+        cas_fail_count = platform::broadcast_master(cas_fail_count);
+        cas_help_count = platform::broadcast_master(cas_help_count);
+        Counter::garbage_cas_fail(cas_fail_count);
+        Counter::garbage_cas_help(cas_help_count);
         return false;
       }
 
     if (!available)
       {
+        Counter::got_lock_after_work_done();
         step(__LINE__, fill_application_state, use_application_state);
         return false;
       }
@@ -182,15 +327,11 @@ struct client_impl : public SZ
     // wave_populate
 
     // Fill may have no precondition, in which case this doesn't need to run
-    Copy::pull_to_client_from_server((void*)&local_buffer[slot],
-                                     (void*)&remote_buffer[slot],
-                                     sizeof(page_t));
+    Copy::pull_to_client_from_server(&local_buffer[slot], &remote_buffer[slot]);
     step(__LINE__, fill_application_state, use_application_state);
     Fill::call(&local_buffer[slot], fill_application_state);
     step(__LINE__, fill_application_state, use_application_state);
-    Copy::push_from_client_to_server((void*)&remote_buffer[slot],
-                                     (void*)&local_buffer[slot],
-                                     sizeof(page_t));
+    Copy::push_from_client_to_server(&remote_buffer[slot], &local_buffer[slot]);
     step(__LINE__, fill_application_state, use_application_state);
 
     tracker().release(slot);
@@ -198,10 +339,19 @@ struct client_impl : public SZ
     // wave_publish work
     {
       __c11_atomic_thread_fence(__ATOMIC_RELEASE);
+      uint64_t cas_fail_count = 0;
+      uint64_t cas_help_count = 0;
       uint64_t o = platform::critical<uint64_t>([&]() {
-        return outbox.claim_slot_returning_updated_word(size, slot);
+        return staged_claim_slot_returning_updated_word(
+            size, slot, &outbox_staging, &outbox, &cas_fail_count,
+            &cas_help_count);
+        // return outbox.claim_slot_returning_updated_word(size, slot);
       });
-      c.o = o;
+      cas_fail_count = platform::broadcast_master(cas_fail_count);
+      cas_help_count = platform::broadcast_master(cas_help_count);
+      Counter::publish_cas_fail(cas_fail_count);
+      Counter::publish_cas_help(cas_help_count);
+      c.o(o);
       assert(detail::nthbitset64(o, subindex));
       assert(c.is(0b011));
     }
@@ -212,7 +362,7 @@ struct client_impl : public SZ
     // server to confirm, then drop local thread
 
     // with a continuation, outbox is cleared before this thread returns
-    // otherwise, garbage collection eneds to clear that outbox
+    // otherwise, garbage collection needed to clear that outbox
 
     if (have_continuation)
       {
@@ -221,25 +371,27 @@ struct client_impl : public SZ
 
         while (true)
           {
-            uint32_t got = platform::critical<uint32_t>([&]() {
-              // I think this should be relaxed, existing hostcall uses
-              // acquire
-              return inbox(size, slot, &loaded);
-            });
+            uint32_t got = platform::critical<uint32_t>(
+                [&]() { return inbox(size, slot, &loaded); });
 
             loaded = platform::broadcast_master(loaded);
 
-            c.i = loaded;
-
+            c.i(loaded);
             assert(got == 1 ? c.is(0b111) : c.is(0b011));
-
             if (got == 1)
               {
                 break;
               }
 
+            Counter::waiting_for_result();
+
             // make this spin slightly cheaper
             // todo: can the client do useful work while it waits? e.g. gc?
+            // need to avoid taking too many locks at a time given forward
+            // progress which makes gc tricky
+            // could attempt to propagate the current word from staging to
+            // outbox - that's safe because a lock is held, maintaining linear
+            // time - but may conflict with other clients trying to do the same
             platform::sleep();
           }
 
@@ -249,9 +401,8 @@ struct client_impl : public SZ
         tracker().claim(slot);
 
         step(__LINE__, fill_application_state, use_application_state);
-        Copy::pull_to_client_from_server((void*)&local_buffer[slot],
-                                         (void*)&remote_buffer[slot],
-                                         sizeof(page_t));
+        Copy::pull_to_client_from_server(&local_buffer[slot],
+                                         &remote_buffer[slot]);
         step(__LINE__, fill_application_state, use_application_state);
         // call the continuation
         Use::call(&local_buffer[slot], use_application_state);
@@ -261,9 +412,8 @@ struct client_impl : public SZ
         // Copying the state back to the server is a nop for aliased case,
         // and is only necessary if the server has a non-nop garbage clear
         // callback
-        Copy::push_from_client_to_server((void*)&remote_buffer[slot],
-                                         (void*)&local_buffer[slot],
-                                         sizeof(page_t));
+        Copy::push_from_client_to_server(&remote_buffer[slot],
+                                         &local_buffer[slot]);
 
         step(__LINE__, fill_application_state, use_application_state);
 
@@ -271,13 +421,24 @@ struct client_impl : public SZ
 
         // mark the work as no longer in use
         // todo: is it better to leave this for the GC?
-
+        // can free slots more lazily by updating the staging outbox and
+        // leaving the visible one. In that case the update may be transfered
+        // for free, or it may never become visible in which case the server
+        // won't realise the slot is no longer in use
         __c11_atomic_thread_fence(__ATOMIC_RELEASE);
+        uint64_t cas_fail_count = 0;
+        uint64_t cas_help_count = 0;
         uint64_t o = platform::critical<uint64_t>([&]() {
-          return outbox.release_slot_returning_updated_word(size, slot);
+          return staged_release_slot_returning_updated_word(
+              size, slot, &outbox_staging, &outbox, &cas_fail_count,
+              &cas_help_count);
+          // return outbox.release_slot_returning_updated_word(size, slot);
         });
-
-        c.o = o;
+        cas_fail_count = platform::broadcast_master(cas_fail_count);
+        cas_help_count = platform::broadcast_master(cas_help_count);
+        Counter::finished_cas_fail(cas_fail_count);
+        Counter::finished_cas_help(cas_help_count);
+        c.o(o);
         assert(c.is(0b101));
 
         step(__LINE__, fill_application_state, use_application_state);
@@ -300,8 +461,8 @@ struct client_impl : public SZ
 
   // Returns true if it successfully launched the task
   template <bool have_continuation>
-  __attribute__((noinline)) bool rpc_invoke(
-      void* fill_application_state, void* use_application_state) noexcept
+  bool rpc_invoke(void* fill_application_state,
+                  void* use_application_state) noexcept
   {
     step(__LINE__, fill_application_state, use_application_state);
 
@@ -311,10 +472,6 @@ struct client_impl : public SZ
     // 0b110 is posted request, nothing waited, got one
     // 0b101 is got a result, don't need it, only spun up a thread for cleanup
     // 0b100 is got a result, don't need it
-    for (uint64_t w = 0; w < words; w++)
-      {
-        // try_garbage_collect_word_client(size, w);
-      }
 
     step(__LINE__, fill_application_state, use_application_state);
 
@@ -326,6 +483,10 @@ struct client_impl : public SZ
     // the array is somewhat contended - attempt to spread out the load by
     // starting clients off at different points in the array. Doesn't make an
     // observable difference in the current benchmark.
+
+    // if the invoke call performed garbage collection, the word is not
+    // known to be contended so it may be worth trying a different slot
+    // before trying a different word
 #define CLIENT_OFFSET 0
 
 #if CLIENT_OFFSET
@@ -341,23 +502,46 @@ struct client_impl : public SZ
 #endif
         uint64_t active_word;
         slot = find_candidate_client_slot(w);
-        if (slot != SIZE_MAX)
+        if (slot == SIZE_MAX)
           {
-            if (active.try_claim_empty_slot(size, slot, &active_word))
+            // no slot
+            Counter::no_candidate_slot();
+          }
+        else
+          {
+            uint64_t cas_fail_count = 0;
+            if (active.try_claim_empty_slot(size, slot, &active_word,
+                                            &cas_fail_count))
               {
                 // Success, got the lock.
                 assert(active_word != 0);
-
+                Counter::cas_lock_fail(cas_fail_count);
                 bool r = rpc_invoke_given_slot<have_continuation>(
                     fill_application_state, use_application_state, slot);
 
                 // wave release slot
                 step(__LINE__, fill_application_state, use_application_state);
-                if (platform::is_master_lane())
+                platform::critical<uint64_t>([&]() {
+                  return active.release_slot_returning_updated_word(size, slot);
+                });
+                // returning if the invoke garbage collected is inefficient
+                // as the caller will need to try again, better to keep the
+                // position in the loop. This raises a memory access error
+                // however HSA_STATUS_ERROR_MEMORY_APERTURE_VIOLATION: The
+                // agent attempted to access memory beyond the largest legal
+                // address.
+#if 0
+                if (r)
                   {
-                    active.release_slot_returning_updated_word(size, slot);
+                    return true;
                   }
+#else
                 return r;
+#endif
+              }
+            else
+              {
+                Counter::missed_lock_on_candidate_slot();
               }
           }
       }
@@ -372,6 +556,7 @@ struct client_impl : public SZ
   inbox_t inbox;
   outbox_t outbox;
   locks_t active;
+  outbox_staging_t outbox_staging;
 };
 
 namespace indirect

@@ -234,9 +234,7 @@ hostcall_impl::hostcall_impl(void *client_addr, hsa_agent_t kernel_agent)
   // todo: error checks here
   fine_grained_region = hsa::region_fine_grained(kernel_agent);
 
-  bool faster = false;  // coarse grain on locks isn't helping at present
-  coarse_grained_region =
-      faster ? hsa::region_coarse_grained(kernel_agent) : fine_grained_region;
+  coarse_grained_region = hsa::region_coarse_grained(kernel_agent);
 
   // probably can't use vector for exception-safety reasons
   servers.resize(MAX_NUM_DOORBELLS);

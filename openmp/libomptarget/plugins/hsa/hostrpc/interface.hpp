@@ -24,6 +24,11 @@ namespace hostrpc
 // std::launder'ed reinterpret cast, but as one can't assume C++17 and doesn't
 // have <new> for amdgcn, this uses __builtin_launder.
 
+inline constexpr size_t client_counter_overhead()
+{
+  return client_counters::cc_total_count * sizeof(_Atomic uint64_t);
+}
+
 template <typename T>
 struct client_invoke_overloads
 {
@@ -124,9 +129,11 @@ struct x64_x64_t
     friend client_invoke_overloads<client_t>;
     client_t() {}  // would like this to be private
 
-    using state_t = hostrpc::storage<48, 8>;
+    using state_t = hostrpc::storage<56 + client_counter_overhead(), 8>;
     using client_invoke_overloads::invoke;
     using client_invoke_overloads::invoke_async;
+
+    client_counters get_counters();
 
    private:
     template <typename ClientType>
@@ -136,6 +143,7 @@ struct x64_x64_t
       static_assert(state_t::align() == alignof(ClientType), "");
       auto *cv = state.construct<ClientType>(ct);
       assert(cv == state.open<ClientType>());
+      (void)cv;
     }
 
     bool invoke(closure_func_t fill, void *fill_state, closure_func_t use,
@@ -151,7 +159,7 @@ struct x64_x64_t
     friend server_handle_overloads<server_t>;
     server_t() {}
 
-    using state_t = hostrpc::storage<48, 8>;
+    using state_t = hostrpc::storage<56, 8>;
     using server_handle_overloads::handle;
 
    private:
@@ -162,6 +170,7 @@ struct x64_x64_t
       static_assert(state_t::align() == alignof(ServerType), "");
       auto *sv = state.construct<ServerType>(st);
       assert(sv == state.open<ServerType>());
+      (void)sv;
     }
     state_t state;
     bool handle(closure_func_t operate, void *state, uint64_t *loc);
@@ -188,12 +197,14 @@ struct x64_gcn_t
     friend struct x64_gcn_t;
     client_t() {}  // would like this to be private
 
-    using state_t = hostrpc::storage<48, 8>;
+    using state_t = hostrpc::storage<56 + client_counter_overhead(), 8>;
 
     // Lost the friendly interface in favour of hard coding memcpy
     // as part of debugging nullptr deref, hope to reinstate.
     void invoke(hostrpc::page_t *);
     void invoke_async(hostrpc::page_t *);
+
+    client_counters get_counters();
 
    private:
     template <typename ClientType>
@@ -203,6 +214,7 @@ struct x64_gcn_t
       static_assert(state_t::align() == alignof(ClientType), "");
       auto *cv = state.construct<ClientType>(ct);
       assert(cv == state.open<ClientType>());
+      (void)cv;
     }
 
    public:
@@ -215,7 +227,7 @@ struct x64_gcn_t
     friend server_handle_overloads<server_t>;
     server_t() {}
 
-    using state_t = hostrpc::storage<48, 8>;
+    using state_t = hostrpc::storage<56, 8>;
     using server_handle_overloads::handle;
 
    private:
@@ -226,9 +238,70 @@ struct x64_gcn_t
       static_assert(state_t::align() == alignof(ServerType), "");
       auto *sv = state.construct<ServerType>(st);
       assert(sv == state.open<ServerType>());
+      (void)sv;
     }
     state_t state;
     bool handle(closure_func_t operate, void *state, uint64_t *loc);
+  };
+
+  client_t client();
+  server_t server();
+
+ private:
+  void *state;
+};
+
+struct gcn_x64_t
+{
+  gcn_x64_t(size_t minimum_number_slots, uint64_t hsa_region_t_fine_handle,
+            uint64_t hsa_region_t_coarse_handle);
+
+  ~gcn_x64_t();
+  gcn_x64_t(const gcn_x64_t &) = delete;
+  bool valid();
+
+  struct client_t
+  {
+    friend struct gcn_x64_t;
+    client_t() {}
+
+    using state_t = hostrpc::storage<56 + client_counter_overhead(), 8>;
+
+    void invoke(hostrpc::page_t *);
+    void invoke_async(hostrpc::page_t *);
+
+   private:
+    template <typename ClientType>
+    client_t(ClientType ct)
+    {
+      static_assert(state_t::size() == sizeof(ClientType), "");
+      static_assert(state_t::align() == alignof(ClientType), "");
+      auto *cv = state.construct<ClientType>(ct);
+      assert(cv == state.open<ClientType>());
+      (void)cv;
+    }
+    state_t state;
+  };
+
+  struct server_t
+  {
+    friend struct gcn_x64_t;
+    server_t() {}
+    using state_t = hostrpc::storage<56, 8>;
+
+    bool handle(uint64_t *loc);
+
+   private:
+    template <typename ServerType>
+    server_t(ServerType st)
+    {
+      static_assert(state_t::size() == sizeof(ServerType), "");
+      static_assert(state_t::align() == alignof(ServerType), "");
+      auto *sv = state.construct<ServerType>(st);
+      assert(sv == state.open<ServerType>());
+      (void)sv;
+    }
+    state_t state;
   };
 
   client_t client();

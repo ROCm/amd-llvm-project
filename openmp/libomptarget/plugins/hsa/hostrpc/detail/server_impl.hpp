@@ -34,17 +34,18 @@ struct server_impl : public SZ
   using inbox_t = slot_bitmap_all_svm;
   using outbox_t = slot_bitmap_all_svm;
   using locks_t = slot_bitmap_device;
+  using outbox_staging_t = slot_bitmap_coarse;
 
   server_impl(SZ sz, inbox_t inbox, outbox_t outbox, locks_t active,
-              page_t* remote_buffer, page_t* local_buffer)
+              outbox_staging_t outbox_staging, page_t* remote_buffer,
+              page_t* local_buffer)
       : SZ{sz},
-
         remote_buffer(remote_buffer),
         local_buffer(local_buffer),
-
         inbox(inbox),
         outbox(outbox),
-        active(active)
+        active(active),
+        outbox_staging(outbox_staging)
   {
   }
 
@@ -54,7 +55,8 @@ struct server_impl : public SZ
         local_buffer(nullptr),
         inbox{},
         outbox{},
-        active{}
+        active{},
+        outbox_staging{}
   {
   }
 
@@ -65,7 +67,7 @@ struct server_impl : public SZ
   void dump_word(size_t size, uint64_t word)
   {
     uint64_t i = inbox.load_word(size, word);
-    uint64_t o = outbox.load_word(size, word);
+    uint64_t o = outbox_staging.load_word(size, word);
     uint64_t a = active.load_word(size, word);
     (void)(i + o + a);
     printf("%lu %lu %lu\n", i, o, a);
@@ -75,7 +77,7 @@ struct server_impl : public SZ
   {
     const size_t size = this->size();
     uint64_t i = inbox.load_word(size, w);
-    uint64_t o = outbox.load_word(size, w);
+    uint64_t o = outbox_staging.load_word(size, w);
     uint64_t a = active.load_word(size, w);
     __c11_atomic_thread_fence(__ATOMIC_ACQUIRE);
 
@@ -96,17 +98,11 @@ struct server_impl : public SZ
     return SIZE_MAX;
   }
 
-  // return true if no garbage (briefly) during call
-  void try_garbage_collect_word_server(size_t size, uint64_t w)
-  {
-    auto c = [](uint64_t i, uint64_t o) -> uint64_t { return ~i & o; };
-    try_garbage_collect_word<decltype(c)>(size, c, inbox, outbox, active, w);
-  }
-
   size_t words() { return size() / 64; }
 
   // may want to rename this, number-slots?
   size_t size() { return SZ::N(); }
+
   __attribute__((always_inline)) bool rpc_handle_given_slot(
       void* application_state, size_t slot)
   {
@@ -125,12 +121,12 @@ struct server_impl : public SZ
     c.init(slot);
 
     uint64_t i = inbox.load_word(size, element);
-    uint64_t o = outbox.load_word(size, element);
+    uint64_t o = outbox_staging.load_word(size, element);
     uint64_t a = active.load_word(size, element);
     __c11_atomic_thread_fence(__ATOMIC_ACQUIRE);
-    c.i = i;
-    c.o = o;
-    c.a = a;
+    c.i(i);
+    c.o(o);
+    c.a(a);
 
     // Called with a lock. The corresponding slot can be:
     //  inbox outbox    state  action
@@ -151,19 +147,22 @@ struct server_impl : public SZ
         assert((o & this_slot) != 0);
 
         // Move data and clear. TODO: Elide the copy for nop clear
-        Copy::pull_to_server_from_client((void*)&local_buffer[slot],
-                                         (void*)&remote_buffer[slot],
-                                         sizeof(page_t));
+        Copy::pull_to_server_from_client(&local_buffer[slot],
+                                         &remote_buffer[slot]);
         step(__LINE__, application_state);
         Clear::call(&local_buffer[slot], application_state);
         step(__LINE__, application_state);
-        Copy::push_from_server_to_client((void*)&remote_buffer[slot],
-                                         (void*)&local_buffer[slot],
-                                         sizeof(page_t));
+        Copy::push_from_server_to_client(&remote_buffer[slot],
+                                         &local_buffer[slot]);
 
         __c11_atomic_thread_fence(__ATOMIC_RELEASE);
         uint64_t updated_out = platform::critical<uint64_t>([&]() {
-          return outbox.release_slot_returning_updated_word(size, slot);
+          uint64_t cas_fail_count;
+          uint64_t cas_help_count;
+          return staged_release_slot_returning_updated_word(
+              size, slot, &outbox_staging, &outbox, &cas_fail_count,
+              &cas_help_count);
+          // return outbox.release_slot_returning_updated_word(size, slot);
         });
 
         assert((updated_out & this_slot) == 0);
@@ -185,15 +184,11 @@ struct server_impl : public SZ
     tracker().claim(slot);
 
     // make the calls
-    Copy::pull_to_server_from_client((void*)&local_buffer[slot],
-                                     (void*)&remote_buffer[slot],
-                                     sizeof(page_t));
+    Copy::pull_to_server_from_client(&local_buffer[slot], &remote_buffer[slot]);
     step(__LINE__, application_state);
     Op::call(&local_buffer[slot], application_state);
     step(__LINE__, application_state);
-    Copy::push_from_server_to_client((void*)&remote_buffer[slot],
-                                     (void*)&local_buffer[slot],
-                                     sizeof(page_t));
+    Copy::push_from_server_to_client(&remote_buffer[slot], &local_buffer[slot]);
     step(__LINE__, application_state);
 
     assert(c.is(0b101));
@@ -204,9 +199,15 @@ struct server_impl : public SZ
     {
       __c11_atomic_thread_fence(__ATOMIC_RELEASE);
       uint64_t o = platform::critical<uint64_t>([&]() {
-        return outbox.claim_slot_returning_updated_word(size, slot);
+        uint64_t cas_fail_count = 0;
+        uint64_t cas_help_count = 0;
+        return staged_claim_slot_returning_updated_word(
+            size, slot, &outbox_staging, &outbox, &cas_fail_count,
+            &cas_help_count);
+
+        // return outbox.claim_slot_returning_updated_word(size, slot);
       });
-      c.o = o;
+      c.o(o);
     }
     assert(c.is(0b111));
     // leaves outbox live
@@ -230,12 +231,6 @@ struct server_impl : public SZ
     step(__LINE__, application_state);
     const size_t size = this->size();
     const size_t words = size / 64;
-    // garbage collection should be fairly cheap when there is none,
-    // and the presence of any occupied slots can starve the client
-    for (uint64_t w = 0; w < words; w++)
-      {
-        // try_garbage_collect_word_server(size, w);
-      }
 
     step(__LINE__, application_state);
 
@@ -258,7 +253,9 @@ struct server_impl : public SZ
             assert(detail::nthbitset64(available, idx));
             uint64_t slot = 64 * w + idx;
             uint64_t active_word;
-            if (active.try_claim_empty_slot(size, slot, &active_word))
+            uint64_t cas_fail_count = 0;
+            if (active.try_claim_empty_slot(size, slot, &active_word,
+                                            &cas_fail_count))
               {
                 // Success, got the lock. Aim location_arg at next slot
                 assert(active_word != 0);
@@ -294,6 +291,7 @@ struct server_impl : public SZ
   inbox_t inbox;
   outbox_t outbox;
   locks_t active;
+  outbox_staging_t outbox_staging;
 };
 
 namespace indirect

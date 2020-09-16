@@ -69,7 +69,7 @@ struct hostcall_interface_t
     friend struct client::interface<client_t>;
     friend struct hostcall_interface_t;
     client_t() {}  // would like this to be private
-    using state_t = hostrpc::storage<40, 8>;
+    using state_t = hostrpc::storage<48, 8>;
 
    private:
     bool invoke_impl(void *, void *);
@@ -82,7 +82,7 @@ struct hostcall_interface_t
     friend struct server::interface<server_t>;
     friend struct hostcall_interface_t;
     server_t() {}
-    using state_t = hostrpc::storage<40, 8>;
+    using state_t = hostrpc::storage<48, 8>;
 
    private:
     bool handle_impl(void *, uint64_t *);
