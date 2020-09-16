@@ -1746,12 +1746,12 @@ int32_t __tgt_rtl_run_target_team_region_locked(
       atmi_implicit_args_t *impl_args =
           reinterpret_cast<atmi_implicit_args_t *>(
               static_cast<char *>(kernarg) + ArgPool->kernarg_segment_size);
-      memset(impl_args, 0,
+      memset(impl_args, -1,
              sizeof(atmi_implicit_args_t)); // may not be necessary
       impl_args->offset_x = 0;
       impl_args->offset_y = 0;
       impl_args->offset_z = 0;
-
+      
       // assign a hostcall buffer for the selected Q
       if (g_atmi_hostcall_required) {
         {

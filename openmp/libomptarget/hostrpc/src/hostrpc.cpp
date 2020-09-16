@@ -23,6 +23,13 @@
 #pragma omp declare target
 
 #ifdef _DEVICE_GPU
+EXTERN void dump(uint64_t x, uint64_t y)
+{
+  printf("%lu %lu\n", x);
+}
+#endif
+
+#ifdef _DEVICE_GPU
 EXTERN char *printf_allocate(uint32_t bufsz) {
   uint64_t arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7;
   arg0 = (uint64_t)bufsz;
