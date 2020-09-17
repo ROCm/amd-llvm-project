@@ -1090,6 +1090,7 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
       DP("Finding hostcall client array (Failed)\n");
     } else {
       set_client_symbol_address(device_id, client_symbol_address);
+      fprintf(stderr, "Client sym address %lu = 0x%lx\n", device_id, client_symbol_address);
     }
   }
 

@@ -233,7 +233,9 @@ public:
       hsa_region_t fine = hsa::region_fine_grained(kernel_agent);
       using Ty = hostrpc::hostcall_interface_t::client_t;
       auto c = hsa::allocate(fine, sizeof(Ty));
+      fprintf(stderr, "client_t[q/%u] copied to %p\n", (unsigned)queue_id, &clients[queue_id]);
       auto *l = new (c.get()) Ty(res->client());
+      l->dump();
 
       int rc = copy_host_to_gpu(kernel_agent,
                                 reinterpret_cast<void *>(&clients[queue_id]),

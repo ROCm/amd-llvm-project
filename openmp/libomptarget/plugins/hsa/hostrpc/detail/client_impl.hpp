@@ -210,6 +210,17 @@ struct client_impl : public SZ, public Counter
   {
   }
 
+  void dump() {
+#if defined(__x86_64__)    
+    fprintf(stderr, "remote_buffer %p\n", remote_buffer);
+    fprintf(stderr, "local_buffer  %p\n", local_buffer);
+    fprintf(stderr, "inbox         %p\n", inbox.a);
+    fprintf(stderr, "outbox        %p\n", outbox.a);
+    fprintf(stderr, "active        %p\n", active.a);
+    fprintf(stderr, "outbox stg    %p\n", outbox_staging.a);
+#endif
+  }
+
   static void* operator new(size_t, client_impl* p) { return p; }
 
   void step(int x, void* y, void* z)
