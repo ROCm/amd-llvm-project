@@ -63,6 +63,8 @@ static uint16_t queue_to_index_impl(unsigned char * q)
 using SZ = hostrpc::size_compiletime<hostrpc::x64_host_amdgcn_array_size>;
 
 #if defined(__AMDGCN__)
+
+// Accessing this, sometimes, raises a page not present fault on gfx8
 __attribute__((visibility("default")))
 hostrpc::hostcall_interface_t::client_t client_singleton[MAX_NUM_DOORBELLS];
 
@@ -240,7 +242,11 @@ public:
       int rc = copy_host_to_gpu(kernel_agent,
                                 reinterpret_cast<void *>(&clients[queue_id]),
                                 reinterpret_cast<const void *>(l), sizeof(Ty));
-      l->~Ty();
+
+      // Can't destroy it here - the destructor (rightly) cleans up the memory,
+      // but the memcpy above has put those onto the gpu
+      // fprintf(stderr, "destroying a hostrpc::hostcall_interface_t::client_t\n");
+      // l->~Ty(); // this may be a bad move
 
       if (rc != 0) {
         return 1;
