@@ -35,18 +35,29 @@ static uint16_t queue_to_index_impl(unsigned char * q)
   // The signal contains a kind at offset 0, expected to be -1 (non-legacy)
   int64_t kind;
   __builtin_memcpy(&kind, sig, 8);
-  assert(kind == -1);
+  assert(kind == -1 || kind == -2);
   (void)kind;
 
   sig += 8; // step over kind field
 
-  uint64_t ptr;
-  __builtin_memcpy(&ptr, sig, 8);
-
-  ptr >>= 3;
-  ptr %= MAX_NUM_DOORBELLS;
-
-  return static_cast<uint16_t>(ptr);
+  // kind is probably a fixed function of architecture
+  if (kind == -1)
+    {
+      uint64_t ptr;
+      __builtin_memcpy(&ptr, sig, 8);
+      ptr >>= 3;
+      ptr %= MAX_NUM_DOORBELLS;
+      return static_cast<uint16_t>(ptr);
+    }
+  else
+    {
+      // this is not based on anything, may be picking a queue semi-randomly
+      uint32_t ptr;
+      __builtin_memcpy(&ptr, sig, 4);
+      ptr >>= 3;
+      ptr %= MAX_NUM_DOORBELLS;
+      return static_cast<uint16_t>(ptr);
+    }
 }
 
 using SZ = hostrpc::size_compiletime<hostrpc::x64_host_amdgcn_array_size>;
