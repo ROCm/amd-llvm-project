@@ -38,6 +38,7 @@ void* allocate(uint64_t hsa_region_t_handle, size_t align, size_t bytes)
     {
       // probably want memset for fine grain, may want it for gfx9
       // memset(memory, 0, bytes);
+      // warning: This is likely to be relied on by bitmap
       hsa_status_t  r = hsa_amd_memory_fill(memory, 0, bytes/4);
       if (HSA_STATUS_SUCCESS == r) {
         return memory;      
