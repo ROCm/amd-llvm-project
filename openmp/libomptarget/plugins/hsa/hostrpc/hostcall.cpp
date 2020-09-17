@@ -8,6 +8,7 @@
 #if defined(__x86_64__)
 #include "hostcall.h"
 #include "hsa.hpp"
+#include "../impl/data.h"
 #include <cassert>
 #include <thread>
 #include <vector>
@@ -57,7 +58,6 @@ hostrpc::hostcall_interface_t::client_t client_singleton[MAX_NUM_DOORBELLS];
 hostrpc::hostcall_interface_t::client_t *get_client_singleton(size_t i) {
   return &client_singleton[i];
 }
-
 
 
 extern "C" unsigned char * get_queue()
@@ -137,7 +137,9 @@ void hostcall_client_async(uint64_t data[8]) {
   }
 }
 
-#else
+#endif
+
+#if defined(__x86_64__)
 
 // Get the start of the array
 const char *hostcall_client_symbol() { return "client_singleton"; }
@@ -151,7 +153,27 @@ uint16_t queue_to_index(hsa_queue_t *queue) {
 
 hostrpc::hostcall_interface_t *stored_pairs[MAX_NUM_DOORBELLS] = {0};
 
-#if defined(__x86_64__)
+static int copy_host_to_gpu(hsa_agent_t agent,
+                     void * dst,
+                     const void * src,
+                     size_t size)
+{
+  // memcpy works for gfx9, should see which is quicker. need this fallback for gfx8
+  hsa_signal_t sig;
+  hsa_status_t rc  = hsa_signal_create(1, 0, 0, &sig);
+  if (rc != HSA_STATUS_SUCCESS) { return 1; }
+
+  rc = core::invoke_hsa_copy(sig, dst, src, size, agent);
+  hsa_signal_destroy(sig);
+
+  if (rc != HSA_STATUS_SUCCESS)
+    {
+      return 1;
+    }
+
+  return 0;
+}
+
 
 class hostcall_impl {
 public:
@@ -177,7 +199,7 @@ public:
                                       hsa_agent_t kernel_agent,
                                       const char *sym);
 
-  int enable_queue(hsa_queue_t *queue) {
+  int enable_queue(hsa_agent_t kernel_agent, hsa_queue_t *queue) {
     uint16_t queue_id = queue_to_index(queue);
     if (stored_pairs[queue_id] != 0) {
       // already enabled
@@ -191,7 +213,26 @@ public:
       return 1;
     }
 
-    clients[queue_id] = res->client();
+    // clients is on the gpu and res->client is not
+
+    if (0) {
+      clients[queue_id] = res->client(); // fails on gfx8
+    } else {
+      // should work on gfx8, possibly slowly
+      hsa_region_t fine = hsa::region_fine_grained(kernel_agent);
+      using Ty = hostrpc::hostcall_interface_t::client_t;
+      auto c = hsa::allocate(fine, sizeof(Ty));
+      auto *l = new (c.get()) Ty(res->client());
+
+      int rc = copy_host_to_gpu(kernel_agent,
+                                reinterpret_cast<void *>(&clients[queue_id]),
+                                reinterpret_cast<const void *>(l), sizeof(Ty));
+      l->~Ty();
+
+      if (rc != 0) {
+        return 1;
+      }
+    }
 
     servers[queue_id] = res->server();
 
@@ -321,16 +362,12 @@ hostcall::hostcall(void *client_symbol_address, hsa_agent_t kernel_agent) {
 
 bool hostcall::valid() { return true; }
 
-int hostcall::enable_queue(hsa_queue_t *queue) {
-  return state.open<hostcall_impl>()->enable_queue(queue);
+int hostcall::enable_queue(hsa_agent_t kernel_agent, hsa_queue_t *queue) {
+  return state.open<hostcall_impl>()->enable_queue(kernel_agent, queue);
 }
 int hostcall::spawn_worker(hsa_queue_t *queue) {
   return state.open<hostcall_impl>()->spawn_worker(queue);
 }
-
-#endif
-
-#if defined(__x86_64__)
 
 static std::vector<std::unique_ptr<hostcall>> state;
 
@@ -362,7 +399,7 @@ void spawn_hostcall_for_queue(uint32_t device_id, hsa_agent_t agent,
   assert(state[device_id] != nullptr);
   // enabling it for a queue repeatedly is a no-op
 
-  if (state[device_id]->enable_queue(queue) == 0) {
+  if (state[device_id]->enable_queue(agent, queue) == 0) {
     // spawn an additional thread
     if (state[device_id]->spawn_worker(queue) == 0) {
       // printf("Success for setup on id %u, queue %lx, ptr %lx\n",
@@ -377,5 +414,4 @@ void spawn_hostcall_for_queue(uint32_t device_id, hsa_agent_t agent,
 
 void free_hostcall_state() { state.clear(); }
 
-#endif
 #endif

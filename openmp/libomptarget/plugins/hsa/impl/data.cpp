@@ -129,7 +129,7 @@ atmi_status_t Runtime::Memfree(void *ptr) {
   return ret;
 }
 
-static hsa_status_t invoke_hsa_copy(hsa_signal_t sig, void *dest,
+hsa_status_t invoke_hsa_copy(hsa_signal_t sig, void *dest,
                                     const void *src, size_t size,
                                     hsa_agent_t agent) {
   const hsa_signal_value_t init = 1;

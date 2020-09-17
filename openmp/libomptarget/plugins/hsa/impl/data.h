@@ -79,5 +79,8 @@ extern ATLPointerTracker g_data_map; // Track all am pointer allocations.
 
 enum class Direction { ATMI_H2D, ATMI_D2H, ATMI_D2D, ATMI_H2H };
 
+hsa_status_t invoke_hsa_copy(hsa_signal_t sig, void *dest, const void *src,
+                             size_t size, hsa_agent_t agent);
+
 } // namespace core
 #endif // SRC_RUNTIME_INCLUDE_DATA_H_
