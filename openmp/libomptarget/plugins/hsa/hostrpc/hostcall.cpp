@@ -3,7 +3,7 @@
 #include "hostcall_interface.hpp"
 
 // trying to get something running on gfx8
-#define FORCE_QUEUE_ZERO 1
+#define FORCE_QUEUE_ZERO 0
 
 #if defined(__x86_64__)
 #include "hostcall.h"
@@ -27,32 +27,6 @@ hostrpc::hostcall_interface_t::client_t *get_client_singleton(size_t i) {
 }
 
 
-extern "C" uint32_t get_queue_index_asm()
-{
-  static_assert(MAX_NUM_DOORBELLS < UINT16_MAX, "");
-  uint32_t tmp0, tmp1;
-
-  // Derived from mGetDoorbellId in amd_gpu_shaders.h, rocr
-  // Using similar naming, exactly the same control flow.
-  // This may be expensive enough to be worth caching or precomputing.
-  uint32_t res;
-  asm("s_mov_b32 %[tmp0], exec_lo\n\t"
-      "s_mov_b32 %[tmp1], exec_hi\n\t"
-      "s_mov_b32 exec_lo, 0x80000000\n\t"
-      "s_sendmsg sendmsg(MSG_GET_DOORBELL)\n\t"
-      "%=:\n\t"
-      "s_nop 7\n\t"
-      "s_bitcmp0_b32 exec_lo, 0x1F\n\t"
-      "s_cbranch_scc0 %=b\n\t"
-      "s_mov_b32 %[ret], exec_lo\n\t"
-      "s_mov_b32 exec_lo, %[tmp0]\n\t"
-      "s_mov_b32 exec_hi, %[tmp1]\n\t"
-      : [ tmp0 ] "=&r"(tmp0), [ tmp1 ] "=&r"(tmp1), [ ret ] "=r"(res));
-
-  res %= MAX_NUM_DOORBELLS;
-
-  return res;
-}
 
 extern "C" unsigned char * get_queue()
 {
@@ -63,7 +37,7 @@ extern "C" unsigned char * get_queue()
 
 // Also in hsa.hpp
 
-static uint16_t get_queue_index() {
+extern "C" uint16_t get_queue_index_asm() {
 #if FORCE_QUEUE_ZERO
   return 0;
 #else
@@ -94,6 +68,40 @@ static uint16_t get_queue_index() {
 #endif
 }
 
+static uint16_t get_queue_index_intrinsic() {
+
+    unsigned char * q = get_queue();
+
+    uint64_t handle;
+    __builtin_memcpy(&handle, q + 16, 8);
+
+    char *sig = reinterpret_cast<char *>(handle);
+        
+    // The signal contains a kind at offset 0, expected to be -1, then a doorbell at offset 8
+    int64_t kind;
+    __builtin_memcpy(&kind, sig, 8);
+    assert(kind == -1);
+    (void)kind;
+
+    sig += 8; // step over kind field
+    
+    handle += 8;
+    
+
+    uint64_t ptr;
+    __builtin_memcpy(&ptr, sig, 8);
+
+    ptr >>= 3;
+    ptr %= MAX_NUM_DOORBELLS;
+
+    return static_cast<uint16_t>(ptr);
+}
+
+
+static uint16_t get_queue_index() {
+  const bool via_asm = false;
+  return via_asm ? get_queue_index_asm() : get_queue_index_intrinsic();
+}
 
 extern "C" void dump(uint64_t x, uint64_t y);
 
@@ -131,32 +139,29 @@ hostrpc::hostcall_interface_t::server_t server_singleton[MAX_NUM_DOORBELLS];
 uint16_t queue_to_index(hsa_queue_t *q) {
   // printf("OFFSET %lu\n", offsetof(hsa_queue_t, doorbell_signal));
 
-  printf("Host thinks queue is at 0x%lx\n", (uint64_t)q);
+  //printf("Host thinks queue is at 0x%lx\n", (uint64_t)q);
 
-  char *sig = reinterpret_cast<char *>(q->doorbell_signal.handle);
-  printf("Host thinks sig is at 0x%lx\n", (uint64_t)sig);
+  uint64_t handle = q->doorbell_signal.handle;
+  char *sig = reinterpret_cast<char *>(handle);
+  //printf("Host thinks sig is at 0x%lx\n", (uint64_t)sig);
 
   int64_t kind;
   __builtin_memcpy(&kind, sig, 8);
   // TODO: Work out if any hardware that works for openmp uses legacy doorbell
   assert(kind == -1);
-  sig += 8;
-  printf("Host kind: %ld\n", kind);
+  (void)kind;
 
-  const uint64_t MAX_NUM_DOORBELLS = 0x400;
+  sig += 8; // step over kind field
+  
+  // printf("Host kind: %ld\n", kind);
+
+  // const uint64_t MAX_NUM_DOORBELLS = 0x400;
 
   uint64_t ptr;
   __builtin_memcpy(&ptr, sig, 8);
-
-  printf("Host Doorbell address: 0x%lx\n", ptr);
   
   ptr >>= 3;
   ptr %= MAX_NUM_DOORBELLS;
-
-  printf("Host index: %lu\n", ptr);
-#if FORCE_QUEUE_ZERO
-  return 0;
-#endif
 
   return static_cast<uint16_t>(ptr);
 }
@@ -348,9 +353,9 @@ static std::vector<std::unique_ptr<hostcall>> state;
 
 void spawn_hostcall_for_queue(uint32_t device_id, hsa_agent_t agent,
                               hsa_queue_t *queue, void *client_symbol_address) {
-  printf("Setting up hostcall on id %u, queue %lx\n", device_id, (uint64_t)queue);
-      uint64_t * w = (uint64_t*)queue;
-  printf("Host words at q: 0x%lx 0x%lx 0x%lx 0x%lx\n", w[0],w[1],w[2],w[3]);
+  // printf("Setting up hostcall on id %u, queue %lx\n", device_id, (uint64_t)queue);
+  // uint64_t * w = (uint64_t*)queue;
+  // printf("Host words at q: 0x%lx 0x%lx 0x%lx 0x%lx\n", w[0],w[1],w[2],w[3]);
   if (device_id >= state.size()) {
     state.resize(device_id + 1);
   }
