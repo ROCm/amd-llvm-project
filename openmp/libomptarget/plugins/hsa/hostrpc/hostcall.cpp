@@ -404,8 +404,9 @@ void spawn_hostcall_for_queue(uint32_t device_id, hsa_agent_t agent,
     std::unique_ptr<hostcall> r(new hostcall(client_symbol_address, agent));
     if (r && r->valid()) {
       state[device_id] = std::move(r);
+      assert(state[device_id] != nullptr);
     } else {
-      printf("Failed to construct a hostcall, going to assert\n");
+      fprintf(stderr, "Failed to construct a hostcall, going to assert\n");
     }
   }
 
