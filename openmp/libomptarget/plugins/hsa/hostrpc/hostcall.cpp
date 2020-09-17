@@ -261,12 +261,12 @@ public:
   }
 
   ~hostcall_impl() {
-    for (size_t i = 0; i < MAX_NUM_DOORBELLS; i++) {
-      delete stored_pairs[i];
-    }
     thread_killer = 1;
     for (size_t i = 0; i < threads.size(); i++) {
       threads[i].join();
+    }
+    for (size_t i = 0; i < MAX_NUM_DOORBELLS; i++) {
+      delete stored_pairs[i];
     }
   }
 
@@ -370,6 +370,8 @@ hostcall::hostcall(void *client_symbol_address, hsa_agent_t kernel_agent) {
   new (reinterpret_cast<hostcall_impl *>(state.data))
       hostcall_impl(hostcall_impl(client_symbol_address, kernel_agent));
 }
+
+hostcall::~hostcall() { state.destroy<hostcall_impl>(); }
 
 bool hostcall::valid() { return true; }
 
