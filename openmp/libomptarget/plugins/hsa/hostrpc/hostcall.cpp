@@ -199,6 +199,7 @@ public:
         queue_loc(std::move(o.queue_loc)), threads(std::move(o.threads)),
         fine_grained_region(std::move(o.fine_grained_region)),
         coarse_grained_region(std::move(o.coarse_grained_region)) {
+    fprintf(stderr, "Moving a hostcall_impl, live one ptr %p, dead one 0\n", clients);
     clients = 0;
     servers = {};
     stored_pairs = {};
@@ -235,6 +236,7 @@ public:
       hsa_region_t fine = hsa::region_fine_grained(kernel_agent);
       using Ty = hostrpc::hostcall_interface_t::client_t;
       auto c = hsa::allocate(fine, sizeof(Ty));
+      fprintf(stderr, "clients from %p to %p\n", clients, &clients[0x400 ]);
       fprintf(stderr, "client_t[q/%u] copied to %p\n", (unsigned)queue_id, &clients[queue_id]);
       auto *l = new (c.get()) Ty(res->client());
       l->dump();
@@ -269,6 +271,8 @@ public:
   }
 
   ~hostcall_impl() {
+    fprintf(stderr, "Destroying a hostcall_impl\n");
+  
     thread_killer = 1;
     for (size_t i = 0; i < threads.size(); i++) {
       threads[i].join();
@@ -276,6 +280,8 @@ public:
     for (size_t i = 0; i < MAX_NUM_DOORBELLS; i++) {
       delete stored_pairs[i];
     }
+    fflush(stdout);
+    fprintf(stderr, "Destroyed a hostcall_impl\n");
   }
 
 private:
@@ -319,7 +325,7 @@ hostcall_impl::hostcall_impl(void *client_addr, hsa_agent_t kernel_agent) {
   // The client_t array is per-gpu-image. Find it.
   clients =
       reinterpret_cast<hostrpc::hostcall_interface_t::client_t *>(client_addr);
-
+  fprintf(stderr, "constructing hostcall_impl w/ client_addr %p %p\n", client_addr, clients);
   // todo: error checks here
   fine_grained_region = hsa::region_fine_grained(kernel_agent);
 
@@ -409,10 +415,12 @@ void spawn_hostcall_for_queue(uint32_t device_id, hsa_agent_t agent,
 
   // make an instance for this device if there isn't already one
   if (state[device_id] == nullptr) {
+    fprintf(stderr, "Spawning for device %u. Field %p\n", device_id, state[device_id].get());
     std::unique_ptr<hostcall> r(new hostcall(client_symbol_address, agent));
     if (r && r->valid()) {
       state[device_id] = std::move(r);
       assert(state[device_id] != nullptr);
+      fprintf(stderr, "Spawned on device %u. Field %p\n", device_id, state[device_id].get());
     } else {
       fprintf(stderr, "Failed to construct a hostcall, going to assert\n");
     }

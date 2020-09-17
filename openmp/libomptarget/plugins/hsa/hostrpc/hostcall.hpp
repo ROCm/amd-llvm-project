@@ -34,6 +34,9 @@ class hostcall
   int enable_queue(hsa_agent_t kernel_agent, hsa_queue_t *queue);
   int spawn_worker(hsa_queue_t *queue);
 
+  hostcall(const hostcall&) = delete;
+  hostcall(hostcall&&) = delete;
+
  private:
   using state_t = hostrpc::storage<128, 8>;
   state_t state;

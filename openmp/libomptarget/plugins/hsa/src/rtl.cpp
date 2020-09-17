@@ -1756,6 +1756,7 @@ int32_t __tgt_rtl_run_target_team_region_locked(
       // assign a hostcall buffer for the selected Q
       if (g_atmi_hostcall_required) {
         {
+          fprintf(stderr, "Assigning buffer for device %u, queue %p\n", device_id, queue);
           impl_args->hostcall_ptr = hostrpc_assign_buffer(
               DeviceInfo.HSAAgents[device_id], queue, device_id);
         }
