@@ -113,6 +113,10 @@ void * get_client_symbol_address(uint32_t);
 unsigned long hostrpc_assign_buffer(hsa_agent_t agent,
                                     hsa_queue_t *this_Q,
                                     uint32_t device_id) {
+  spawn_hostcall_for_queue(device_id, agent, this_Q,
+                           get_client_symbol_address(device_id));
+  return 0;
+
   atl_hcq_element_t *llq_elem;
   llq_elem = atl_hcq_find_by_hsa_q(this_Q);
   if (!llq_elem) {
