@@ -8,6 +8,7 @@
 #if defined(__x86_64__)
 #include "hostcall.h"
 #include "hsa.hpp"
+#include <cassert>
 #include <thread>
 #include <vector>
 #endif
@@ -15,6 +16,37 @@
 #include "detail/platform.hpp" // assert
 
 static const constexpr uint32_t MAX_NUM_DOORBELLS = 0x400;
+
+
+static uint16_t queue_to_index_impl(unsigned char * q)
+{
+  constexpr size_t doorbell_signal_offset = 16;
+#if defined(__x86_64__)
+  // avoiding #include hsa.h on the gpu
+  static_assert(
+      offsetof(hsa_queue_t, doorbell_signal) == doorbell_signal_offset, "");
+#endif
+
+  uint64_t handle;
+  __builtin_memcpy(&handle, q + 16, 8);
+  char *sig = reinterpret_cast<char *>(handle);
+
+  // The signal contains a kind at offset 0, expected to be -1 (non-legacy)
+  int64_t kind;
+  __builtin_memcpy(&kind, sig, 8);
+  assert(kind == -1);
+  (void)kind;
+
+  sig += 8; // step over kind field
+
+  uint64_t ptr;
+  __builtin_memcpy(&ptr, sig, 8);
+
+  ptr >>= 3;
+  ptr %= MAX_NUM_DOORBELLS;
+
+  return static_cast<uint16_t>(ptr);
+}
 
 using SZ = hostrpc::size_compiletime<hostrpc::x64_host_amdgcn_array_size>;
 
@@ -69,32 +101,8 @@ extern "C" uint16_t get_queue_index_asm() {
 }
 
 static uint16_t get_queue_index_intrinsic() {
-
-    unsigned char * q = get_queue();
-
-    uint64_t handle;
-    __builtin_memcpy(&handle, q + 16, 8);
-
-    char *sig = reinterpret_cast<char *>(handle);
-        
-    // The signal contains a kind at offset 0, expected to be -1, then a doorbell at offset 8
-    int64_t kind;
-    __builtin_memcpy(&kind, sig, 8);
-    assert(kind == -1);
-    (void)kind;
-
-    sig += 8; // step over kind field
-    
-    handle += 8;
-    
-
-    uint64_t ptr;
-    __builtin_memcpy(&ptr, sig, 8);
-
-    ptr >>= 3;
-    ptr %= MAX_NUM_DOORBELLS;
-
-    return static_cast<uint16_t>(ptr);
+  unsigned char * q = get_queue();
+  return queue_to_index_impl(q);
 }
 
 
@@ -136,34 +144,9 @@ const char *hostcall_client_symbol() { return "client_singleton"; }
 
 hostrpc::hostcall_interface_t::server_t server_singleton[MAX_NUM_DOORBELLS];
 
-uint16_t queue_to_index(hsa_queue_t *q) {
-  // printf("OFFSET %lu\n", offsetof(hsa_queue_t, doorbell_signal));
-
-  //printf("Host thinks queue is at 0x%lx\n", (uint64_t)q);
-
-  uint64_t handle = q->doorbell_signal.handle;
-  char *sig = reinterpret_cast<char *>(handle);
-  //printf("Host thinks sig is at 0x%lx\n", (uint64_t)sig);
-
-  int64_t kind;
-  __builtin_memcpy(&kind, sig, 8);
-  // TODO: Work out if any hardware that works for openmp uses legacy doorbell
-  assert(kind == -1);
-  (void)kind;
-
-  sig += 8; // step over kind field
-  
-  // printf("Host kind: %ld\n", kind);
-
-  // const uint64_t MAX_NUM_DOORBELLS = 0x400;
-
-  uint64_t ptr;
-  __builtin_memcpy(&ptr, sig, 8);
-  
-  ptr >>= 3;
-  ptr %= MAX_NUM_DOORBELLS;
-
-  return static_cast<uint16_t>(ptr);
+uint16_t queue_to_index(hsa_queue_t *queue) {
+  unsigned char * q = reinterpret_cast<unsigned char *>(queue);
+  return queue_to_index_impl(q);
 }
 
 hostrpc::hostcall_interface_t *stored_pairs[MAX_NUM_DOORBELLS] = {0};
