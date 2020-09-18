@@ -1090,7 +1090,6 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
       DP("Finding hostcall client array (Failed)\n");
     } else {
       set_client_symbol_address(device_id, client_symbol_address);
-      fprintf(stderr, "Client sym address %lu = 0x%lx\n", device_id, client_symbol_address);
     }
   }
 
@@ -1766,7 +1765,6 @@ int32_t __tgt_rtl_run_target_team_region_locked(
       // assign a hostcall buffer for the selected Q
       if (g_atmi_hostcall_required) {
         {
-          fprintf(stderr, "Assigning buffer for device %u, queue %p\n", device_id, queue);
           impl_args->hostcall_ptr = hostrpc_assign_buffer(
               DeviceInfo.HSAAgents[device_id], queue, device_id);
         }
