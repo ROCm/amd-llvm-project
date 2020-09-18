@@ -1612,12 +1612,22 @@ int32_t __tgt_rtl_run_target_team_region(int32_t device_id, void *tgt_entry_ptr,
                                          int32_t thread_limit,
                                          uint64_t loop_tripcount) {
 
-  DeviceInfo.load_run_lock.lock_shared();
+  // One of the things this function calls is hostrpc_assign_buffer, which is
+  // not thread safe.
+  const bool write_lock = true;
+  if (write_lock) {
+    DeviceInfo.load_run_lock.lock();
+  } else {
+    DeviceInfo.load_run_lock.lock_shared();
+  }
   int32_t res = __tgt_rtl_run_target_team_region_locked(
       device_id, tgt_entry_ptr, tgt_args, tgt_offsets, arg_num, num_teams,
       thread_limit, loop_tripcount);
-
-  DeviceInfo.load_run_lock.unlock_shared();
+  if (write_lock) {
+    DeviceInfo.load_run_lock.unlock();
+  } else {
+    DeviceInfo.load_run_lock.unlock_shared();
+  }
   return res;
 }
 
