@@ -478,6 +478,7 @@ private:
     llvm::Value *GlobalRecordAddr = nullptr;
     llvm::Value *IsInSPMDModeFlag = nullptr;
     std::unique_ptr<CodeGenFunction::OMPMapVars> MappedParams;
+    bool UsedSharedMemory = false;
   };
   /// Maps the function to the list of the globalized variables with their
   /// addresses.

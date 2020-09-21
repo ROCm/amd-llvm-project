@@ -2641,17 +2641,42 @@ void CGOpenMPRuntimeNVPTX::emitGenericVarsProlog(CodeGenFunction &CGF,
       // the user, for now, default to global.
       bool UseSharedMemory =
           IsInTTDRegion && GlobalRecordSize <= SharedMemorySize;
-      llvm::Value *GlobalRecordSizeArg[] = {
-          llvm::ConstantInt::get(CGM.SizeTy, GlobalRecordSize),
-          CGF.Builder.getInt16(UseSharedMemory ? 1 : 0)};
-      llvm::Value *GlobalRecValue = CGF.EmitRuntimeCall(
-          createNVPTXRuntimeFunction(
-              IsInTTDRegion
-                  ? OMPRTL_NVPTX__kmpc_data_sharing_push_stack
-                  : OMPRTL_NVPTX__kmpc_data_sharing_coalesced_push_stack),
-          GlobalRecordSizeArg);
-      GlobalRecCastAddr = Bld.CreatePointerBitCastOrAddrSpaceCast(
-          GlobalRecValue, GlobalRecPtrTy);
+      llvm::Value *GlobalRecValue;
+
+      llvm::errs() << "IsInTTDRegion = "<< IsInTTDRegion << "\n";
+      if (!UseSharedMemory) {
+        llvm::Value *GlobalRecordSizeArg[] = {
+            llvm::ConstantInt::get(CGM.SizeTy, GlobalRecordSize),
+            CGF.Builder.getInt16(UseSharedMemory ? 1 : 0)};
+        GlobalRecValue = CGF.EmitRuntimeCall(
+            createNVPTXRuntimeFunction(
+                IsInTTDRegion
+                    ? OMPRTL_NVPTX__kmpc_data_sharing_push_stack
+                    : OMPRTL_NVPTX__kmpc_data_sharing_coalesced_push_stack),
+            GlobalRecordSizeArg);
+        GlobalRecCastAddr = Bld.CreatePointerBitCastOrAddrSpaceCast(
+            GlobalRecValue, GlobalRecPtrTy);
+      } else {
+        llvm::Module &M = CGM.getModule();
+        unsigned SharedAddressSpace = CGF.getContext().getTargetAddressSpace(LangAS::cuda_shared);
+        auto Name = Twine("shared_memory_", GlobalRecPtrTy->getElementType()->getStructName());
+        llvm::Value *SharedMemoryVar  = new llvm::GlobalVariable(
+                  M, GlobalRecPtrTy->getElementType(),
+                  /*isConstant=*/false, llvm::GlobalVariable::WeakAnyLinkage,
+                  llvm::UndefValue::get(GlobalRecPtrTy->getElementType()),
+                  Name,
+                  /*InsertBefore=*/nullptr,
+                  llvm::GlobalVariable::NotThreadLocal, SharedAddressSpace,
+                  /*isExternallyInitialized*/ true);
+
+        llvm::Value *Zero = llvm::ConstantInt::get(CGF.getLLVMContext(), llvm::APInt(32, 0));
+        llvm::Value* Indices[] = { Zero, Zero };
+        GlobalRecValue= Bld.CreateInBoundsGEP(
+          SharedMemoryVar, Indices);
+        GlobalRecCastAddr = Bld.CreatePointerBitCastOrAddrSpaceCast(GlobalRecValue,
+                                                                    GlobalRecPtrTy);
+        I->getSecond().UsedSharedMemory = true;
+      }
       I->getSecond().GlobalRecordAddr = GlobalRecValue;
       I->getSecond().IsInSPMDModeFlag = nullptr;
     }
@@ -2820,7 +2845,7 @@ void CGOpenMPRuntimeNVPTX::emitGenericVarsEpilog(CodeGenFunction &CGF,
                   OMPRTL_NVPTX__kmpc_restore_team_static_memory),
               Args);
         }
-      } else {
+      } else if (!I->getSecond().UsedSharedMemory) {
         CGF.EmitRuntimeCall(createNVPTXRuntimeFunction(
                                 OMPRTL_NVPTX__kmpc_data_sharing_pop_stack),
                             I->getSecond().GlobalRecordAddr);
