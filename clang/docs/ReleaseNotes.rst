@@ -1,18 +1,12 @@
-========================================
-Clang 11.0.0 (In-Progress) Release Notes
-========================================
+==========================
+Clang 11.0.0 Release Notes
+==========================
 
 .. contents::
    :local:
    :depth: 2
 
 Written by the `LLVM Team <https://llvm.org/>`_
-
-.. warning::
-
-   These are in-progress notes for the upcoming Clang 11 release.
-   Release notes for previous releases can be found on
-   `the Download Page <https://releases.llvm.org/download.html>`_.
 
 Introduction
 ============
@@ -30,11 +24,6 @@ For more information about Clang or LLVM, including information about the
 latest release, please see the `Clang Web Site <https://clang.llvm.org>`_ or the
 `LLVM Web Site <https://llvm.org>`_.
 
-Note that if you are reading this file from a Git checkout or the
-main Clang web page, this document applies to the *next* release, not
-the current one. To see the release notes for a specific release, please
-see the `releases page <https://llvm.org/releases/>`_.
-
 What's New in Clang 11.0.0?
 ===========================
 
@@ -43,13 +32,9 @@ here. Generic improvements to Clang as a whole or to its underlying
 infrastructure are described first, followed by language-specific
 sections with improvements to Clang's support for those languages.
 
-Major New Features
-------------------
-
-- ...
 
 Recovery AST
-^^^^^^^^^^^^
+------------
 
 clang's AST now improves support for representing broken C++ code. This improves
 the quality of subsequent diagnostics after an error is encountered. It also
@@ -89,7 +74,7 @@ This feature is on by default for C++ code, and can be explicitly controlled
 with `-Xclang -f[no-]recovery-ast`.
 
 Improvements to Clang's diagnostics
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+-----------------------------------
 
 - -Wpointer-to-int-cast is a new warning group. This group warns about C-style
   casts of pointers to a integer type too small to hold all possible values.
@@ -269,13 +254,6 @@ New Compiler Flags
   compiler support will continue to change until the specification is
   finalised.
 
-Deprecated Compiler Flags
--------------------------
-
-The following options are deprecated and ignored. They will be removed in
-future versions of Clang.
-
-- ...
 
 Modified Compiler Flags
 -----------------------
@@ -306,12 +284,16 @@ Modified Compiler Flags
 - -mcpu is now supported for RISC-V, and recognises the generic-rv32,
   rocket-rv32, sifive-e31, generic-rv64, rocket-rv64, and sifive-u54 target
   CPUs.
-
+- ``-fwhole-program-vtables`` (along with ``-flto*``) now prepares all classes for possible whole program visibility if specified during the LTO link.
+  (`D71913 <https://reviews.llvm.org/D71913>`_)
 
 New Pragmas in Clang
 --------------------
 
-- ...
+- The ``clang max_tokens_here`` pragma can be used together with
+  `-Wmax-tokens <DiagnosticsReference.html#wmax-tokens>`_ to emit a warning when
+  the number of preprocessor tokens exceeds a limit. Such limits can be helpful
+  in limiting code growth and slow compiles due to large header files.
 
 Attribute Changes in Clang
 --------------------------
@@ -341,8 +323,6 @@ C Language Changes in Clang
 
 - Clang now supports the GNU C extension `asm inline`; it won't do anything
   *yet*, but it will be parsed.
-
-- ...
 
 C++ Language Changes in Clang
 -----------------------------
@@ -385,13 +365,6 @@ C++ Language Changes in Clang
       int f() { return 0; }
     } S;
 
-C++1z Feature Support
-^^^^^^^^^^^^^^^^^^^^^
-
-...
-
-Objective-C Language Changes in Clang
--------------------------------------
 
 OpenCL Kernel Language Changes in Clang
 ---------------------------------------
@@ -416,7 +389,7 @@ OpenCL Kernel Language Changes in Clang
   `cl_arm_integer_dot_product`.
 
 Changes related to C++ for OpenCL
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+---------------------------------
 
 - Added `addrspace_cast` operator.
 
@@ -435,12 +408,53 @@ ABI Changes in Clang
 OpenMP Support in Clang
 -----------------------
 
-- ...
+New features for OpenMP 5.0 were implemented.
 
-CUDA Support in Clang
----------------------
+- OpenMP 5.0 is the default version supported by the compiler. User can switch
+  to OpenMP 4.5 using ``-fopenmp-version=45`` option.
 
-- ...
+- Added support for declare variant directive.
+
+- Improved support of math functions and complex types for NVPTX target.
+
+- Added support for parallel execution of target regions for NVPTX target.
+
+- Added support for ``scan`` directives and ``inscan`` modifier in ``reduction``
+  clauses.
+
+- Added support for ``iterator`` construct.
+
+- Added support for ``depobj`` construct.
+
+- Added support for ``detach`` clauses in task-based directives.
+
+- Added support for array shaping operations.
+
+- Added support for cancellation constructs in ``taskloop`` directives.
+
+- Nonmonotonic modifier is allowed with all schedule kinds.
+
+- Added support for ``task`` and ``default`` modifiers in ``reduction`` clauses.
+
+- Added support for strides in array sections.
+
+- Added support for ``use_device_addr`` clause.
+
+- Added support for ``uses_allocators`` clause.
+
+- Added support for ``defaultmap`` clause.
+
+- Added basic support for ``hint`` clause in ``atomic`` directives.
+
+- Added basic support for ``affinity`` clause.
+
+- Added basic support for ``ancestor`` modifier in ``device`` clause.
+
+- Added support for ``default(firstprivate)`` clause. This clause is the part of
+  upcoming OpenMP 5.1 and can be enabled using ``-fopenmp-version=51`` option.
+
+- Bug fixes and optimizations.
+
 
 Internal API Changes
 --------------------
@@ -488,11 +502,6 @@ release of Clang. Users of the build system should adjust accordingly.
   but it's expected that that setting will go away eventually. If this is
   something you need, please reach out to the mailing list to discuss possible
   ways forward.
-
-AST Matchers
-------------
-
-- ...
 
 clang-format
 ------------
@@ -595,40 +604,81 @@ clang-format
         foo();
       } while(1);
 
-libclang
---------
 
-- ...
+.. _release-notes-clang-static-analyzer:
 
 Static Analyzer
 ---------------
 
-- ...
+- Improved the analyzer's understanding of inherited C++ constructors.
+
+- Improved the analyzer's understanding of dynamic class method dispatching in
+  Objective-C.
+
+- Greatly improved the analyzer's constraint solver by better understanding
+  when constraints are imposed on multiple symbolic values that are known to be
+  equal or known to be non-equal. It will now also efficiently reject impossible
+  if-branches between known comparison expressions.
+
+- Added :ref:`on-demand parsing <ctu-on-demand>` capability to Cross Translation
+  Unit (CTU) analysis.
+
+- Numerous fixes and improvements for the HTML output.
+
+- New checker: :ref:`alpha.core.C11Lock <alpha-core-C11Lock>` and
+  :ref:`alpha.fuchsia.Lock <alpha-fuchsia-lock>` checks for their respective
+  locking APIs.
+
+- New checker: :ref:`alpha.security.cert.pos.34c <alpha-security-cert-pos-34c>`
+  finds calls to ``putenv`` where a pointer to an autmoatic variable is passed
+  as an argument.
+
+- New checker: :ref:`webkit.NoUncountedMemberChecker
+  <webkit-NoUncountedMemberChecker>` to enforce the existence of virtual
+  destructors for all uncounted types used as base classes.
+
+- New checker: :ref:`webkit.RefCntblBaseVirtualDtor
+  <webkit-RefCntblBaseVirtualDtor>` checks that only ref-counted types
+  are used as class members, not raw pointers and references to uncounted
+  types.
+
+- New checker: :ref:`alpha.cplusplus.SmartPtr <alpha-cplusplus-SmartPtr>` check
+  for dereference of null smart pointers.
+
+- Moved ``PlacementNewChecker`` out of alpha, making it enabled by default.
+
+- Added support for multi-dimensional variadic arrays in ``core.VLASize``.
+
+- Added a check for insufficient storage in array placement new calls, as well
+  as support for alignment variants to ``cplusplus.PlacementNew``.
+
+- While still in alpha, ``alpha.unix.PthreadLock``, the iterator and container
+  modeling infrastructure, ``alpha.unix.Stream``, and taint analysis were
+  improved greatly. An ongoing, currently off-by-default improvement was made on
+  the pre-condition modeling of several functions defined in the POSIX standard.
+
+- Improved the warning messages of several checkers.
+
+- Fixed a few remaining cases of checkers emitting reports under incorrect
+  checker names, and employed a few restrictions to more easily identify and
+  avoid such errors.
+
+- Moved several non-reporting checkers (those that model, among other things,
+  standard functions, but emit no diagnostics) to be listed under
+  ``-analyzer-checker-help-developer`` instead of ``-analyzer-checker-help``.
+  Manually enabling or disabling checkers found on this list is not supported
+  in production.
+
+- Numerous fixes for crashes, false positives and false negatives in
+  ``unix.Malloc``, ``osx.cocoa.NSError``, and several other checkers.
+
+- Implemented a dockerized testing system to more easily determine the
+  correctness and performance impact of a change to the static analyzer itself.
+  The currently beta-version tool is found in
+  ``(llvm-project repository)/clang/utils/analyzer/SATest.py``.
 
 .. _release-notes-ubsan:
 
-Undefined Behavior Sanitizer (UBSan)
-------------------------------------
-
-Core Analysis Improvements
-==========================
-
-- ...
-
-New Issues Found
-================
-
-- ...
-
-Python Binding Changes
-----------------------
-
-The following methods have been added:
-
--  ...
-
-Significant Known Problems
-==========================
 
 Additional Information
 ======================

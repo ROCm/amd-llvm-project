@@ -5,12 +5,6 @@ LLVM 11.0.0 Release Notes
 .. contents::
     :local:
 
-.. warning::
-   These are in-progress notes for the upcoming LLVM 11 release.
-   Release notes for previous releases can be found on
-   `the Download Page <https://releases.llvm.org/download.html>`_.
-
-
 Introduction
 ============
 
@@ -26,47 +20,15 @@ have questions or comments, the `LLVM Developer's Mailing List
 <https://lists.llvm.org/mailman/listinfo/llvm-dev>`_ is a good place to send
 them.
 
-Note that if you are reading this file from a Git checkout or the main
-LLVM web page, this document applies to the *next* release, not the current
-one.  To see the release notes for a specific release, please see the `releases
-page <https://llvm.org/releases/>`_.
-
 Deprecated and Removed Features/APIs
 =================================================
 * BG/Q support, including QPX, will be removed in the 12.0.0 release.
 
 Non-comprehensive list of changes in this release
 =================================================
-.. NOTE
-   For small 1-3 sentence descriptions, just add an entry at the end of
-   this list. If your description won't fit comfortably in one bullet
-   point (e.g. maybe you would like to give an example of the
-   functionality, or simply have a lot to talk about), see the `NOTE` below
-   for adding a new subsection.
-
-* The LLVM project has started the migration towards Python 3, and the build
-  system now prefers Python 3 whenever available.  If the Python 3 interpreter
-  (or libraries) are not found, the build system will, for the time being, fall
-  back to Python 2.  It is recommended that downstream projects migrate to
-  Python 3 as Python 2 has been end-of-life'd by the Python Software
-  Foundation.
 
 * The llgo frontend has been removed for now, but may be resurrected in the
   future.
-
-* ...
-
-
-.. NOTE
-   If you would like to document a larger change, then you can add a
-   subsection about it right here. You can copy the following boilerplate
-   and un-indent it (the indentation causes it to be inside this comment).
-
-   Special New Feature
-   -------------------
-
-   Makes programs 10x faster by doing Special New Thing.
-
 
 Changes to the LLVM IR
 ----------------------
@@ -116,6 +78,13 @@ Changes to the LLVM IR
 Changes to building LLVM
 ------------------------
 
+* The LLVM project has started the migration towards Python 3, and the build
+  system now prefers Python 3 whenever available.  If the Python 3 interpreter
+  (or libraries) are not found, the build system will, for the time being, fall
+  back to Python 2.  It is recommended that downstream projects migrate to
+  Python 3 as Python 2 has been end-of-life'd by the Python Software
+  Foundation.
+
 Changes to the AArch64 Backend
 ------------------------------
 
@@ -134,6 +103,7 @@ Changes to the AArch64 Backend
 * Added support for Armv8.6-A:
 
   Assembly support for the following extensions:
+
   - Enhanced Counter Virtualization (ARMv8.6-ECV).
   - Fine Grained Traps (ARMv8.6-FGT).
   - Activity Monitors virtualization (ARMv8.6-AMU).
@@ -179,21 +149,51 @@ Changes to the ARM Backend
 
 * Added support for Cortex-M55, Cortex-A77, Cortex-A78 and Cortex-X1 cores.
 
-Changes to the MIPS Target
---------------------------
-
-During this release ...
-
 
 Changes to the PowerPC Target
 -----------------------------
 
-During this release ...
+Optimization:
+
+* Improved Loop Unroll-and-Jam legality checks, allowing it to handle more than two level loop nests
+* Improved Loop Unroll to be able to unroll more loops
+* Implemented an option to allow loop fusion to work on loops with different constant trip counts
+
+Codegen:
+
+* POWER10 support
+* Added PC Relative addressing
+* Added __int128 vector bool support
+* Security enhancement via probe-stack attribute support to protect against stack clash
+* Floating point support enhancements
+* Improved half precision and quad precision support, including GLIBC
+* constrained FP operation support for arithmetic/rounding/max/min
+* cleaning up fast math flags checks in DAGCombine, Legalizer, and Lowering
+* Performance improvements from instruction exploitation, especially for vector permute on LE
+* Scheduling enhancements
+* Added MacroFusion for POWER8
+* Added post-ra heuristics for POWER9
+* Target dependent passes tuning
+* Updated LoopStrengthReduce to use instruction number as first priority
+* Enhanced MachineCombiner to expose more ILP
+* Code quality and maintenance enhancements
+* Enabled more machine verification passes
+* Added ability to parse and emit additional extended mnemonics
+* Numerous bug fixes
+
+AIX Support Improvements:
+
+* Enabled compile and link such that a simple <stdio.h> "Hello World" program works with standard headers
+* Added support for the C calling convention for non-vector code
+* Implemented correct stack frame layout for functions
+* In llvm-objdump, added support for relocations, improved selection of symbol labels, and added the --symbol-description option
+
 
 Changes to the RISC-V Target
 ----------------------------
 
 New features:
+
 * After consultation through an RFC, the RISC-V backend now accepts patches for
   proposed instruction set extensions that have not yet been ratified.  For these
   experimental extensions, there is no expectation of ongoing support - the
@@ -210,6 +210,7 @@ New features:
 * llvm-objdump will now print branch targets as part of disassembly.
 
 Improvements:
+
 * If an immediate can be generated using a pair of `addi` instructions, that
   pair will be selected rather than materialising the immediate into a
   separate register with an `lui` and `addi` pair.
@@ -231,6 +232,7 @@ Improvements:
 * The `jump` pseudo instruction is now supported.
 
 Bug fixes:
+
 * A failure to insert indirect branches in position independent code
   was fixed.
 * The calculated expanded size of atomic pseudo operations was fixed, avoiding
@@ -242,9 +244,6 @@ Bug fixes:
 
 Changes to the X86 Target
 -------------------------
-
-During this release ...
-
 
 * Functions with the probe-stack attribute set to "inline-asm" are now protected
   against stack clash without the need of a third-party probing function and
@@ -301,18 +300,6 @@ Changes to the Windows Target
 * Produce COFF weak external symbols for IR level weak symbols without a comdat
   (e.g. for `__attribute__((weak))` in C)
 
-Changes to the OCaml bindings
------------------------------
-
-
-
-Changes to the C API
---------------------
-
-
-Changes to the Go bindings
---------------------------
-
 
 Changes to the DAG infrastructure
 ---------------------------------
@@ -323,7 +310,7 @@ Changes to the DAG infrastructure
   MachineIR.
 
 Changes to the Debug Info
----------------------------------
+-------------------------
 
 * LLVM now supports the debug entry values (DW_OP_entry_value) production for
   the x86, ARM, and AArch64 targets by default. Other targets can use
@@ -332,6 +319,12 @@ Changes to the Debug Info
   optimized-out parameters by going up a stack frame and interpreting the values
   passed to the callee. The feature improves the debugging user experience when
   debugging optimized code.
+
+Changes to the Gold Plugin
+--------------------------
+
+* ``--plugin-opt=whole-program-visibility`` is added to specify that classes have hidden LTO visibility in LTO and ThinLTO links of source files compiled with ``-fwhole-program-vtables``. See `LTOVisibility <https://clang.llvm.org/docs/LTOVisibility.html>`_ for details.
+  (`D71913 <https://reviews.llvm.org/D71913>`_)
 
 Changes to the LLVM tools
 ---------------------------------
@@ -348,14 +341,6 @@ Changes to the LLVM tools
 
 * llvm-lib supports adding import library objects in addition to regular
   object files
-
-Changes to LLDB
-===============
-
-External Open Source Projects Using LLVM 11
-===========================================
-
-* A project...
 
 Additional Information
 ======================
