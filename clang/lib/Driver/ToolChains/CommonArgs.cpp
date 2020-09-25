@@ -1690,7 +1690,7 @@ void tools::AddStaticDeviceLibs(Compilation *C, const Tool *T,
     // No Device specific SDL for these libs: omp,cudart,m,gcc,gcc_s,pthread
     if (SDL_Name != "omp" && SDL_Name != "cudart" && SDL_Name != "m" &&
         SDL_Name != "gcc" && SDL_Name != "gcc_s" && SDL_Name != "pthread" &&
-        SDL_Name != "hip_hcc" && SDL_Name != "m") {
+        SDL_Name != "hip_hcc" ) {
       bool inSDL_Names = false;
       for (std::string OldName : SDL_Names) {
         if (OldName == SDL_Name)
