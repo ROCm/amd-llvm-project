@@ -50,7 +50,6 @@ set(files
   __clang_hip_math.h
   __clang_hip_cmath.h
   __clang_hip_runtime_wrapper.h
-  __clang_hip_complex_builtins.h
   cetintrin.h
   cet.h
   cldemoteintrin.h
@@ -156,6 +155,7 @@ set(openmp_wrapper_files
   openmp_wrappers/complex.h
   openmp_wrappers/complex
   openmp_wrappers/__clang_openmp_device_functions.h
+  openmp_wrappers/complex_cmath.h
   openmp_wrappers/new
 )
 

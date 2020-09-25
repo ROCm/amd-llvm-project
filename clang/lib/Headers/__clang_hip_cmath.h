@@ -13,7 +13,7 @@
 #include <limits>
 #include <stdint.h>
 #ifndef __OPENMP_AMDGCN__
-// HIP
+// HIP needs these for c++
 #if defined(__cplusplus)
 #include <algorithm>
 #include <limits>

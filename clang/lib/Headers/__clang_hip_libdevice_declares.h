@@ -319,6 +319,8 @@ __device__ __attribute__((const)) __2i16 __ocml_isnan_2f16(__2f16);
 __device__ __attribute__((pure)) __2f16 __ocml_log_2f16(__2f16);
 __device__ __attribute__((pure)) __2f16 __ocml_log10_2f16(__2f16);
 __device__ __attribute__((pure)) __2f16 __ocml_log2_2f16(__2f16);
+
+__device__ inline __2f16 __llvm_amdgcn_rcp_2f16(__2f16 __x);
 #if defined(__cplusplus)
 __device__ inline __2f16
 __llvm_amdgcn_rcp_2f16(__2f16 __x) // Not currently exposed by ROCDL.

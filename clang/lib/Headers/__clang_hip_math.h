@@ -304,6 +304,13 @@ __DEVICE__
 float omp_modff(float x, __private float *iptr) {
   return __ocml_modf_f32(x, iptr);
 }
+__DEVICE__
+inline float modff(float __x, float *__iptr) {
+  float __tmp;
+  float __r = omp_modff(__x, (__attribute__((address_space(5))) float *)&__tmp);
+  *__iptr = __tmp;
+  return __r;
+}
 
 __DEVICE__
 float nanf(const char *tagp) {
@@ -766,40 +773,7 @@ double __fma_rz(double x, double y, double z) {
 // END INTRINSICS
 // END DOUBLE
 
-// Complex functions
-#define _ISNANd __ocml_isnan_f64
-#define _ISNANf __ocml_isnan_f32
-#define _ISINFd __ocml_isinf_f64
-#define _ISINFf __ocml_isinf_f32
-#define _ISFINITEd __ocml_isfinite_f64
-#define _ISFINITEf __ocml_isfinite_f32
-#define _COPYSIGNd __ocml_copysign_f64
-#define _COPYSIGNf __ocml_copysign_f32
-#define _SCALBNd __ocml_scalbn_f64
-#define _SCALBNf __ocml_scalbn_f32
-#define _ABSd __ocml_fabs_f64
-#define _ABSf __ocml_fabs_f32
-#define _LOGBd __ocml_logb_f64
-#define _LOGBf __ocml_logb_f32
-#define _fmaxd __ocml_fmax_f64
-#define _fmaxf __ocml_fmax_f32
-
-#include <__clang_hip_complex_builtins.h>
-
-#undef _ISNANd
-#undef _ISNANf
-#undef _ISINFd
-#undef _ISINFf
-#undef _COPYSIGNd
-#undef _COPYSIGNf
-#undef _ISFINITEd
-#undef _ISFINITEf
-#undef _SCALBNd
-#undef _SCALBNf
-#undef _ABSd
-#undef _ABSf
-#undef _LOGBd
-#undef _LOGBf
+#include <__clang_cuda_complex_builtins.h>
 
 #pragma pop_macro("__DEVICE__")
 #pragma pop_macro("__DEVICE_VOID__")

@@ -64,8 +64,8 @@ static inline __device__ void *free(void *__ptr) {
 #include <__clang_hip_math.h>
 
 #if !_OPENMP || __HIP_ENABLE_CUDA_WRAPPER_FOR_OPENMP__
+#include <__clang_cuda_complex_builtins.h>
 #include <__clang_cuda_math_forward_declares.h>
-#include <__clang_hip_complex_builtins.h>
 
 #include <algorithm>
 #include <complex>
