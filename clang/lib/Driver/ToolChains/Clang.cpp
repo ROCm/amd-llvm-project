@@ -1171,7 +1171,7 @@ void Clang::AddPreprocessingOptions(Compilation &C, const JobAction &JA,
   // openmp_wrappers folder which contains alternative system headers.
   if (JA.isDeviceOffloading(Action::OFK_OpenMP) &&
       (getToolChain().getTriple().isNVPTX() ||
-       (getToolChain().getTriple().getArch() == llvm::Triple::amdgcn))) {
+       getToolChain().getTriple().isAMDGCN())) {
     if (!Args.hasArg(options::OPT_nobuiltininc)) {
       // Add openmp_wrappers/* to our system include path.  This lets us wrap
       // standard library headers.
@@ -5828,8 +5828,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // selected. For optimization levels that want vectorization we use the alias
   // option to simplify the hasFlag logic.
   bool EnableVec = shouldEnableVectorizerAtOLevel(Args, false) &&
-                   !(Triple.getArch() == llvm::Triple::amdgcn ||
-                     Triple.getArch() == llvm::Triple::nvptx64);
+                   !(Triple.isAMDGCN() || Triple.isNVPTX());
   OptSpecifier VectorizeAliasOption =
       EnableVec ? options::OPT_O_Group : options::OPT_fvectorize;
   if (Args.hasFlag(options::OPT_fvectorize, VectorizeAliasOption,
@@ -5838,8 +5837,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // -fslp-vectorize is enabled based on the optimization level selected.
   bool EnableSLPVec = shouldEnableVectorizerAtOLevel(Args, true) &&
-                      !(Triple.getArch() == llvm::Triple::amdgcn ||
-                        Triple.getArch() == llvm::Triple::nvptx64);
+                      !(Triple.isAMDGCN() || Triple.isNVPTX());
   OptSpecifier SLPVectAliasOption =
       EnableSLPVec ? options::OPT_O_Group : options::OPT_fslp_vectorize;
   if (Args.hasFlag(options::OPT_fslp_vectorize, SLPVectAliasOption,
