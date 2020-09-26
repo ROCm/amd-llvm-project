@@ -19,18 +19,20 @@
 #include <cmath>
 #define __CUDA__
 #define __ARCHTYPES__ nvptx,nvptx64
-#endif
+#endif  //__NVPTX__
 
 #ifdef __AMDGCN__
 #include <__clang_hip_libdevice_declares.h>
 #define __HIP__
-#endif
-#include <__clang_cuda_complex_builtins.h>
 #define __ARCHTYPES__ amdgcn
-#endif
+#endif  //__AMDGCN__
+
+#include <__clang_cuda_complex_builtins.h>
+#endif //__CLANG_OPENMP_COMPLEX__
 
 // Grab the host header too.
 #include_next <complex>
+
 
 #ifdef __cplusplus
 
