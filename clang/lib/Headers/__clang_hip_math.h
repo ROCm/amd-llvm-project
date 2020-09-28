@@ -45,44 +45,44 @@
 
 // These are defined in cmath so skip them if cplusplus
 #ifndef __cplusplus
-__DEVICE__ inline uint64_t __make_mantissa_base8(const char *tagp) {
+__DEVICE__ inline uint64_t __make_mantissa_base8(const char *__tagp) {
   uint64_t r = 0;
-  while (tagp) {
-    char tmp = *tagp;
+  while (__tagp) {
+    char tmp = *__tagp;
 
     if (tmp >= '0' && tmp <= '7')
       r = (r * 8u) + tmp - '0';
     else
       return 0;
 
-    ++tagp;
+    ++__tagp;
   }
 
   return r;
 }
 
 __DEVICE__
-uint64_t __make_mantissa_base10(const char *tagp) {
+uint64_t __make_mantissa_base10(const char *__tagp) {
   uint64_t r = 0;
-  while (tagp) {
-    char tmp = *tagp;
+  while (__tagp) {
+    char tmp = *__tagp;
 
     if (tmp >= '0' && tmp <= '9')
       r = (r * 10u) + tmp - '0';
     else
       return 0;
 
-    ++tagp;
+    ++__tagp;
   }
 
   return r;
 }
 
 __DEVICE__
-uint64_t __make_mantissa_base16(const char *tagp) {
+uint64_t __make_mantissa_base16(const char *__tagp) {
   uint64_t r = 0;
-  while (tagp) {
-    char tmp = *tagp;
+  while (__tagp) {
+    char tmp = *__tagp;
 
     if (tmp >= '0' && tmp <= '9')
       r = (r * 16u) + tmp - '0';
@@ -93,27 +93,27 @@ uint64_t __make_mantissa_base16(const char *tagp) {
     else
       return 0;
 
-    ++tagp;
+    ++__tagp;
   }
 
   return r;
 }
 
 __DEVICE__
-uint64_t __make_mantissa(const char *tagp) {
-  if (!tagp)
+uint64_t __make_mantissa(const char *__tagp) {
+  if (!__tagp)
     return 0u;
 
-  if (*tagp == '0') {
-    ++tagp;
+  if (*__tagp == '0') {
+    ++__tagp;
 
-    if (*tagp == 'x' || *tagp == 'X')
-      return __make_mantissa_base16(tagp);
+    if (*__tagp == 'x' || *__tagp == 'X')
+      return __make_mantissa_base16(__tagp);
     else
-      return __make_mantissa_base8(tagp);
+      return __make_mantissa_base8(__tagp);
   }
 
-  return __make_mantissa_base10(tagp);
+  return __make_mantissa_base10(__tagp);
 }
 #endif
 
@@ -313,7 +313,7 @@ inline float modff(float __x, float *__iptr) {
 }
 
 __DEVICE__
-float nanf(const char *tagp) {
+float nanf(const char *__tagp) {
   union {
     float val;
     struct ieee_float {
@@ -329,7 +329,7 @@ float nanf(const char *tagp) {
   tmp.bits.sign = 0u;
   tmp.bits.exponent = ~0u;
   tmp.bits.quiet = 1u;
-  tmp.bits.mantissa = __make_mantissa(tagp);
+  tmp.bits.mantissa = __make_mantissa(__tagp);
 
   return tmp.val;
 }
