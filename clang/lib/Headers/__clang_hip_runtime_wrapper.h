@@ -18,33 +18,23 @@
 
 #if __HIP__
 
-#if defined(__cplusplus)
 #include <cmath>
 #include <cstdlib>
 #include <stdlib.h>
-#define _NULLPTR nullptr
-#else
-#define _NULLPTR 0
-#include <stddef.h>
-#endif
 
 #define __host__ __attribute__((host))
 #define __device__ __attribute__((device))
 #define __global__ __attribute__((global))
 #define __shared__ __attribute__((shared))
 #define __constant__ __attribute__((constant))
-#define __forceinline__ __attribute__((always_inline))
-#define __private
+
+#if !defined(__cplusplus) || __cplusplus < 201103L
+  #define nullptr NULL;
+#endif
 
 #if __HIP_ENABLE_DEVICE_MALLOC__
-#if defined(__cplusplus)
-extern "C" {
-#endif
-__device__ void *__hip_malloc(size_t __size);
-__device__ void *__hip_free(void *__ptr);
-#if defined(__cplusplus)
-}
-#endif
+extern "C" __device__ void *__hip_malloc(size_t __size);
+extern "C" __device__ void *__hip_free(void *__ptr);
 static inline __device__ void *malloc(size_t __size) {
   return __hip_malloc(__size);
 }
@@ -52,20 +42,20 @@ static inline __device__ void *free(void *__ptr) { return __hip_free(__ptr); }
 #else
 static inline __device__ void *malloc(size_t __size) {
   __builtin_trap();
-  return _NULLPTR;
+  return nullptr;
 }
 static inline __device__ void *free(void *__ptr) {
   __builtin_trap();
-  return _NULLPTR;
+  return nullptr;
 }
-#endif // if __HIP_ENABLE_DEVICE_MALLOC__
+#endif
 
 #include <__clang_hip_libdevice_declares.h>
 #include <__clang_hip_math.h>
 
 #if !_OPENMP || __HIP_ENABLE_CUDA_WRAPPER_FOR_OPENMP__
-#include <__clang_cuda_complex_builtins.h>
 #include <__clang_cuda_math_forward_declares.h>
+#include <__clang_cuda_complex_builtins.h>
 
 #include <algorithm>
 #include <complex>
