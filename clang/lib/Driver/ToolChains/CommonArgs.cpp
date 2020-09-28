@@ -1628,10 +1628,6 @@ bool tools::GetSDLFromAOB(Compilation &C, const Driver &D, const Tool &T,
   return FoundAOB;
 }
 
-//  Lets clean up this overloading!
-//
-// 10 args,  adds Driver, called from HIP and
-//  Cuda OpenMPLinkerConstructJob (false,false)
 void tools::AddStaticDeviceLibs(Compilation &C, const Tool &T,
                                 const JobAction &JA,
 				const InputInfoList &Inputs,
@@ -1643,8 +1639,6 @@ void tools::AddStaticDeviceLibs(Compilation &C, const Tool &T,
                       ArchName, GpuArch, isBitCodeSDL, postClangLink);
 }
 
-//  7  args , called from cuda addClangTarget Options for openmp
-//  missing compilation, tool, ja, inputs (true, true)
 void tools::AddStaticDeviceLibs(const Driver &D,
                                 const llvm::opt::ArgList &DriverArgs,
                                 llvm::opt::ArgStringList &CC1Args,
@@ -1654,7 +1648,6 @@ void tools::AddStaticDeviceLibs(const Driver &D,
                       CC1Args, ArchName, GpuArch, isBitCodeSDL, postClangLink);
 }
 
-//  11 args
 void tools::AddStaticDeviceLibs(Compilation *C, const Tool *T,
                                 const JobAction *JA,
                                 const InputInfoList *Inputs, const Driver &D,
