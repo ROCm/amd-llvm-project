@@ -149,6 +149,14 @@ const char *AMDGCN::OpenMPLinker::constructOmpExtraCmds(
   for (auto Lib : Args.getAllArgValues(options::OPT_hip_device_lib_EQ)) {
     BCLibs.push_back(Args.MakeArgString(Lib));
   }
+  if (C.getDriver().IsFlangMode()) {
+    BCLibs.push_back(Args.MakeArgString("libm-amdgcn-" + SubArchName + ".bc"));
+    BCLibs.push_back(Args.MakeArgString("ocml.bc"));
+    if (Args.hasArg(options::OPT_cl_finite_math_only))
+      BCLibs.push_back(Args.MakeArgString("oclc_finite_only_on.bc"));
+    else
+      BCLibs.push_back(Args.MakeArgString("oclc_finite_only_off.bc"));
+  }
 
   llvm::StringRef WaveFrontSizeBC;
   std::string GFXVersion = SubArchName.drop_front(3).str();
@@ -507,6 +515,7 @@ void AMDGPUOpenMPToolChain::addClangTargetOptions(
     RocmInstallation.addCommonBitcodeLibCC1Args(
       DriverArgs, CC1Args, LibDeviceFile, Wave64, DAZ, FiniteOnly,
       UnsafeMathOpt, FastRelaxedMath, CorrectSqrt);
+
   }
 }
 
