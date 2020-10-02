@@ -24,8 +24,7 @@
 #define __DEVICE__ static constexpr __attribute__((always_inline, nothrow))
 #else
 #ifdef __BUILD_MATH_BUILTINS_LIB__
-//#define __DEVICE__ extern __attribute__((always_inline, nothrow, cold, weak))
-#define __DEVICE__ extern __attribute__((always_inline, nothrow))
+#define __DEVICE__ extern __attribute__((always_inline, nothrow, cold, weak))
 #else
 #define __DEVICE__ static __attribute__((always_inline, nothrow))
 #endif
