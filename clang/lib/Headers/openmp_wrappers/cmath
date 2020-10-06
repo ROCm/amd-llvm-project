@@ -24,8 +24,12 @@
 // which might live in cstdlib.
 #include <cstdlib>
 
+#ifdef __NVPTX__
+// We need limits because __clang_cuda_cmath.h below uses `std::numeric_limit`.
+#include <limits>
+
 #pragma omp begin declare variant match(                                       \
-    device = {arch(nvptx, nvptx64)}, implementation = {extension(match_any)})
+    device = {arch(nvptx, nvptx64)}, implementation = {extension(match_any, allow_templates)})
 
 #define __CUDA__
 #define __OPENMP_NVPTX__
@@ -71,5 +75,19 @@ __DEVICE__ float tgamma(float __x) { return ::tgammaf(__x); }
 #undef __DEVICE__
 
 #pragma omp end declare variant
+#endif // __NVPTX__ 
+
+#ifdef __AMDGCN__
+//#pragma omp declare target
+#pragma omp begin declare variant match(                                       \
+    device = {arch(amdgcn)}, implementation = {extension(match_any, allow_templates)})
+#define __HIP__
+#define __OPENMP_AMDGCN__
+#include <__clang_hip_cmath.h>
+#undef __OPENMP_AMDGCN__
+#undef __HIP__
+#pragma omp end declare variant
+//#pragma end omp declare target
+#endif //__AMDGCN__
 
 #endif
