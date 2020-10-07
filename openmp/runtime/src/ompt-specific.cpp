@@ -385,7 +385,7 @@ int __ompt_get_task_info_internal(int ancestor_level, int *type,
       // lightweight teams are exhausted
       if (!lwt && taskdata) {
         // first try scheduling parent (for explicit task scheduling)
-        if (taskdata->ompt_task_info.scheduling_parent) {
+        if (taskdata->td_flags.tasktype == TASK_EXPLICIT && taskdata->ompt_task_info.scheduling_parent) {
           taskdata = taskdata->ompt_task_info.scheduling_parent;
         } else if (next_lwt) {
           lwt = next_lwt;

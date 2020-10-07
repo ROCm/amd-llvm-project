@@ -31,25 +31,22 @@ else()
 endif()
 set(LLVM_LIBDIR ${LLVM_INSTALL_PREFIX}/lib)
 
-find_package(Clang QUIET CONFIG PATHS ${LLVM_INSTALL_PREFIX} ${CMAKE_INSTALL_PREFIX} NO_DEFAULT_PATH)
-if (CLANG_CMAKE_DIR)
-  libomptarget_say("Found Clang ${LLVM_PACKAGE_VERSION}. Configure: ${CLANG_CMAKE_DIR}/ClangConfig.cmake")
-else()
-  libomptarget_say("Not building HSA plugin: Clang not found")
-  return()
-endif()
-
 # Add check for required libraries
 if(NOT LIBOMPTARGET_DEP_LIBELF_FOUND)
   libomptarget_say("Not building HSA plugin: LIBELF not found")
   return()
 endif()
 
-
 if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64)|(ppc64le)|(aarch64)$" AND CMAKE_SYSTEM_NAME MATCHES "Linux")
   libomptarget_say("Not building HSA plugin: only support HSA in Linux x86_64, ppc64le , or aarch64 hosts.")
   return()
 endif()
+
+if (NOT LLVM_MAIN_INCLUDE_DIR)
+  libomptarget_say("Not building AMDGPU plugin: Missing definition for LLVM_MAIN_INCLUDE_DIR")
+  return()
+endif()
+
 libomptarget_say("Building HSA offloading plugin")
 
 ################################################################################
@@ -64,10 +61,10 @@ if(CMAKE_BUILD_TYPE MATCHES Debug)
 endif()
 
 include_directories(
-  ${CLANG_INCLUDE_DIRS}
-  ${LLVM_INCLUDE_DIRS}
   ${CMAKE_CURRENT_SOURCE_DIR}/impl
   ${ROCM_DIR}/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/hostrpc
+  ${LLVM_MAIN_INCLUDE_DIR}
 )
 
 add_library(omptarget.rtl.hsa SHARED
