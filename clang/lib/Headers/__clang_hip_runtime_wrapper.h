@@ -29,7 +29,7 @@
 #define __constant__ __attribute__((constant))
 
 #if !defined(__cplusplus) || __cplusplus < 201103L
-#define nullptr NULL;
+  #define nullptr NULL;
 #endif
 
 #if __HIP_ENABLE_DEVICE_MALLOC__
@@ -55,6 +55,7 @@ static inline __device__ void *free(void *__ptr) {
 
 #if !_OPENMP || __HIP_ENABLE_CUDA_WRAPPER_FOR_OPENMP__
 #include <__clang_cuda_math_forward_declares.h>
+#include <__clang_hip_cmath.h>
 #include <__clang_cuda_complex_builtins.h>
 
 #include <algorithm>

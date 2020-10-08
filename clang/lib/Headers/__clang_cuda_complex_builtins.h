@@ -45,6 +45,8 @@
 #define _fmaxd max
 #define _fmaxf max
 #else
+
+#include <__clang_hip_libdevice_declares.h>
 #define _ISNANd __ocml_isnan_f64
 #define _ISNANf __ocml_isnan_f32
 #define _ISINFd __ocml_isinf_f64
@@ -62,7 +64,8 @@
 #define _fmaxd __ocml_fmax_f64
 #define _fmaxf __ocml_fmax_f32
 #endif
-#else
+
+#else  // OPENMP 
 #ifdef __NVPTX__
 #define _ISNANd __nv_isnand
 #define _ISNANf __nv_isnanf
@@ -82,6 +85,7 @@
 #define _fmaxf __nv_fmaxf
 #else
 // OPENMP and __AMDGCN__
+#include <__clang_hip_libdevice_declares.h>
 #define _ISNANd __ocml_isnan_f64
 #define _ISNANf __ocml_isnan_f32
 #define _ISINFd __ocml_isinf_f64

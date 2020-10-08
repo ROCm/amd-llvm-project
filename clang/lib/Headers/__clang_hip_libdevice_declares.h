@@ -14,6 +14,17 @@
 extern "C" {
 #endif
 
+#pragma push_macro("__RETURN_TYPE")
+#ifdef __OPENMP_AMDGCN__
+#define __RETURN_TYPE int
+#else
+#if defined(__cplusplus)
+#define __RETURN_TYPE bool
+#else
+#define __RETURN_TYPE int
+#endif
+#endif
+
 // BEGIN FLOAT
 __device__ __attribute__((const)) float __ocml_acos_f32(float);
 __device__ __attribute__((pure)) float __ocml_acosh_f32(float);
@@ -55,9 +66,9 @@ __device__ float __ocml_frexp_f32(float,
                                   __attribute__((address_space(5))) int *);
 __device__ __attribute__((const)) float __ocml_hypot_f32(float, float);
 __device__ __attribute__((const)) int __ocml_ilogb_f32(float);
-__device__ __attribute__((const)) int __ocml_isfinite_f32(float);
-__device__ __attribute__((const)) int __ocml_isinf_f32(float);
-__device__ __attribute__((const)) int __ocml_isnan_f32(float);
+__device__ __attribute__((const)) __RETURN_TYPE __ocml_isfinite_f32(float);
+__device__ __attribute__((const)) __RETURN_TYPE __ocml_isinf_f32(float);
+__device__ __attribute__((const)) __RETURN_TYPE  __ocml_isnan_f32(float);
 __device__ float __ocml_j0_f32(float);
 __device__ float __ocml_j1_f32(float);
 __device__ __attribute__((const)) float __ocml_ldexp_f32(float, int);
@@ -185,9 +196,9 @@ __device__ double __ocml_frexp_f64(double,
                                    __attribute__((address_space(5))) int *);
 __device__ __attribute__((const)) double __ocml_hypot_f64(double, double);
 __device__ __attribute__((const)) int __ocml_ilogb_f64(double);
-__device__ __attribute__((const)) int __ocml_isfinite_f64(double);
-__device__ __attribute__((const)) int __ocml_isinf_f64(double);
-__device__ __attribute__((const)) int __ocml_isnan_f64(double);
+__device__ __attribute__((const)) __RETURN_TYPE __ocml_isfinite_f64(double);
+__device__ __attribute__((const)) __RETURN_TYPE __ocml_isinf_f64(double);
+__device__ __attribute__((const)) __RETURN_TYPE __ocml_isnan_f64(double);
 __device__ double __ocml_j0_f64(double);
 __device__ double __ocml_j1_f64(double);
 __device__ __attribute__((const)) double __ocml_ldexp_f64(double, int);
@@ -283,8 +294,8 @@ __device__ __attribute__((const)) _Float16 __ocml_floor_f16(_Float16);
 __device__ __attribute__((const)) _Float16 __ocml_fma_f16(_Float16, _Float16,
                                                           _Float16);
 __device__ __attribute__((const)) _Float16 __ocml_fabs_f16(_Float16);
-__device__ __attribute__((const)) int __ocml_isinf_f16(_Float16);
-__device__ __attribute__((const)) int __ocml_isnan_f16(_Float16);
+__device__ __attribute__((const)) __RETURN_TYPE __ocml_isinf_f16(_Float16);
+__device__ __attribute__((const)) __RETURN_TYPE __ocml_isnan_f16(_Float16);
 __device__ __attribute__((pure)) _Float16 __ocml_log_f16(_Float16);
 __device__ __attribute__((pure)) _Float16 __ocml_log10_f16(_Float16);
 __device__ __attribute__((pure)) _Float16 __ocml_log2_f16(_Float16);
@@ -335,5 +346,6 @@ __device__ __attribute__((const)) __2f16 __ocml_pown_2f16(__2f16, __2i16);
 #ifdef __cplusplus
 } // extern "C"
 #endif
+#undef  __RETURN_TYPE
 
 #endif // __CLANG_HIP_LIBDEVICE_DECLARES_H__

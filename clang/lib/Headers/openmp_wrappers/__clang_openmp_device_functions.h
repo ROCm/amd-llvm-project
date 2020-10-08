@@ -73,13 +73,6 @@ extern "C" {
 /// Include declarations for libdevice functions.
 #include <__clang_hip_libdevice_declares.h>
 
-#undef __OPENMP_AMDGCN__
-#undef __HIP__
-#undef __host__
-#undef __device__
-#undef __global__
-#undef __shared__
-#undef __constant__
 
 #ifdef __cplusplus
 } // extern "C"

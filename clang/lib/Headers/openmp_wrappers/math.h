@@ -27,6 +27,10 @@
 #error "This file is for OpenMP compilation only."
 #endif
 
+#ifdef __cplusplus
+#include <new>
+#endif
+
 #include_next <math.h>
 
 // We need limits.h for __clang_cuda_math.h below and because it should not hurt
@@ -50,11 +54,13 @@
 
 #pragma omp begin declare variant match(                                       \
     device = {arch(amdgcn)}, implementation = {extension(match_any)})
-#define __HIP__
+#ifndef __OPENMP_AMDGCN__
 #define __OPENMP_AMDGCN__
+#endif
+#ifndef __HIP__
+#define __HIP__
+#endif
 #include <__clang_hip_math.h>
-#undef __OPENMP_AMDGCN__
-#undef __HIP__
 #pragma omp end declare variant
 
 #endif
