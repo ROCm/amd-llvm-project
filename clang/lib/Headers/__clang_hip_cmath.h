@@ -119,12 +119,18 @@ __DEVICE__ _Float16 pow(_Float16 __base, int __iexp) {
   return __ocml_pown_f16(__base, __iexp);
 }
 
+// __hip_enable_if::type is a type function which returns __T if __B is true.
+template <bool __B, class __T = void> struct __hip_enable_if {};
+
+template <class __T> struct __hip_enable_if<true, __T> { typedef __T type; };
+
 // BEGIN DEF_FUN and HIP_OVERLOAD
 
 // BEGIN DEF_FUN
 
 #pragma push_macro("__DEF_FUN1")
 #pragma push_macro("__DEF_FUN1I")
+#pragma push_macro("__DEF_FUN2II")
 #pragma push_macro("__DEF_FUN2")
 #pragma push_macro("__DEF_FUN2_FI")
 
@@ -146,6 +152,11 @@ __DEVICE__ _Float16 pow(_Float16 __base, int __iexp) {
 #define __DEF_FUN2_FI(__retty, __func)                                         \
   __DEVICE__                                                                   \
   __retty __func(float __x, int __y) { return __func##f(__x, __y); }
+
+// Define cmath functions with two int args and returns __retty.
+#define __DEF_FUN2II(__retty, __func)                                           \
+  __DEVICE__                                                                   \
+  __retty __func(int __x, int __y) { return __func##ii(__x, __y); }
 
 __DEF_FUN1(float, acos)
 __DEF_FUN1(float, acosh)
@@ -178,7 +189,7 @@ __DEF_FUN1(float, log)
 __DEF_FUN1(float, log10)
 __DEF_FUN1(float, log1p)
 __DEF_FUN1(float, log2)
- __DEF_FUN1I(float, log2)
+__DEF_FUN1I(float, log2)
 __DEF_FUN1(float, logb)
 __DEF_FUN1(long long, llrint)
 __DEF_FUN1(long long, llround)
@@ -187,6 +198,7 @@ __DEF_FUN1(long, lround)
 __DEF_FUN1(float, nearbyint)
 __DEF_FUN2(float, nextafter)
 __DEF_FUN2(float, pow)
+__DEF_FUN2II(int , pow)
 __DEF_FUN2(float, remainder)
 __DEF_FUN1(float, rint)
 __DEF_FUN1(float, round)
@@ -202,6 +214,7 @@ __DEF_FUN1(float, trunc)
 #pragma pop_macro("__DEF_FUN1")
 #pragma pop_macro("__DEF_FUN1I")
 #pragma pop_macro("__DEF_FUN2")
+#pragma pop_macro("__DEF_FUN2II")
 #pragma pop_macro("__DEF_FUN2_FI")
 
 // END DEF_FUN
@@ -211,11 +224,7 @@ __DEF_FUN1(float, trunc)
 #pragma push_macro("__HIP_OVERLOAD1")
 #pragma push_macro("__HIP_OVERLOAD1I")
 #pragma push_macro("__HIP_OVERLOAD2")
-
-// __hip_enable_if::type is a type function which returns __T if __B is true.
-template <bool __B, class __T = void> struct __hip_enable_if {};
-
-template <class __T> struct __hip_enable_if<true, __T> { typedef __T type; };
+#pragma push_macro("__HIP_OVERLOAD2I")
 
 // __HIP_OVERLOAD1 is used to resolve function calls with integer argument to
 // avoid compilation error due to ambibuity. e.g. floor(5) is resolved with
@@ -233,6 +242,13 @@ template <class __T> struct __hip_enable_if<true, __T> { typedef __T type; };
                                       __retty>::type                           \
   __fn##i(int __x) {                                                           \
     return ::__fn(__x);                                                        \
+  }
+#define __HIP_OVERLOAD2I(__retty, __fn)                                        \
+  template <typename __T>                                                      \
+  __DEVICE__ typename __hip_enable_if<std::numeric_limits<__T>::is_integer,    \
+                                      __retty>::type                           \
+  __fn##i(int __x, int __y) {                                                  \
+    return ::__fn((double) __x,  __y);                                         \
   }
 
 // __HIP_OVERLOAD2 is used to resolve function calls with mixed float/double
@@ -299,6 +315,7 @@ __HIP_OVERLOAD1(long, lround)
 __HIP_OVERLOAD1(double, nearbyint)
 __HIP_OVERLOAD2(double, nextafter)
 __HIP_OVERLOAD2(double, pow)
+__HIP_OVERLOAD2I(double, pow)
 __HIP_OVERLOAD2(double, remainder)
 __HIP_OVERLOAD1(double, rint)
 __HIP_OVERLOAD1(double, round)
@@ -371,7 +388,9 @@ __DEVICE__
 }
 
 #pragma pop_macro("__HIP_OVERLOAD1")
+#pragma pop_macro("__HIP_OVERLOAD1I")
 #pragma pop_macro("__HIP_OVERLOAD2")
+#pragma pop_macro("__HIP_OVERLOAD2I")
 
 // END HIP_OVERLOAD
 
