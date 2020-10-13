@@ -15,10 +15,8 @@
 #endif
 
 #include <time.h>
-#warning ====== START OVERLAY hip_runtime.
 #define __OPENMP_AMDGCN__
 #include_next <hip/hip_runtime.h>
-#warning ====== DONE INCLUDE of ACTUAL hip_runtime.
 
 #pragma omp begin declare variant match(                                       \
     device = {arch(amdgcn)}, implementation = {extension(match_any)})
@@ -29,7 +27,6 @@
 #pragma omp end declare variant
 // #pragma omp end declare target
 
-#warning ====== DONE OVERLAY
 // Now get the actual hip headers 
 
 #endif
