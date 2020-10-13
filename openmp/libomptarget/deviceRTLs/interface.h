@@ -433,8 +433,8 @@ EXTERN void __kmpc_kernel_prepare_parallel(void *WorkFn);
 EXTERN bool __kmpc_kernel_parallel(void **WorkFn);
 EXTERN void __kmpc_kernel_end_parallel();
 
-EXTERN void __kmpc_data_sharing_init_stack();
-EXTERN void __kmpc_data_sharing_init_stack_spmd();
+EXTERN void __kmpc_data_sharing_init_stack(char *Data, size_t size);
+EXTERN void __kmpc_data_sharing_init_stack_spmd(char *Data, size_t size);
 EXTERN void *__kmpc_data_sharing_coalesced_push_stack(size_t size,
     int16_t UseSharedMemory);
 EXTERN void *__kmpc_data_sharing_push_stack(size_t size, int16_t UseSharedMemory);

@@ -28,13 +28,13 @@
 
 // CLASS: define internal void @__omp_offloading_{{.*}}_{{.*}}foo{{.*}}_l67_worker()
 // CLASS: define weak void @__omp_offloading_{{.*}}_{{.*}}foo{{.*}}_l67([[S]]* {{%.+}}, [[CAP1]]* nonnull align 8 dereferenceable(8) {{%.+}})
-// CLASS-NOT: getelementptr
+
 // CLASS: br i1 %
 // CLASS: call void @__omp_offloading_{{.*}}_{{.*}}foo{{.*}}_l67_worker()
 // CLASS: br label %
 // CLASS: br i1 %
 // CLASS: call void @__kmpc_kernel_init(
-// CLASS: call void @__kmpc_data_sharing_init_stack()
+// CLASS: call void @__kmpc_data_sharing_init_stack
 // CLASS: call void @llvm.memcpy.
 // CLASS: [[L:%.+]] = load [[CAP1]]*, [[CAP1]]** [[L_ADDR:%.+]],
 // CLASS: [[THIS_REF:%.+]] = getelementptr inbounds [[CAP1]], [[CAP1]]* [[L]], i32 0, i32 0
@@ -44,7 +44,7 @@
 // CLASS: ret void
 
 // CLASS: define weak void @__omp_offloading_{{.+}}foo{{.+}}_l69([[S]]* %{{.+}}, [[CAP1]]* nonnull align 8 dereferenceable(8) %{{.+}})
-// CLASS-NOT: getelementptr
+
 // CLASS: call void @llvm.memcpy.
 // CLASS: [[L:%.+]] = load [[CAP1]]*, [[CAP1]]** [[L_ADDR:%.+]],
 // CLASS: [[THIS_REF:%.+]] = getelementptr inbounds [[CAP1]], [[CAP1]]* [[L]], i32 0, i32 0
@@ -74,13 +74,13 @@ struct S {
 
 // FUN: define internal void @__omp_offloading_{{.+}}_main_l124_worker()
 // FUN: define weak void @__omp_offloading_{{.+}}_main_l124(i64 %{{.+}}, i32* nonnull align 4 dereferenceable(4) %{{.+}}, i32* nonnull align 4 dereferenceable(4) %{{.+}}, i32* %{{.+}}, i32* nonnull align 4 dereferenceable(4) %{{.+}}, [[CAP2]]* nonnull align 8 dereferenceable(40) %{{.+}})
-// FUN-NOT: getelementptr
+
 // FUN: br i1 %
 // FUN: call void @__omp_offloading_{{.*}}_{{.*}}main{{.*}}_l124_worker()
 // FUN: br label %
 // FUN: br i1 %
 // FUN: call void @__kmpc_kernel_init(
-// FUN: call void @__kmpc_data_sharing_init_stack()
+// FUN: call void @__kmpc_data_sharing_init_stack
 // FUN: call void @llvm.memcpy.
 // FUN: [[L:%.+]] = load [[CAP2]]*, [[CAP2]]** [[L_ADDR:%.+]],
 // FUN: [[ARGC_CAP:%.+]] = getelementptr inbounds [[CAP2]], [[CAP2]]* [[L]], i32 0, i32 0
@@ -98,7 +98,7 @@ struct S {
 // FUN: ret void
 
 // FUN: define weak void @__omp_offloading_{{.+}}_main_l126(i32* nonnull align 4 dereferenceable(4) %{{.+}}, i32* nonnull align 4 dereferenceable(4) %{{.+}} i32* nonnull align 4 dereferenceable(4) %{{.+}}, i32* %{{.+}}, i32* nonnull align 4 dereferenceable(4) %{{.+}}, [[CAP2]]* nonnull align 8 dereferenceable(40) %{{.+}})
-// FUN-NOT: getelementptr
+
 // FUN: call void @llvm.memcpy.
 // FUN: [[L:%.+]] = load [[CAP2]]*, [[CAP2]]** [[L_ADDR:%.+]],
 // FUN: [[ARGC_CAP:%.+]] = getelementptr inbounds [[CAP2]], [[CAP2]]* [[L]], i32 0, i32 0

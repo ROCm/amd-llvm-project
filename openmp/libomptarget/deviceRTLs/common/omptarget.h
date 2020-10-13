@@ -91,7 +91,7 @@ struct __kmpc_data_sharing_worker_slot_static {
   __kmpc_data_sharing_slot *Prev;
   void *PrevSlotStackPtr;
   void *DataEnd;
-  char Data[DS_Worker_Warp_Slot_Size];
+  char *Data;
 };
 // Additional master slot type which is initialized with the default master slot
 // size of 4 bytes.
@@ -256,9 +256,10 @@ public:
     return (__kmpc_data_sharing_slot *)&worker_rootS[wid];
   }
 
-  INLINE __kmpc_data_sharing_slot *GetPreallocatedSlotAddr(int wid) {
+  INLINE __kmpc_data_sharing_slot *GetPreallocatedSlotAddr(int wid, char *Data, size_t size) {
+    worker_rootS[wid].Data = Data;
     worker_rootS[wid].DataEnd =
-        &worker_rootS[wid].Data[0] + DS_Worker_Warp_Slot_Size;
+        &worker_rootS[wid].Data[0] + size;
     // We currently do not have a next slot.
     worker_rootS[wid].Next = 0;
     worker_rootS[wid].Prev = 0;

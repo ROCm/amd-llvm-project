@@ -28,13 +28,15 @@ INLINE static bool IsMasterThread(bool isSPMDExecutionMode) {
 // Runtime functions for trunk data sharing scheme.
 ////////////////////////////////////////////////////////////////////////////////
 
-INLINE static void data_sharing_init_stack_common() {
+INLINE static void data_sharing_init_stack_common(char *Data, size_t size) {
   ASSERT0(LT_FUSSY, isRuntimeInitialized(), "Runtime must be initialized.");
   omptarget_nvptx_TeamDescr *teamDescr =
       &omptarget_nvptx_threadPrivateContext->TeamContext();
 
+  size_t PerWarp = size / DS_Max_Warp_Number;
   for (int WID = 0; WID < DS_Max_Warp_Number; WID++) {
-    __kmpc_data_sharing_slot *RootS = teamDescr->GetPreallocatedSlotAddr(WID);
+    char *MyPortion = Data + WID * PerWarp;
+    __kmpc_data_sharing_slot *RootS = teamDescr->GetPreallocatedSlotAddr(WID, MyPortion, PerWarp);
     DataSharingState.SlotPtr[WID] = RootS;
     DataSharingState.StackPtr[WID] = (void *)&RootS->Data[0];
   }
@@ -44,25 +46,25 @@ INLINE static void data_sharing_init_stack_common() {
 // once at the beginning of a data sharing context (coincides with the kernel
 // initialization). This function is called only by the MASTER thread of each
 // team in non-SPMD mode.
-EXTERN void __kmpc_data_sharing_init_stack() {
+EXTERN void __kmpc_data_sharing_init_stack(char *Data, size_t size) {
   ASSERT0(LT_FUSSY, isRuntimeInitialized(), "Runtime must be initialized.");
   // This function initializes the stack pointer with the pointer to the
   // statically allocated shared memory slots. The size of a shared memory
   // slot is pre-determined to be 256 bytes.
-  data_sharing_init_stack_common();
+  data_sharing_init_stack_common(Data, size);
   omptarget_nvptx_globalArgs.Init();
 }
 
 // Initialize data sharing data structure. This function needs to be called
 // once at the beginning of a data sharing context (coincides with the kernel
 // initialization). This function is called in SPMD mode only.
-EXTERN void __kmpc_data_sharing_init_stack_spmd() {
+EXTERN void __kmpc_data_sharing_init_stack_spmd(char *Data, size_t size) {
   ASSERT0(LT_FUSSY, isRuntimeInitialized(), "Runtime must be initialized.");
   // This function initializes the stack pointer with the pointer to the
   // statically allocated shared memory slots. The size of a shared memory
   // slot is pre-determined to be 256 bytes.
   if (GetThreadIdInBlock() == 0)
-    data_sharing_init_stack_common();
+    data_sharing_init_stack_common(Data, size);
 
   __kmpc_impl_threadfence_block();
 }
