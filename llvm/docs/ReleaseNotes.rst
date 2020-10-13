@@ -85,6 +85,22 @@ Changes to building LLVM
   Python 3 as Python 2 has been end-of-life'd by the Python Software
   Foundation.
 
+Changes to the JIT infrastructure
+---------------------------------
+
+* LLJIT now supports execution of static inits / deinits via the
+  LLJIT::initialize and LLJIT::deinitialize methods
+
+* Static libraries can now be added to a JITDylib using the
+  StaticLibraryDefinitionGenerator class
+
+* A C API has been added for OrcV2 (llvm-project/llvm/include/llvm-c/Orc.h)
+
+* Several OrcV2 example projects have been added to
+  llvm-project/llvm/examples/OrcV2Examples
+
+* Many bug fixes and API improvements
+
 Changes to the AArch64 Backend
 ------------------------------
 
@@ -149,6 +165,9 @@ Changes to the ARM Backend
 
 * Added support for Cortex-M55, Cortex-A77, Cortex-A78 and Cortex-X1 cores.
 
+* The Machine Outliner is now supported for ARM and Thumb2, it is not
+  turned on by default and can be enabled with the ``-moutline`` clang flag.
+
 
 Changes to the PowerPC Target
 -----------------------------
@@ -162,24 +181,33 @@ Optimization:
 Codegen:
 
 * POWER10 support
-* Added PC Relative addressing
-* Added __int128 vector bool support
+
+  * Added PC Relative addressing
+  * Added __int128 vector bool support
+
 * Security enhancement via probe-stack attribute support to protect against stack clash
 * Floating point support enhancements
-* Improved half precision and quad precision support, including GLIBC
-* constrained FP operation support for arithmetic/rounding/max/min
-* cleaning up fast math flags checks in DAGCombine, Legalizer, and Lowering
+
+  * Improved half precision and quad precision support, including GLIBC
+  * constrained FP operation support for arithmetic/rounding/max/min
+  * cleaning up fast math flags checks in DAGCombine, Legalizer, and Lowering
+
 * Performance improvements from instruction exploitation, especially for vector permute on LE
 * Scheduling enhancements
-* Added MacroFusion for POWER8
-* Added post-ra heuristics for POWER9
+
+  * Added MacroFusion for POWER8
+  * Added post-ra heuristics for POWER9
+
 * Target dependent passes tuning
-* Updated LoopStrengthReduce to use instruction number as first priority
-* Enhanced MachineCombiner to expose more ILP
+
+  * Updated LoopStrengthReduce to use instruction number as first priority
+  * Enhanced MachineCombiner to expose more ILP
+
 * Code quality and maintenance enhancements
-* Enabled more machine verification passes
-* Added ability to parse and emit additional extended mnemonics
-* Numerous bug fixes
+
+  * Enabled more machine verification passes
+  * Added ability to parse and emit additional extended mnemonics
+  * Numerous bug fixes
 
 AIX Support Improvements:
 
@@ -241,6 +269,21 @@ Bug fixes:
 * The correct libcall is now emitted for converting a float/double to a 32-bit
   signed or unsigned integer on RV64 targets lacking the F or D extensions.
 
+Changes to the SystemZ Target
+-----------------------------
+
+* Added support for the MemorySanitizer and the LeakSanitizer.
+* Added support for the ``-fstack-clash-protection`` command line option.
+* Enhanced the assembler parser to allow using `%r0` even in an address
+  register context, and to allow specifying registers using plain integer
+  numbers instead of register names everywhere.
+* Fixed wrong code generation violating the platform ABI when passing
+  a C++ class (not struct) type having only a single member of
+  floating-point type.
+* Fixed wrong code generation when using the `vec_store_len_r` or
+  `vec_load_len_r` intrinsics with an immediate length argument of
+  16 or larger.
+* Miscellaneous codegen enhancements, in particular to improve vector code.
 
 Changes to the X86 Target
 -------------------------
