@@ -1,5 +1,7 @@
 #include "ockl_hsa.h"
 
+#include "../../../hostrpc/src/hostrpc.h"
+
 #pragma OPENCL EXTENSION cl_khr_int64_base_atomics : enable
 #pragma OPENCL EXTENSION cl_khr_int64_extended_atomics : enable
 
@@ -301,10 +303,14 @@ hostrpc_invoke( uint service_id,
 // The global variable needs hostcall_buffer is used to detect that
 // host services are required. If this function is not inlined, the symbol
 // will not be present and the runtime can avoid initialising said support.
+#define STR(X) #X
+#define STR2(X) STR(X)
+
 __asm__("; hostcall_invoke: record need for hostcall support\n\t"
-        ".type needs_hostcall_buffer,@object\n\t"
-        ".global needs_hostcall_buffer\n\t"
-        ".comm needs_hostcall_buffer,4":::);
+        "needs_hostcall_buffer = " STR2(HOSTRPC_VRM) "\n\t"
+        :::);
+#undef STR
+#undef STR2
 
   __constant size_t* argptr = (__constant size_t *)__builtin_amdgcn_implicitarg_ptr();
   __global buffer_t * buffer = (__global buffer_t *)argptr[3];
