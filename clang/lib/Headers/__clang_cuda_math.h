@@ -23,12 +23,23 @@
 // functions and __forceinline__ helps inlining these wrappers at -O1.
 #pragma push_macro("__DEVICE__")
 #ifdef __OPENMP_NVPTX__
+
 #if defined(__cplusplus)
 #define __DEVICE__ static constexpr __attribute__((always_inline, nothrow))
 #else
+// Use __BUILD_MATH_BUILTINS_LIB__ to build device specific libm-nvptx.bc
+// for FORTRAN bitcode linking since FORTRAN cannot use c headers.
+#ifdef __BUILD_MATH_BUILTINS_LIB__
+#include <limits.h>
+#define HUGE_VALF (__builtin_huge_valf())
+#define HUGE_VAL (__builtin_huge_val())
+#define __DEVICE__ extern __attribute__((always_inline, nothrow, cold, weak))
+#else
 #define __DEVICE__ static __attribute__((always_inline, nothrow))
 #endif
+#endif // end else defined __cpplusplu
 #else
+// else not openmp, so this is for clang cuda
 #define __DEVICE__ static __device__ __forceinline__
 #endif
 

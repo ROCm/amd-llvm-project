@@ -48,8 +48,8 @@ set(files
   __clang_cuda_runtime_wrapper.h
   __clang_hip_libdevice_declares.h
   __clang_hip_math.h
+  __clang_hip_cmath.h
   __clang_hip_runtime_wrapper.h
-  __clang_openmp_runtime_wrapper.h
   cetintrin.h
   cet.h
   cldemoteintrin.h
@@ -155,7 +155,9 @@ set(openmp_wrapper_files
   openmp_wrappers/complex.h
   openmp_wrappers/complex
   openmp_wrappers/__clang_openmp_device_functions.h
+  openmp_wrappers/complex_cmath.h
   openmp_wrappers/new
+  openmp_wrappers/hip/hip_runtime.h
 )
 
 set(output_dir ${LLVM_LIBRARY_OUTPUT_INTDIR}/clang/${CLANG_VERSION}/include)
@@ -186,7 +188,7 @@ endfunction(clang_generate_header)
 
 
 # Copy header files from the source directory to the build directory
-foreach( f ${files} ${cuda_wrapper_files} ${ppc_wrapper_files} ${openmp_wrapper_files} )
+foreach( f ${files} ${cuda_wrapper_files} ${ppc_wrapper_files} ${openmp_wrapper_files})
   copy_header_to_output_dir(${CMAKE_CURRENT_SOURCE_DIR} ${f})
 endforeach( f )
 

@@ -15,11 +15,47 @@
 #endif
 
 // We require std::math functions in the complex builtins below.
+#ifdef __NVPTX__
 #include <cmath>
-
 #define __CUDA__
+#define __ARCHTYPES__ nvptx,nvptx64
+#endif  //__NVPTX__
+
+#ifdef __AMDGCN__
+#include <__clang_hip_libdevice_declares.h>
+#define __HIP__
+#define __ARCHTYPES__ amdgcn
+#endif  //__AMDGCN__
+
 #include <__clang_cuda_complex_builtins.h>
-#endif
+#endif //__CLANG_OPENMP_COMPLEX__
 
 // Grab the host header too.
 #include_next <complex>
+
+
+#ifdef __cplusplus
+
+// If we are compiling against libc++, the macro _LIBCPP_STD_VER should be set
+// after including <cmath> above. Since the complex header we use is a
+// simplified version of the libc++, we don't need it in this case. If we
+// compile against libstdc++, or any other standard library, we will overload
+// the (hopefully template) functions in the <complex> header with the ones we
+// got from libc++ which decomposes math functions, like `std::sin`, into
+// arithmetic and calls to non-complex functions, all of which we can then
+// handle.
+#ifndef _LIBCPP_STD_VER
+#ifndef _GLIBCXX_COMPLEX
+
+#pragma omp begin declare variant match(                                       \
+    device = {arch(__ARCHTYPES__)},                                            \
+    implementation = {extension(match_any, allow_templates)})
+
+#include <complex_cmath.h>
+
+#pragma omp end declare variant
+
+#endif
+#endif
+
+#endif
