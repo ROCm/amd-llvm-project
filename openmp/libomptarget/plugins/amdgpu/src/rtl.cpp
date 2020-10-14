@@ -355,6 +355,9 @@ public:
 
   atmi_status_t freesignalpool_memcpy(void *dest, const void *src,
                                       size_t size) {
+    hsa_status_t rc = hsa_memory_copy(dest, src, size);
+    return (rc == HSA_STATUS_SUCCESS) ? ATMI_STATUS_SUCCESS : ATMI_STATUS_ERROR;
+    
     hsa_signal_t s = FreeSignalPool.pop();
     if (s.handle == 0) {
       return ATMI_STATUS_ERROR;
