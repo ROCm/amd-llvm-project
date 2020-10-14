@@ -66,7 +66,7 @@ include_directories(
   ${LLVM_MAIN_INCLUDE_DIR}
 )
 
-add_library(omptarget.rtl.hsa SHARED
+add_library(omptarget.rtl.amdgpu SHARED
       impl/atmi.cpp
       impl/atmi_interop_hsa.cpp
       impl/data.cpp
@@ -81,10 +81,10 @@ add_definitions(${OPENMP_SOURCE_DEBUG_MAP})
 
 # Install plugin under the lib destination folder.
 # When we build for debug, OPENMP_LIBDIR_SUFFIX get set to -debug
-install(TARGETS omptarget.rtl.hsa LIBRARY DESTINATION "lib${OPENMP_LIBDIR_SUFFIX}")
+install(TARGETS omptarget.rtl.amdgpu LIBRARY DESTINATION "lib${OPENMP_LIBDIR_SUFFIX}")
 
 target_link_libraries(
-  omptarget.rtl.hsa
+  omptarget.rtl.amdgpu
   PUBLIC
   hostrpc_services
   PRIVATE
