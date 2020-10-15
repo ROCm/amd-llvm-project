@@ -356,7 +356,14 @@ public:
   atmi_status_t freesignalpool_memcpy(void *dest, const void *src,
                                       size_t size) {
     hsa_status_t rc = hsa_memory_copy(dest, src, size);
-    return (rc == HSA_STATUS_SUCCESS) ? ATMI_STATUS_SUCCESS : ATMI_STATUS_ERROR;
+   
+    // hsa_memory_copy sometimes fails in situations where
+    // allocate + copy succeeds. Looks like it might be related to
+    // locking part of a read only segment. Fall back for now.
+    if (rc == HSA_STATUS_SUCCESS)
+      {
+        return ATMI_STATUS_SUCCESS;
+      }
     
     hsa_signal_t s = FreeSignalPool.pop();
     if (s.handle == 0) {
