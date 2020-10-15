@@ -68,13 +68,13 @@ DEVICE int32_t __kmpc_impl_shfl_down_sync(__kmpc_impl_lanemask_t, int32_t var,
 }
 
 static DEVICE SHARED uint32_t L1_Barrier;
-DEVICE void __kmpc_impl_init_shared() {
+
+DEVICE void __kmpc_impl_target_init() {
   // Don't have global ctors, and shared memory is not zero init
   __atomic_store_n(&L1_Barrier, 0u, __ATOMIC_RELEASE);
 }
-DEVICE void __kmpc_impl_named_sync(int barrier, uint32_t num_threads) {
-  // barrier is always L1_BARRIER, ignore it for now. TODO: lambda drop
 
+DEVICE void __kmpc_impl_named_sync(uint32_t num_threads) {
   __atomic_thread_fence(__ATOMIC_ACQUIRE);
 
   uint32_t num_waves = num_threads / WARPSIZE;
@@ -93,31 +93,30 @@ DEVICE void __kmpc_impl_named_sync(int barrier, uint32_t num_threads) {
   // Increment the low 16 bits once, using the lowest active thread.
   uint64_t lowestActiveThread = __kmpc_impl_ffs(__kmpc_impl_activemask()) - 1;
   bool isLowest = GetLaneId() == lowestActiveThread;
-  uint32_t load;
+
   if (isLowest) {
-    load = __atomic_fetch_add(&L1_Barrier, 1, __ATOMIC_RELAXED); // commutative
+    uint32_t load =
+        __atomic_fetch_add(&L1_Barrier, 1, __ATOMIC_RELAXED); // commutative
+
+    // Record the number of times the barrier has been passed
+    uint32_t generation = load & 0xffff0000u;
+
+    if ((load & 0x0000ffffu) == (num_waves - 1)) {
+      // Reached num_waves in low bits so this is the last wave.
+      // Set low bits to zero and increment high bits
+      load += 0x00010000u; // wrap is safe
+      load &= 0xffff0000u; // because bits zeroed second
+
+      // Reset the wave counter and release the waiting waves
+      __atomic_store_n(&L1_Barrier, load, __ATOMIC_RELAXED);
+    } else {
+      // more waves still to go, spin until generation counter changes
+      do {
+        __builtin_amdgcn_s_sleep(0);
+        load = __atomic_load_n(&L1_Barrier, __ATOMIC_RELAXED);
+      } while ((load & 0xffff0000u) == generation);
+    }
   }
-  load = __builtin_amdgcn_readfirstlane(load);
-
-  // Record the number of times the barrier has been passed
-  uint32_t generation = load & 0xffff0000u;
-
-  if ((load & 0x0000ffffu) == (num_waves - 1)) {
-    // Reached num_waves in low bits so this is the last wave.
-    // Set low bits to zero and increment high bits
-    load += 0x00010000u; // wrap is safe
-    load &= 0xffff0000u; // because bits zeroed second
-
-    // Reset the wave counter and release the waiting waves
-    __atomic_store_n(&L1_Barrier, load, __ATOMIC_RELEASE);
-  } else {
-    // more waves still to go, spin until generation counter changes
-    do {
-      __builtin_amdgcn_s_sleep(0);
-      load = __atomic_load_n(&L1_Barrier, __ATOMIC_ACQUIRE);
-    } while ((load & 0xffff0000u) == generation);
-  }
-
   __atomic_thread_fence(__ATOMIC_RELEASE);
 }
 
