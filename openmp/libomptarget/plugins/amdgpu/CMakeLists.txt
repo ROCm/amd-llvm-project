@@ -7,12 +7,11 @@
 #
 ##===----------------------------------------------------------------------===##
 #
-# Build a plugin for an HSA machine if available.
+# Build a plugin for an AMDGPU machine if available.
 #
 ##===----------------------------------------------------------------------===##
 
 ################################################################################
-# Add check for required compiler
 
 # as of rocm-3.7, hsa is installed with cmake packages and kmt is found via hsa
 find_package(hsa-runtime64 QUIET 1.2.0 HINTS ${CMAKE_INSTALL_PREFIX} PATHS /opt/rocm)
@@ -33,12 +32,12 @@ set(LLVM_LIBDIR ${LLVM_INSTALL_PREFIX}/lib)
 
 # Add check for required libraries
 if(NOT LIBOMPTARGET_DEP_LIBELF_FOUND)
-  libomptarget_say("Not building HSA plugin: LIBELF not found")
+  libomptarget_say("Not building AMDGPU plugin: LIBELF not found")
   return()
 endif()
 
 if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64)|(ppc64le)|(aarch64)$" AND CMAKE_SYSTEM_NAME MATCHES "Linux")
-  libomptarget_say("Not building HSA plugin: only support HSA in Linux x86_64, ppc64le , or aarch64 hosts.")
+  libomptarget_say("Not building amdgpu plugin: only support amdgpu in Linux x86_64, ppc64le, or aarch64 hosts.")
   return()
 endif()
 
@@ -47,11 +46,11 @@ if (NOT LLVM_MAIN_INCLUDE_DIR)
   return()
 endif()
 
-libomptarget_say("Building HSA offloading plugin")
+libomptarget_say("Building amdgpu offloading plugin")
 
 ################################################################################
 # Define the suffix for the runtime messaging dumps.
-add_definitions(-DTARGET_NAME=HSA)
+add_definitions(-DTARGET_NAME=AMDGPU)
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "(ppc64le)|(aarch64)$")
    add_definitions(-DLITTLEENDIAN_CPU=1)
 endif()
@@ -95,6 +94,6 @@ target_link_libraries(
   "-Wl,-z,defs"
   )
 
-# Report to the parent scope that we are building a plugin for hsa
+# Report to the parent scope that we are building a plugin for amdgpu
 set(LIBOMPTARGET_SYSTEM_TARGETS "${LIBOMPTARGET_SYSTEM_TARGETS} amdgcn-amd-amdhsa" PARENT_SCOPE)
 

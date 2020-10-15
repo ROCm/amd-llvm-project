@@ -91,7 +91,7 @@ static int DebugLevel = 0;
 #endif
 
 #include "../../common/elf_common.c"
-#include "../../amdgpu/impl/elf_amd.h"
+#include "../impl/elf_amd.h"
 
 
 /// Keep entries table per device
