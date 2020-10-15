@@ -27,7 +27,6 @@ std::mutex TargetOffloadMtx;
 
 ////////////////////////////////////////////////////////////////////////////////
 /// manage the success or failure of a target construct
-
 static void HandleDefaultTargetOffload() {
   TargetOffloadMtx.lock();
   if (TargetOffloadPolicy == tgt_default) {
