@@ -574,6 +574,9 @@ __DEVICE__
 float sqrtf(float __x) { return __ocml_sqrt_f32(__x); }
 
 __DEVICE__
+float sqrtfi(int __x) { return __ocml_rsqrt_f32((float) __x); }
+
+__DEVICE__
 float tanf(float __x) { return __ocml_tan_f32(__x); }
 
 __DEVICE__
@@ -1135,6 +1138,9 @@ double sinpi(double __x) { return __ocml_sinpi_f64(__x); }
 
 __DEVICE__
 double sqrt(double __x) { return __ocml_sqrt_f64(__x); }
+
+__DEVICE__
+double sqrti(int __x) { return __ocml_sqrt_f64((double) __x); }
 
 __DEVICE__
 double tan(double __x) { return __ocml_tan_f64(__x); }
