@@ -354,10 +354,10 @@ public:
   static const int Default_WG_Size =
       llvm::omp::AMDGPUGpuGridValues[llvm::omp::GVIDX::GV_Default_WG_Size];
 
-  using MemcpyFunc = std::function<atmi_status_t (hsa_signal_t,
-                                                  void *,
-                                                  const void *,
-                                                  size_t size)>;
+  using MemcpyFunc = atmi_status_t (hsa_signal_t,
+                                    void *,
+                                    const void *,
+                                    size_t size);
   atmi_status_t freesignalpool_memcpy(void *dest, const void *src,
                                       size_t size, MemcpyFunc Func) {
     hsa_signal_t s = FreeSignalPool.pop();
