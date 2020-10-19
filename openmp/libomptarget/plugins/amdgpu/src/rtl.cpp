@@ -28,7 +28,6 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
-#include <functional>
 
 // Header from ATMI interface
 #include "atmi_interop_hsa.h"
