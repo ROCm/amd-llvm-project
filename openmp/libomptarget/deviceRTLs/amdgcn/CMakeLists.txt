@@ -76,7 +76,6 @@ set(hip_sources
   ${CMAKE_CURRENT_SOURCE_DIR}/src/amdgcn_access_dimensions.hip
   ${CMAKE_CURRENT_SOURCE_DIR}/src/amdgcn_libcall.hip
   ${CMAKE_CURRENT_SOURCE_DIR}/src/amdgcn_locks.hip
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/amdgcn_reduction.hip
   ${CMAKE_CURRENT_SOURCE_DIR}/src/amdgcn_smid.hip
   ${CMAKE_CURRENT_SOURCE_DIR}/src/target_impl.hip
   ${devicertl_base_directory}/common/src/cancel.cu
@@ -93,8 +92,6 @@ set(hip_sources
   ${devicertl_base_directory}/common/src/task.cu
   ${devicertl_base_directory}/common/src/ompd-specific.cu)
 
-set(llvm_sources
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/atomic_inc.ll)
 set(ocl_sources
   ${CMAKE_CURRENT_SOURCE_DIR}/src/hostrpc_invoke.cl)
   
@@ -215,7 +212,6 @@ foreach(mcpu ${mcpus})
   set(bc_files)
   add_cuda_bc_library(${hip_sources})
   add_ocl_bc_library(${CMAKE_CURRENT_SOURCE_DIR} ${ocl_sources})
-  list(APPEND bc_files ${llvm_sources})
 
   set(bc_libname lib${libname}-${mcpu}.bc)
   add_custom_command(
