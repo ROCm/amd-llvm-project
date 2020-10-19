@@ -129,22 +129,6 @@ DEVICE unsigned GetLaneId() {
   return __builtin_amdgcn_mbcnt_hi(~0u, __builtin_amdgcn_mbcnt_lo(~0u, 0u));
 }
 
-DEVICE bool __kmpc_impl_is_first_active_thread() {
-  __kmpc_impl_lanemask_t Mask = __kmpc_impl_activemask();
-  unsigned tid = GetThreadIdInBlock();
-  unsigned laneid = (tid & 0X3F);
-  int64_t Sh;
-  unsigned Shnum;
-  if (laneid < 32) {
-    Mask = Mask << 32;
-    Shnum = 32 - laneid;
-  } else {
-    Shnum = 64 - laneid;
-  }
-  Sh = Mask << Shnum;
-  return (Sh == (unsigned long long)0);
-}
-
 // global_allocate is hostrpc service to return pointer to device memory
 // In the future, we will implement a heap allocation and minimize
 // host service calls. 
