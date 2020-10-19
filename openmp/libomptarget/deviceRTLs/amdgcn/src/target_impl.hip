@@ -11,7 +11,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "target_impl.h"
-#include "amdgcn_interface.h"
 
 // Implementations initially derived from hcc
 
@@ -119,6 +118,9 @@ DEVICE void __kmpc_impl_named_sync(uint32_t num_threads) {
   }
   __atomic_thread_fence(__ATOMIC_RELEASE);
 }
+
+EXTERN uint32_t __kmpc_amd_grid_dim_x();
+EXTERN uint32_t __kmpc_amd_workgroup_dim_x();
 
 DEVICE int GetNumberOfBlocksInKernel() { return __kmpc_amd_grid_dim_x(); }
 DEVICE int GetNumberOfThreadsInBlock() { return __kmpc_amd_workgroup_dim_x(); }
