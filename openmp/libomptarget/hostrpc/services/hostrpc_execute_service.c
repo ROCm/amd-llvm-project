@@ -215,6 +215,31 @@ static int local_vector_product_zeros(int N, int *A, int *B, int *C) {
   return zeros;
 }
 
+static inline atmi_status_t atmi_memcpy_no_signal(void *dest, const void *src,
+                                                  size_t size, bool host2Device) {
+  hsa_signal_t sig;
+  hsa_status_t err = hsa_signal_create(0, 0, NULL, &sig);
+  if (err != HSA_STATUS_SUCCESS) {
+    return ATMI_STATUS_ERROR;
+  }
+
+  atmi_status_t r;
+  if (host2Device)
+    r = atmi_memcpy_h2d(sig, dest, src, size);
+  else
+    r = atmi_memcpy_d2h(sig, dest, src, size);
+
+  hsa_status_t rc = hsa_signal_destroy(sig);
+
+  if (r != ATMI_STATUS_SUCCESS) {
+    return r;
+  }
+  if (rc != HSA_STATUS_SUCCESS) {
+    return ATMI_STATUS_ERROR;
+  }
+
+  return ATMI_STATUS_SUCCESS;
+}
 
 // This is the service for the demo of vector_product_zeros
 static void hostrpc_handler_SERVICE_DEMO(uint64_t *payload) {
@@ -227,11 +252,11 @@ static void hostrpc_handler_SERVICE_DEMO(uint64_t *payload) {
   int *A = (int *)malloc(N * sizeof(int));
   int *B = (int *)malloc(N * sizeof(int));
   int *C = (int *)malloc(N * sizeof(int));
-  copyerr = atmi_memcpy_no_signal(A, A_D, N * sizeof(int));
-  copyerr = atmi_memcpy_no_signal(B, B_D, N * sizeof(int));
+  copyerr = atmi_memcpy_no_signal(A, A_D, N * sizeof(int), false);
+  copyerr = atmi_memcpy_no_signal(B, B_D, N * sizeof(int), false);
 
   int num_zeros = local_vector_product_zeros(N, A, B, C);
-  copyerr = atmi_memcpy_no_signal(C_D, C, N * sizeof(int));
+  copyerr = atmi_memcpy_no_signal(C_D, C, N * sizeof(int), true);
   payload[0] = (uint64_t)copyerr;
   payload[1] = (uint64_t)num_zeros;
 }
