@@ -119,11 +119,33 @@ DEVICE void __kmpc_impl_named_sync(uint32_t num_threads) {
   __atomic_thread_fence(__ATOMIC_RELEASE);
 }
 
-EXTERN uint32_t __kmpc_amd_grid_dim_x();
-EXTERN uint32_t __kmpc_amd_workgroup_dim_x();
+namespace {
+DEVICE uint32_t grid_size_x() {
+  size_t grid_size_x_offset = 96; // In bits, from AQL kernel dispatch format
+  return *(uint32_t *)((char *)__builtin_amdgcn_dispatch_ptr() +
+                       grid_size_x_offset / 8);
+}
 
-DEVICE int GetNumberOfBlocksInKernel() { return __kmpc_amd_grid_dim_x(); }
-DEVICE int GetNumberOfThreadsInBlock() { return __kmpc_amd_workgroup_dim_x(); }
+DEVICE uint32_t get_grid_dim(uint32_t n, uint16_t d) {
+  uint32_t q = n / d;
+  return q + (n > q * d);
+}
+DEVICE uint32_t get_workgroup_dim(uint32_t group_id, uint32_t grid_size,
+                                  uint16_t group_size) {
+  uint32_t r = grid_size - group_id * group_size;
+  return (r < group_size) ? r : group_size;
+}
+} // namespace
+
+DEVICE int GetNumberOfBlocksInKernel() {
+  return get_grid_dim(grid_size_x(), __builtin_amdgcn_workgroup_size_x());
+}
+
+DEVICE int GetNumberOfThreadsInBlock() {
+  return get_workgroup_dim(__builtin_amdgcn_workgroup_id_x(), grid_size_x(),
+                           __builtin_amdgcn_workgroup_size_x());
+}
+
 DEVICE unsigned GetWarpId() { return GetThreadIdInBlock() / WARPSIZE; }
 DEVICE unsigned GetLaneId() {
   return __builtin_amdgcn_mbcnt_hi(~0u, __builtin_amdgcn_mbcnt_lo(~0u, 0u));
