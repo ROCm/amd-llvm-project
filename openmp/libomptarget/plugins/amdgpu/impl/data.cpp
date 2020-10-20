@@ -76,7 +76,7 @@ ATLProcessor &get_processor_by_mem_place(atmi_mem_place_t place) {
   }
 }
 
-static hsa_agent_t get_mem_agent(atmi_mem_place_t place) {
+hsa_agent_t get_mem_agent(atmi_mem_place_t place) {
   return get_processor_by_mem_place(place).agent();
 }
 

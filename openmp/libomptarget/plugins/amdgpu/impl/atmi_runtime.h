@@ -167,8 +167,8 @@ atmi_status_t atmi_memcpy_d2h(hsa_signal_t sig,
                               size_t size,
                               hsa_agent_t agent);
 
-
-
+atmi_status_t atmi_memcpy_no_signal(void *dest, const void *src,
+                                    size_t size, bool host2Device);
 /** @} */
 
 #ifdef __cplusplus

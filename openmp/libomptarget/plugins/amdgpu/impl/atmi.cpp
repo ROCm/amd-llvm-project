@@ -10,7 +10,6 @@
 #include <hsa.h>
 #include <hsa_ext_amd.h>
 #include <memory>
-#include <cassert>
 
 /*
  * Initialize/Finalize
@@ -78,6 +77,23 @@ struct atmiFreePtrDeletor {
 atmi_status_t atmi_memcpy_h2d(hsa_signal_t signal, void *deviceDest,
                               const void *hostSrc, size_t size,
                               hsa_agent_t agent) {
+  // TODO: this check is redundant
+  core::ATLData *src_data = core::g_data_map.find(hostSrc);
+  core::ATLData *dest_data = core::g_data_map.find(deviceDest);
+  if (src_data) {
+    fprintf(stderr, "atmi_memcpy_h2d: Source pointer on device\n");
+    abort();
+  }
+  if (!dest_data) {
+    fprintf(stderr, "atmi_memcpy_h2d: Destination pointer not on device\n");
+    abort();
+  }
+  hsa_agent_t checkAgent = core::get_mem_agent(dest_data->place());
+  if (checkAgent.handle != agent.handle) {
+    fprintf(stderr, "atmi_memcpy_d2h: agent does not match");
+    abort();
+  }
+
   hsa_status_t rc = hsa_memory_copy(deviceDest, hostSrc, size);
 
   // hsa_memory_copy sometimes fails in situations where
@@ -86,12 +102,6 @@ atmi_status_t atmi_memcpy_h2d(hsa_signal_t signal, void *deviceDest,
   if (rc == HSA_STATUS_SUCCESS) {
     return ATMI_STATUS_SUCCESS;
   }
-
-  // TODO: this check is redundant
-  core::ATLData *src_data = core::g_data_map.find(hostSrc);
-  core::ATLData *dest_data = core::g_data_map.find(deviceDest);
-  assert(!src_data && "Source pointer on device");
-  assert(dest_data && "Destination pointer not on device");
 
   void *tempHostPtr;
   atmi_mem_place_t CPU = ATMI_MEM_PLACE_CPU_MEM(0, 0, 0);
@@ -113,6 +123,23 @@ atmi_status_t atmi_memcpy_h2d(hsa_signal_t signal, void *deviceDest,
 atmi_status_t atmi_memcpy_d2h(hsa_signal_t signal, void *dest,
                               const void *deviceSrc, size_t size,
                               hsa_agent_t agent) {
+  // TODO: this check is redundant
+  core::ATLData *src_data = core::g_data_map.find(deviceSrc);
+  core::ATLData *dest_data = core::g_data_map.find(dest);
+  if (!src_data) {
+    fprintf(stderr, "atmi_memcpy_d2h: Source pointer not on device\n");
+    abort();
+  }
+  if (dest_data) {
+    fprintf(stderr, "atmi_memcpy_d2h: Destination pointer on device");
+    abort();
+  }
+  hsa_agent_t checkAgent = core::get_mem_agent(src_data->place());
+  if (checkAgent.handle != agent.handle) {
+    fprintf(stderr, "atmi_memcpy_d2h: agent does not match");
+    abort();
+  }
+
   hsa_status_t rc = hsa_memory_copy(dest, deviceSrc, size);
 
   // hsa_memory_copy sometimes fails in situations where
@@ -122,11 +149,6 @@ atmi_status_t atmi_memcpy_d2h(hsa_signal_t signal, void *dest,
     return ATMI_STATUS_SUCCESS;
   }
 
-  // TODO: this check is redundant
-  core::ATLData *src_data = core::g_data_map.find(deviceSrc);
-  core::ATLData *dest_data = core::g_data_map.find(dest);
-  assert(src_data && "Source pointer not on device");
-  assert(!dest_data && "Destination pointer on device");
 
   void *tempHostPtr;
   atmi_mem_place_t CPU = ATMI_MEM_PLACE_CPU_MEM(0, 0, 0);

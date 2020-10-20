@@ -869,7 +869,7 @@ int get_symbol_info_without_loading(Elf *elf, char *base, const char *symname,
 
   Elf64_Shdr *section_hash = find_only_SHT_HASH(elf);
   if (!section_hash) {
-    return 1;
+     return 1;
   }
 
   const Elf64_Sym *sym = elf_lookup(elf, base, section_hash, symname);
@@ -1833,4 +1833,33 @@ int32_t __tgt_rtl_synchronize(int32_t device_id,
     finiAsyncInfoPtr(async_info_ptr);
   }
   return OFFLOAD_SUCCESS;
+}
+
+// This method is only used by hostrpc demo
+atmi_status_t atmi_memcpy_no_signal(void *dest, const void *src,
+                                    size_t size, bool host2Device) {
+  hsa_signal_t sig;
+  hsa_status_t err = hsa_signal_create(0, 0, NULL, &sig);
+  if (err != HSA_STATUS_SUCCESS) {
+    return ATMI_STATUS_ERROR;
+  }
+
+  const int deviceId = 0;
+  hsa_agent_t agent = DeviceInfo.HSAAgents[deviceId];
+  atmi_status_t r;
+  if (host2Device)
+    r = atmi_memcpy_h2d(sig, dest, src, size, agent);
+  else
+    r = atmi_memcpy_d2h(sig, dest, src, size, agent);
+
+  hsa_status_t rc = hsa_signal_destroy(sig);
+
+  if (r != ATMI_STATUS_SUCCESS) {
+    return r;
+  }
+  if (rc != HSA_STATUS_SUCCESS) {
+    return ATMI_STATUS_ERROR;
+  }
+
+  return ATMI_STATUS_SUCCESS;
 }
