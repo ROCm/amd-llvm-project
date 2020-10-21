@@ -215,32 +215,6 @@ static int local_vector_product_zeros(int N, int *A, int *B, int *C) {
   return zeros;
 }
 
-static inline atmi_status_t atmi_memcpy_no_signal(void *dest, const void *src,
-                                                  size_t size, bool host2Device) {
-  hsa_signal_t sig;
-  hsa_status_t err = hsa_signal_create(0, 0, NULL, &sig);
-  if (err != HSA_STATUS_SUCCESS) {
-    return ATMI_STATUS_ERROR;
-  }
-
-  atmi_status_t r;
-  if (host2Device)
-    r = atmi_memcpy_h2d(sig, dest, src, size);
-  else
-    r = atmi_memcpy_d2h(sig, dest, src, size);
-
-  hsa_status_t rc = hsa_signal_destroy(sig);
-
-  if (r != ATMI_STATUS_SUCCESS) {
-    return r;
-  }
-  if (rc != HSA_STATUS_SUCCESS) {
-    return ATMI_STATUS_ERROR;
-  }
-
-  return ATMI_STATUS_SUCCESS;
-}
-
 // This is the service for the demo of vector_product_zeros
 static void hostrpc_handler_SERVICE_DEMO(uint64_t *payload) {
   atmi_status_t copyerr;
