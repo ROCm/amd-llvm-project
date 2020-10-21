@@ -93,7 +93,6 @@ static int DebugLevel = 0;
 #include "../../common/elf_common.c"
 #include "../impl/elf_amd.h"
 
-
 /// Keep entries table per device
 struct FuncOrGblEntryTy {
   __tgt_target_table Table;
@@ -353,14 +352,10 @@ public:
   static const int Default_WG_Size =
       llvm::omp::AMDGPUGpuGridValues[llvm::omp::GVIDX::GV_Default_WG_Size];
 
-  using MemcpyFunc = atmi_status_t (hsa_signal_t,
-                                    void *,
-                                    const void *,
-                                    size_t size,
-                                    hsa_agent_t);
-  atmi_status_t freesignalpool_memcpy(void *dest, const void *src,
-                                      size_t size, MemcpyFunc Func,
-                                      int32_t deviceId) {
+  using MemcpyFunc = atmi_status_t (*)(hsa_signal_t, void *, const void *,
+                                       size_t size, hsa_agent_t);
+  atmi_status_t freesignalpool_memcpy(void *dest, const void *src, size_t size,
+                                      MemcpyFunc Func, int32_t deviceId) {
     hsa_agent_t agent = HSAAgents[deviceId];
     hsa_signal_t s = FreeSignalPool.pop();
     if (s.handle == 0) {
@@ -577,7 +572,8 @@ int32_t dataRetrieve(int32_t DeviceId, void *HstPtr, void *TgtPtr, int64_t Size,
      (long long unsigned)(Elf64_Addr)TgtPtr,
      (long long unsigned)(Elf64_Addr)HstPtr);
 
-  err = DeviceInfo.freesignalpool_memcpy_d2h(HstPtr, TgtPtr, (size_t)Size, DeviceId);
+  err = DeviceInfo.freesignalpool_memcpy_d2h(HstPtr, TgtPtr, (size_t)Size,
+                                             DeviceId);
 
   if (err != ATMI_STATUS_SUCCESS) {
     DP("Error when copying data from device to host. Pointers: "
@@ -603,7 +599,8 @@ int32_t dataSubmit(int32_t DeviceId, void *TgtPtr, void *HstPtr, int64_t Size,
   DP("Submit data %ld bytes, (hst:%016llx) -> (tgt:%016llx).\n", Size,
      (long long unsigned)(Elf64_Addr)HstPtr,
      (long long unsigned)(Elf64_Addr)TgtPtr);
-  err = DeviceInfo.freesignalpool_memcpy_h2d(TgtPtr, HstPtr, (size_t)Size, DeviceId);
+  err = DeviceInfo.freesignalpool_memcpy_h2d(TgtPtr, HstPtr, (size_t)Size,
+                                             DeviceId);
   if (err != ATMI_STATUS_SUCCESS) {
     DP("Error when copying data from host to device. Pointers: "
        "host = 0x%016lx, device = 0x%016lx, size = %lld\n",
@@ -677,7 +674,7 @@ int32_t __tgt_rtl_init_device(int device_id) {
 
   char GetInfoName[64]; // 64 max size returned by get info
   err = hsa_agent_get_info(agent, (hsa_agent_info_t)HSA_AGENT_INFO_NAME,
-                          (void *) GetInfoName);
+                           (void *)GetInfoName);
   if (err)
     DeviceInfo.GPUName[device_id] = "--unknown gpu--";
   else {
@@ -686,7 +683,7 @@ int32_t __tgt_rtl_init_device(int device_id) {
   if (print_kernel_trace > 1)
     fprintf(stderr, "Device#%-2d CU's: %2d %s\n", device_id,
             DeviceInfo.ComputeUnits[device_id],
-	    DeviceInfo.GPUName[device_id].c_str());
+            DeviceInfo.GPUName[device_id].c_str());
 
   // Query attributes to determine number of threads/block and blocks/grid.
   uint16_t workgroup_max_dim[3];
@@ -869,7 +866,7 @@ int get_symbol_info_without_loading(Elf *elf, char *base, const char *symname,
 
   Elf64_Shdr *section_hash = find_only_SHT_HASH(elf);
   if (!section_hash) {
-     return 1;
+    return 1;
   }
 
   const Elf64_Sym *sym = elf_lookup(elf, base, section_hash, symname);
@@ -1017,7 +1014,7 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
               "Possible gpu arch mismatch: device:%s, image:%s please check"
               " compiler flag: -march=<gpu>\n",
               DeviceInfo.GPUName[device_id].c_str(),
-	      get_elf_mach_gfx_name(image));
+              get_elf_mach_gfx_name(image));
       return NULL;
     }
   }
@@ -1067,7 +1064,8 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
     }
 
     // write ptr to device memory so it can be used by later kernels
-    err = DeviceInfo.freesignalpool_memcpy_h2d(state_ptr, &ptr, sizeof(void *), device_id);
+    err = DeviceInfo.freesignalpool_memcpy_h2d(state_ptr, &ptr, sizeof(void *),
+                                               device_id);
     if (err != ATMI_STATUS_SUCCESS) {
       fprintf(stderr, "memcpy install of state_ptr failed\n");
       return NULL;
@@ -1565,8 +1563,8 @@ static void *AllocateNestedParallelCallMemory(int MaxParLevel, int NumGroups,
   void *TgtPtr = NULL;
   atmi_status_t err =
       atmi_malloc(&TgtPtr, NestedMemSize, get_gpu_mem_place(device_id));
-  err =
-      DeviceInfo.freesignalpool_memcpy_h2d(CallStackAddr, &TgtPtr, sizeof(void *), device_id);
+  err = DeviceInfo.freesignalpool_memcpy_h2d(CallStackAddr, &TgtPtr,
+                                             sizeof(void *), device_id);
   if (print_kernel_trace > 2)
     fprintf(stderr, "CallSck %lx TgtPtr %lx *TgtPtr %lx \n",
             (long)CallStackAddr, (long)&TgtPtr, (long)TgtPtr);
@@ -1836,8 +1834,8 @@ int32_t __tgt_rtl_synchronize(int32_t device_id,
 }
 
 // This method is only used by hostrpc demo
-atmi_status_t atmi_memcpy_no_signal(void *dest, const void *src,
-                                    size_t size, bool host2Device) {
+atmi_status_t atmi_memcpy_no_signal(void *dest, const void *src, size_t size,
+                                    bool host2Device) {
   hsa_signal_t sig;
   hsa_status_t err = hsa_signal_create(0, 0, NULL, &sig);
   if (err != HSA_STATUS_SUCCESS) {
