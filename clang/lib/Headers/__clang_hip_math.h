@@ -207,6 +207,9 @@ __DEVICE__
 float ceilf(float __x) { return __ocml_ceil_f32(__x); }
 
 __DEVICE__
+float ceilfi(int __x) { return __ocml_ceil_f32((float) __x); }
+
+__DEVICE__
 float copysignf(float __x, float __y) { return __ocml_copysign_f32(__x, __y); }
 
 __DEVICE__
