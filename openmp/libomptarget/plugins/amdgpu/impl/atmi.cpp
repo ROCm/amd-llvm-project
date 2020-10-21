@@ -4,7 +4,6 @@
  * This file is distributed under the MIT License. See LICENSE.txt for details.
  *===------------------------------------------------------------------------*/
 #include "rt.h"
-#include "data.h"
 #include "atmi_runtime.h"
 #include "internal.h"
 #include <hsa.h>
@@ -77,23 +76,6 @@ struct atmiFreePtrDeletor {
 atmi_status_t atmi_memcpy_h2d(hsa_signal_t signal, void *deviceDest,
                               const void *hostSrc, size_t size,
                               hsa_agent_t agent) {
-  // TODO: this check is redundant
-  core::ATLData *src_data = core::g_data_map.find(hostSrc);
-  core::ATLData *dest_data = core::g_data_map.find(deviceDest);
-  if (src_data) {
-    fprintf(stderr, "atmi_memcpy_h2d: Source pointer on device\n");
-    abort();
-  }
-  if (!dest_data) {
-    fprintf(stderr, "atmi_memcpy_h2d: Destination pointer not on device\n");
-    abort();
-  }
-  hsa_agent_t checkAgent = core::get_mem_agent(dest_data->place());
-  if (checkAgent.handle != agent.handle) {
-    fprintf(stderr, "atmi_memcpy_d2h: agent does not match");
-    abort();
-  }
-
   hsa_status_t rc = hsa_memory_copy(deviceDest, hostSrc, size);
 
   // hsa_memory_copy sometimes fails in situations where
@@ -123,23 +105,6 @@ atmi_status_t atmi_memcpy_h2d(hsa_signal_t signal, void *deviceDest,
 atmi_status_t atmi_memcpy_d2h(hsa_signal_t signal, void *dest,
                               const void *deviceSrc, size_t size,
                               hsa_agent_t agent) {
-  // TODO: this check is redundant
-  core::ATLData *src_data = core::g_data_map.find(deviceSrc);
-  core::ATLData *dest_data = core::g_data_map.find(dest);
-  if (!src_data) {
-    fprintf(stderr, "atmi_memcpy_d2h: Source pointer not on device\n");
-    abort();
-  }
-  if (dest_data) {
-    fprintf(stderr, "atmi_memcpy_d2h: Destination pointer on device");
-    abort();
-  }
-  hsa_agent_t checkAgent = core::get_mem_agent(src_data->place());
-  if (checkAgent.handle != agent.handle) {
-    fprintf(stderr, "atmi_memcpy_d2h: agent does not match");
-    abort();
-  }
-
   hsa_status_t rc = hsa_memory_copy(dest, deviceSrc, size);
 
   // hsa_memory_copy sometimes fails in situations where
