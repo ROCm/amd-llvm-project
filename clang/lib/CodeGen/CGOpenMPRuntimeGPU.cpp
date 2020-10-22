@@ -433,11 +433,11 @@ class CheckVarsEscapingDeclContext final
     assert(!GlobalizedRD &&
            "Record for globalized variables is built already.");
     ArrayRef<const ValueDecl *> EscapedDeclsForParallel, EscapedDeclsForTeams;
+    int WarpSize = CGF.getTarget().getGridValue(GVIDX::GV_Warp_Size);
     if (IsInTTDRegion)
       EscapedDeclsForTeams = EscapedDecls.getArrayRef();
     else
       EscapedDeclsForParallel = EscapedDecls.getArrayRef();
-    int WarpSize = CGF.getTarget().getGridValue(GVIDX::GV_Warp_Size);
     GlobalizedRD = ::buildRecordForGlobalizedVars(
         CGF.getContext(), EscapedDeclsForParallel, EscapedDeclsForTeams,
         MappedDeclsFields, WarpSize);
@@ -690,9 +690,9 @@ static llvm::Value *getThreadLimit(CodeGenFunction &CGF,
   CGBuilderTy &Bld = CGF.Builder;
   auto &RT = static_cast<CGOpenMPRuntimeGPU &>(CGF.CGM.getOpenMPRuntime());
   return IsInSPMDExecutionMode
-             ? getNVPTXNumThreads(CGF)
-             : Bld.CreateNUWSub(getNVPTXNumThreads(CGF), RT.getGPUWarpSize(CGF),
-                                "thread_limit");
+             ? RT.getGPUNumThreads(CGF)
+             : Bld.CreateNUWSub(RT.getGPUNumThreads(CGF),
+                                RT.getGPUWarpSize(CGF), "thread_limit");
 }
 
 /// Get the thread id of the OMP master thread.
@@ -704,9 +704,8 @@ static llvm::Value *getThreadLimit(CodeGenFunction &CGF,
 ///      If NumThreads is 1024, master id is 992.
 static llvm::Value *getMasterThreadID(CodeGenFunction &CGF) {
   CGBuilderTy &Bld = CGF.Builder;
-  llvm::Value *NumThreads = getNVPTXNumThreads(CGF);
   auto &RT = static_cast<CGOpenMPRuntimeGPU &>(CGF.CGM.getOpenMPRuntime());
-
+  llvm::Value *NumThreads = RT.getGPUNumThreads(CGF);
   // We assume that the warp size is a power of 2.
   llvm::Value *Mask = Bld.CreateNUWSub(RT.getGPUWarpSize(CGF), Bld.getInt32(1));
 
@@ -1396,8 +1395,9 @@ void CGOpenMPRuntimeGPU::emitNonSPMDEntryHeader(CodeGenFunction &CGF,
   llvm::BasicBlock *MasterBB = CGF.createBasicBlock(".master");
   EST.ExitBB = CGF.createBasicBlock(".exit");
 
+  auto &RT = static_cast<CGOpenMPRuntimeGPU &>(CGF.CGM.getOpenMPRuntime());
   llvm::Value *IsWorker =
-      Bld.CreateICmpULT(getNVPTXThreadID(CGF), getThreadLimit(CGF));
+      Bld.CreateICmpULT(RT.getGPUThreadID(CGF), getThreadLimit(CGF));
   Bld.CreateCondBr(IsWorker, WorkerBB, MasterCheckBB);
 
   CGF.EmitBlock(WorkerBB);
@@ -1406,7 +1406,7 @@ void CGOpenMPRuntimeGPU::emitNonSPMDEntryHeader(CodeGenFunction &CGF,
 
   CGF.EmitBlock(MasterCheckBB);
   llvm::Value *IsMaster =
-      Bld.CreateICmpEQ(getNVPTXThreadID(CGF), getMasterThreadID(CGF));
+      Bld.CreateICmpEQ(RT.getGPUThreadID(CGF), getMasterThreadID(CGF));
   Bld.CreateCondBr(IsMaster, MasterBB, EST.ExitBB);
 
   CGF.EmitBlock(MasterBB);
@@ -2320,12 +2320,12 @@ llvm::Function *CGOpenMPRuntimeGPU::emitTeamsOutlinedFunction(
   const RecordDecl *GlobalizedRD = nullptr;
   llvm::SmallVector<const ValueDecl *, 4> LastPrivatesReductions;
   llvm::SmallDenseMap<const ValueDecl *, const FieldDecl *> MappedDeclsFields;
+    int WarpSize = CGM.getTarget().getGridValue(GVIDX::GV_Warp_Size);
   // Globalize team reductions variable unconditionally in all modes.
   if (getExecutionMode() != CGOpenMPRuntimeGPU::EM_SPMD)
     getTeamsReductionVars(CGM.getContext(), D, LastPrivatesReductions);
   if (getExecutionMode() == CGOpenMPRuntimeGPU::EM_SPMD) {
     getDistributeLastprivateVars(CGM.getContext(), D, LastPrivatesReductions);
-    int WarpSize = CGM.getTarget().getGridValue(GVIDX::GV_Warp_Size);
     if (!LastPrivatesReductions.empty()) {
       GlobalizedRD = ::buildRecordForGlobalizedVars(
           CGM.getContext(), llvm::None, LastPrivatesReductions,
@@ -3061,14 +3061,16 @@ void CGOpenMPRuntimeGPU::emitCriticalRegion(
   llvm::BasicBlock *BodyBB = CGF.createBasicBlock("omp.critical.body");
   llvm::BasicBlock *ExitBB = CGF.createBasicBlock("omp.critical.exit");
 
+  auto &RT = static_cast<CGOpenMPRuntimeGPU &>(CGF.CGM.getOpenMPRuntime());
+
   // Get the mask of active threads in the warp.
   llvm::Value *Mask = CGF.EmitRuntimeCall(
       createNVPTXRuntimeFunction(OMPRTL_NVPTX__kmpc_warp_active_thread_mask));
   // Fetch team-local id of the thread.
-  llvm::Value *ThreadID = getNVPTXThreadID(CGF);
+  llvm::Value *ThreadID = RT.getGPUThreadID(CGF);
 
   // Get the width of the team.
-  llvm::Value *TeamWidth = getNVPTXNumThreads(CGF);
+  llvm::Value *TeamWidth = RT.getGPUNumThreads(CGF);
 
   // Initialize the counter variable for the loop.
   QualType Int32Ty =
@@ -3535,8 +3537,8 @@ static llvm::Value *emitInterWarpCopyFunction(CodeGenModule &CGM,
       "__openmp_nvptx_data_transfer_temporary_storage";
   llvm::GlobalVariable *TransferMedium =
       M.getGlobalVariable(TransferMediumName);
+  int WarpSize = CGM.getTarget().getGridValue(GVIDX::GV_Warp_Size);
   if (!TransferMedium) {
-    int WarpSize = CGM.getTarget().getGridValue(GVIDX::GV_Warp_Size);
     auto *Ty = llvm::ArrayType::get(CGM.Int32Ty, WarpSize);
     unsigned SharedAddressSpace = C.getTargetAddressSpace(LangAS::cuda_shared);
     // amdgcn cannot zeroinitialize LDS
@@ -3558,8 +3560,9 @@ static llvm::Value *emitInterWarpCopyFunction(CodeGenModule &CGM,
     CGM.addCompilerUsedGlobal(TransferMedium);
   }
 
+  auto &RT = static_cast<CGOpenMPRuntimeGPU &>(CGF.CGM.getOpenMPRuntime());
   // Get the CUDA thread id of the current OpenMP thread on the GPU.
-  llvm::Value *ThreadID = getNVPTXThreadID(CGF);
+  llvm::Value *ThreadID = RT.getGPUThreadID(CGF);
   // nvptx_lane_id = nvptx_id % warpsize
   llvm::Value *LaneID = getNVPTXLaneID(CGF);
   // nvptx_warp_id = nvptx_id / warpsize
@@ -5182,9 +5185,11 @@ void CGOpenMPRuntimeGPU::getDefaultDistScheduleAndChunk(
     CodeGenFunction &CGF, const OMPLoopDirective &S,
     OpenMPDistScheduleClauseKind &ScheduleKind,
     llvm::Value *&Chunk) const {
+  auto &RT = static_cast<CGOpenMPRuntimeGPU &>(CGF.CGM.getOpenMPRuntime());
   if (getExecutionMode() == CGOpenMPRuntimeGPU::EM_SPMD) {
     ScheduleKind = OMPC_DIST_SCHEDULE_static;
-    Chunk = CGF.EmitScalarConversion(getNVPTXNumThreads(CGF),
+    Chunk = CGF.EmitScalarConversion(
+        RT.getGPUNumThreads(CGF),
         CGF.getContext().getIntTypeForBitwidth(32, /*Signed=*/0),
         S.getIterationVariable()->getType(), S.getBeginLoc());
     return;
