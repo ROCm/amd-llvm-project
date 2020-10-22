@@ -1180,8 +1180,7 @@ static void setPropertyWorkGroupSize(CodeGenModule &CGM, StringRef Name,
       (CGM.getTriple().isAMDGCN())
           ? new llvm::GlobalVariable(
                 CGM.getModule(), CGM.Int16Ty, /*isConstant=*/true,
-                llvm::GlobalValue::ExternalLinkage, // FIXME: will
-                                                    // WeakAnyLinkage work?
+                llvm::GlobalValue::WeakAnyLinkage,
                 llvm::ConstantInt::get(CGM.Int16Ty, WGSize),
                 Name + Twine("_wg_size"),
                 /*InsertBefore=*/nullptr, llvm::GlobalVariable::NotThreadLocal,
@@ -1564,8 +1563,7 @@ static void setPropertyExecutionMode(CodeGenModule &CGM, StringRef Name,
       (CGM.getTriple().isAMDGCN())
           ? new llvm::GlobalVariable(
                 CGM.getModule(), CGM.Int8Ty, /*isConstant=*/true,
-                llvm::GlobalValue::ExternalLinkage, // FIXME: will
-                                                    // WeakAnyLinkage work?
+                llvm::GlobalValue::WeakAnyLinkage,
                 llvm::ConstantInt::get(CGM.Int8Ty, Mode ? 0 : 1),
                 Name + Twine("_exec_mode"),
                 /*InsertBefore=*/nullptr, llvm::GlobalVariable::NotThreadLocal,
