@@ -1184,8 +1184,7 @@ static void setPropertyWorkGroupSize(CodeGenModule &CGM, StringRef Name,
                 llvm::ConstantInt::get(CGM.Int16Ty, WGSize),
                 Name + Twine("_wg_size"),
                 /*InsertBefore=*/nullptr, llvm::GlobalVariable::NotThreadLocal,
-                CGM.getContext().getTargetAddressSpace(LangAS::cuda_device),
-                /*isExternallyInitialized*/ false)
+                CGM.getContext().getTargetAddressSpace(LangAS::cuda_device))
           : new llvm::GlobalVariable(
                 CGM.getModule(), CGM.Int16Ty,
                 /*isConstant=*/true, llvm::GlobalValue::WeakAnyLinkage,
@@ -1338,8 +1337,7 @@ void CGOpenMPRuntimeGPU::emitNonSPMDKernel(const OMPExecutableDirective &D,
                   llvm::UndefValue::get(CGM.VoidPtrTy),
                   "_openmp_kernel_static_glob_rd$ptr", /*InsertBefore=*/nullptr,
                   llvm::GlobalValue::NotThreadLocal,
-                  CGM.getContext().getTargetAddressSpace(LangAS::cuda_shared),
-                  /*isExternallyInitialized*/ true)
+                  CGM.getContext().getTargetAddressSpace(LangAS::cuda_shared))
             : new llvm::GlobalVariable(
                   CGM.getModule(), CGM.VoidPtrTy, /*isConstant=*/false,
                   llvm::GlobalValue::InternalLinkage,
@@ -1481,8 +1479,7 @@ void CGOpenMPRuntimeGPU::emitSPMDKernel(const OMPExecutableDirective &D,
                   llvm::UndefValue::get(CGM.VoidPtrTy),
                   "_openmp_kernel_static_glob_rd$ptr", /*InsertBefore=*/nullptr,
                   llvm::GlobalValue::NotThreadLocal,
-                  CGM.getContext().getTargetAddressSpace(LangAS::cuda_shared),
-                  /*isExternallyInitialized*/ true)
+                  CGM.getContext().getTargetAddressSpace(LangAS::cuda_shared))
             : new llvm::GlobalVariable(
                   CGM.getModule(), CGM.VoidPtrTy, /*isConstant=*/false,
                   llvm::GlobalValue::InternalLinkage,
@@ -1567,8 +1564,7 @@ static void setPropertyExecutionMode(CodeGenModule &CGM, StringRef Name,
                 llvm::ConstantInt::get(CGM.Int8Ty, Mode ? 0 : 1),
                 Name + Twine("_exec_mode"),
                 /*InsertBefore=*/nullptr, llvm::GlobalVariable::NotThreadLocal,
-                CGM.getContext().getTargetAddressSpace(LangAS::cuda_device),
-                /*isExternallyInitialized*/ false)
+                CGM.getContext().getTargetAddressSpace(LangAS::cuda_device))
           : new llvm::GlobalVariable(
                 CGM.getModule(), CGM.Int8Ty,
                 /*isConstant=*/true, llvm::GlobalValue::WeakAnyLinkage,
@@ -3526,8 +3522,7 @@ static llvm::Value *emitInterWarpCopyFunction(CodeGenModule &CGM,
                   /*isConstant=*/false, llvm::GlobalVariable::WeakAnyLinkage,
                   llvm::UndefValue::get(Ty), TransferMediumName,
                   /*InsertBefore=*/nullptr,
-                  llvm::GlobalVariable::NotThreadLocal, SharedAddressSpace,
-                  /*isExternallyInitialized*/ true)
+                  llvm::GlobalVariable::NotThreadLocal, SharedAddressSpace)
             : new llvm::GlobalVariable(
                   M, Ty,
                   /*isConstant=*/false, llvm::GlobalVariable::CommonLinkage,
@@ -4911,7 +4906,6 @@ llvm::Function *CGOpenMPRuntimeGPU::createParallelDataSharingWrapper(
         /* insertBefore */ nullptr,
         /* ThreadLocalMode =*/llvm::GlobalVariable::NotThreadLocal,
         CGM.getContext().getTargetAddressSpace(LangAS::cuda_constant));
-    // /*isExternallyInitialized*/ false);
   } else
     Fn->setLinkage(llvm::GlobalValue::InternalLinkage);
 
@@ -5491,8 +5485,7 @@ void CGOpenMPRuntimeGPU::clear() {
                     llvm::UndefValue::get(LLVMStaticTy),
                     "_openmp_shared_static_glob_rd_$_",
                     /*InsertBefore=*/nullptr, llvm::GlobalValue::NotThreadLocal,
-                    C.getTargetAddressSpace(LangAS::cuda_shared),
-                    /*isExternallyInitialized*/ true)
+                    C.getTargetAddressSpace(LangAS::cuda_shared))
               : new llvm::GlobalVariable(
                     CGM.getModule(), LLVMStaticTy,
                     /*isConstant=*/false, llvm::GlobalValue::CommonLinkage,
