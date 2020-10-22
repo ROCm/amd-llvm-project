@@ -659,27 +659,6 @@ static llvm::Value *getNVPTXLaneID(CodeGenFunction &CGF) {
                        "nvptx_lane_id");
 }
 
-/// Get the maximum number of threads in a block of the GPU.
-static llvm::Value *getNVPTXNumThreads(CodeGenFunction &CGF) {
-  CGBuilderTy &Bld = CGF.Builder;
-  llvm::Module *M = &CGF.CGM.getModule();
-  if (CGF.getTarget().getTriple().isAMDGCN()) {
-    const char *n = "__ockl_get_local_size";
-    llvm::Function *F = M->getFunction(n);
-    if (!F) {
-      F = llvm::Function::Create(
-          llvm::FunctionType::get(CGF.Int64Ty, {CGF.Int32Ty}, false),
-          llvm::GlobalVariable::ExternalLinkage, n, M);
-    }
-    return Bld.CreateTrunc(
-        Bld.CreateCall(F, {Bld.getInt32(0)}, "nvptx_num_threads"), CGF.Int32Ty);
-  }
-
-  llvm::Function *F = llvm::Intrinsic::getDeclaration(
-      M, llvm::Intrinsic::nvvm_read_ptx_sreg_ntid_x);
-  return Bld.CreateCall(F, llvm::None, "nvptx_num_threads");
-}
-
 /// Get the value of the thread_limit clause in the teams directive.
 /// For the 'generic' execution mode, the runtime encodes thread_limit in
 /// the launch parameters, always starting thread_limit+warpSize threads per
