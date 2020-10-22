@@ -703,6 +703,21 @@ void Driver::CreateOffloadingDeviceToolChains(Compilation &C,
   // the -fopenmp-targets option.
   if (Arg *OpenMPTargets =
           C.getInputArgs().getLastArg(options::OPT_fopenmp_targets_EQ)) {
+    // Ensure at least one -Xopenm-target exists with a gpu -march
+    if (Arg *XOpenMPTargets =
+            C.getInputArgs().getLastArg(options::OPT_Xopenmp_target_EQ)) {
+      bool has_valid_march = false;
+      for (auto *V : XOpenMPTargets->getValues())
+        if (StringRef(V).startswith("-march="))
+          has_valid_march = true;
+      if (!has_valid_march) {
+        Diag(diag::err_drv_missing_Xopenmptarget_or_march);
+        return;
+      }
+    } else {
+      Diag(diag::err_drv_missing_Xopenmptarget_or_march);
+      return;
+    }
     if (OpenMPTargets->getNumValues()) {
       // We expect that -fopenmp-targets is always used in conjunction with the
       // option -fopenmp specifying a valid runtime with offloading support,
