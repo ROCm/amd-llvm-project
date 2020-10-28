@@ -143,6 +143,10 @@ template <class __T> struct __hip_enable_if<true, __T> { typedef __T type; };
   __DEVICE__                                                                   \
   __retty __func(int __x) { return __func##fi(__x); }
 
+#define __DEF_FUN1L(__retty, __func)                                           \
+  __DEVICE__                                                                   \
+  __retty __func(long __x) { return __func##f((float)__x); }
+
 // Define cmath functions with two float arguments and returns __retty.
 #define __DEF_FUN2(__retty, __func)                                            \
   __DEVICE__                                                                   \
@@ -179,6 +183,7 @@ __DEF_FUN1(float, expm1)
 __DEF_FUN1(float, fabs)
 __DEF_FUN2(float, fdim)
 __DEF_FUN1(float, floor)
+__DEF_FUN1L(float, floor)
 __DEF_FUN1I(float, floor)
 __DEF_FUN2(float, fmax)
 __DEF_FUN2(float, fmin)
