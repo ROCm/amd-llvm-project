@@ -267,6 +267,9 @@ __DEVICE__
 float floorf(float __x) { return __ocml_floor_f32(__x); }
 
 __DEVICE__
+float floorfi(int __x) { return __ocml_floor_f32((float) __x); }
+
+__DEVICE__
 float fmaf(float __x, float __y, float __z) {
   return __ocml_fma_f32(__x, __y, __z);
 }
