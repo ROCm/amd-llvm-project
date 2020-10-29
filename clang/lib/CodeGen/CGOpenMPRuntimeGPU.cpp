@@ -7,7 +7,7 @@
 //===----------------------------------------------------------------------===//
 //
 // This provides a generalized class for OpenMP runtime code generation
-// specialized by GPU targets NVPTX and AMDGCN.
+// specialized by GPU target NVPTX.
 //
 //===----------------------------------------------------------------------===//
 
@@ -1329,13 +1329,22 @@ void CGOpenMPRuntimeGPU::emitNonSPMDKernel(const OMPExecutableDirective &D,
   // Reserve place for the globalized memory.
   GlobalizedRecords.emplace_back();
   if (!KernelStaticGlobalized) {
-    KernelStaticGlobalized = new llvm::GlobalVariable(
-        CGM.getModule(), CGM.VoidPtrTy, /*isConstant=*/false,
-        llvm::GlobalValue::InternalLinkage,
-        llvm::UndefValue::get(CGM.VoidPtrTy),
-        "_openmp_kernel_static_glob_rd$ptr", /*InsertBefore=*/nullptr,
-        llvm::GlobalValue::NotThreadLocal,
-        CGM.getContext().getTargetAddressSpace(LangAS::cuda_shared));
+    KernelStaticGlobalized =
+        (CGM.getTriple().isAMDGCN())
+            ? new llvm::GlobalVariable(
+                  CGM.getModule(), CGM.VoidPtrTy, /*isConstant=*/false,
+                  llvm::GlobalValue::WeakAnyLinkage,
+                  llvm::UndefValue::get(CGM.VoidPtrTy),
+                  "_openmp_kernel_static_glob_rd$ptr", /*InsertBefore=*/nullptr,
+                  llvm::GlobalValue::NotThreadLocal,
+                  CGM.getContext().getTargetAddressSpace(LangAS::cuda_shared))
+            : new llvm::GlobalVariable(
+                  CGM.getModule(), CGM.VoidPtrTy, /*isConstant=*/false,
+                  llvm::GlobalValue::InternalLinkage,
+                  llvm::ConstantPointerNull::get(CGM.VoidPtrTy),
+                  "_openmp_kernel_static_glob_rd$ptr", /*InsertBefore=*/nullptr,
+                  llvm::GlobalValue::NotThreadLocal,
+                  CGM.getContext().getTargetAddressSpace(LangAS::cuda_shared));
   }
   emitTargetOutlinedFunctionHelper(D, ParentName, OutlinedFn, OutlinedFnID,
                                    IsOffloadEntry, CodeGen);
@@ -1462,13 +1471,22 @@ void CGOpenMPRuntimeGPU::emitSPMDKernel(const OMPExecutableDirective &D,
   // Reserve place for the globalized memory.
   GlobalizedRecords.emplace_back();
   if (!KernelStaticGlobalized) {
-    KernelStaticGlobalized = new llvm::GlobalVariable(
-        CGM.getModule(), CGM.VoidPtrTy, /*isConstant=*/false,
-        llvm::GlobalValue::InternalLinkage,
-        llvm::UndefValue::get(CGM.VoidPtrTy),
-        "_openmp_kernel_static_glob_rd$ptr", /*InsertBefore=*/nullptr,
-        llvm::GlobalValue::NotThreadLocal,
-        CGM.getContext().getTargetAddressSpace(LangAS::cuda_shared));
+    KernelStaticGlobalized =
+        (CGM.getTriple().isAMDGCN())
+            ? new llvm::GlobalVariable(
+                  CGM.getModule(), CGM.VoidPtrTy, /*isConstant=*/false,
+                  llvm::GlobalValue::WeakAnyLinkage,
+                  llvm::UndefValue::get(CGM.VoidPtrTy),
+                  "_openmp_kernel_static_glob_rd$ptr", /*InsertBefore=*/nullptr,
+                  llvm::GlobalValue::NotThreadLocal,
+                  CGM.getContext().getTargetAddressSpace(LangAS::cuda_shared))
+            : new llvm::GlobalVariable(
+                  CGM.getModule(), CGM.VoidPtrTy, /*isConstant=*/false,
+                  llvm::GlobalValue::InternalLinkage,
+                  llvm::ConstantPointerNull::get(CGM.VoidPtrTy),
+                  "_openmp_kernel_static_glob_rd$ptr", /*InsertBefore=*/nullptr,
+                  llvm::GlobalValue::NotThreadLocal,
+                  CGM.getContext().getTargetAddressSpace(LangAS::cuda_shared));
   }
   emitTargetOutlinedFunctionHelper(D, ParentName, OutlinedFn, OutlinedFnID,
                                    IsOffloadEntry, CodeGen);
@@ -1539,10 +1557,20 @@ void CGOpenMPRuntimeGPU::emitSPMDEntryFooter(CodeGenFunction &CGF,
 static void setPropertyExecutionMode(CodeGenModule &CGM, StringRef Name,
                                      bool Mode) {
   auto *GVMode =
-      new llvm::GlobalVariable(CGM.getModule(), CGM.Int8Ty, /*isConstant=*/true,
-                               llvm::GlobalValue::WeakAnyLinkage,
-                               llvm::ConstantInt::get(CGM.Int8Ty, Mode ? 0 : 1),
-                               Twine(Name, "_exec_mode"));
+      (CGM.getTriple().isAMDGCN())
+          ? new llvm::GlobalVariable(
+                CGM.getModule(), CGM.Int8Ty, /*isConstant=*/true,
+                llvm::GlobalValue::WeakAnyLinkage,
+                llvm::ConstantInt::get(CGM.Int8Ty, Mode ? 0 : 1),
+                Name + Twine("_exec_mode"),
+                /*InsertBefore=*/nullptr, llvm::GlobalVariable::NotThreadLocal,
+                CGM.getContext().getTargetAddressSpace(LangAS::cuda_device))
+          : new llvm::GlobalVariable(
+                CGM.getModule(), CGM.Int8Ty,
+                /*isConstant=*/true, llvm::GlobalValue::WeakAnyLinkage,
+                llvm::ConstantInt::get(CGM.Int8Ty, Mode ? 0 : 1),
+                Twine(Name, "_exec_mode"));
+
   CGM.addCompilerUsedGlobal(GVMode);
 }
 
@@ -1557,7 +1585,7 @@ void CGOpenMPRuntimeGPU::emitWorkerFunction(WorkerFunctionState &WST) {
 }
 
 void CGOpenMPRuntimeGPU::emitWorkerLoop(CodeGenFunction &CGF,
-                                        WorkerFunctionState &WST) {
+                                          WorkerFunctionState &WST) {
   //
   // The workers enter this loop and wait for parallel work from the master.
   // When the master encounters a parallel region it sets up the work + variable
@@ -2216,7 +2244,6 @@ llvm::Function *CGOpenMPRuntimeGPU::emitParallelOutlinedFunction(
         createParallelDataSharingWrapper(OutlinedFun, D);
     WrapperFunctionsMap[OutlinedFun] = WrapperFun;
   }
-
   return OutlinedFun;
 }
 
@@ -2730,6 +2757,7 @@ void CGOpenMPRuntimeGPU::emitNonSPMDParallelCall(
   Address ZeroAddr = CGF.CreateDefaultAlignTempAlloca(CGF.Int32Ty,
                                                       /*Name=*/".zero.addr");
   CGF.InitTempAlloca(ZeroAddr, CGF.Builder.getInt32(/*C*/ 0));
+
   // ThreadId for serialized parallels is 0.
   Address ThreadIDAddr = ZeroAddr;
   auto &&CodeGen = [this, Fn, CapturedVars, Loc, &ThreadIDAddr](
@@ -2739,7 +2767,11 @@ void CGOpenMPRuntimeGPU::emitNonSPMDParallelCall(
     Address ZeroAddr =
         CGF.CreateDefaultAlignTempAlloca(CGF.Int32Ty,
                                          /*Name=*/".bound.zero.addr");
-    CGF.InitTempAlloca(ZeroAddr, CGF.Builder.getInt32(/*C*/ 0));
+    if (CGM.getTriple().isAMDGCN()) {
+      CGF.Builder.CreateStore(CGF.Builder.getInt32(/*C*/ 0), ZeroAddr);
+    } else {
+      CGF.InitTempAlloca(ZeroAddr, CGF.Builder.getInt32(/*C*/ 0));
+    }
     llvm::SmallVector<llvm::Value *, 16> OutlinedFnArgs;
     OutlinedFnArgs.push_back(ThreadIDAddr.getPointer());
     OutlinedFnArgs.push_back(ZeroAddr.getPointer());
@@ -2913,6 +2945,7 @@ void CGOpenMPRuntimeGPU::emitSPMDParallelCall(
   Address ZeroAddr = CGF.CreateDefaultAlignTempAlloca(CGF.Int32Ty,
                                                       /*Name=*/".zero.addr");
   CGF.InitTempAlloca(ZeroAddr, CGF.Builder.getInt32(/*C*/ 0));
+
   // ThreadId for serialized parallels is 0.
   Address ThreadIDAddr = ZeroAddr;
   auto &&CodeGen = [this, OutlinedFn, CapturedVars, Loc, &ThreadIDAddr](
@@ -3481,11 +3514,21 @@ static llvm::Value *emitInterWarpCopyFunction(CodeGenModule &CGM,
   if (!TransferMedium) {
     auto *Ty = llvm::ArrayType::get(CGM.Int32Ty, WarpSize);
     unsigned SharedAddressSpace = C.getTargetAddressSpace(LangAS::cuda_shared);
-    TransferMedium = new llvm::GlobalVariable(
-        M, Ty, /*isConstant=*/false, llvm::GlobalVariable::WeakAnyLinkage,
-        llvm::UndefValue::get(Ty), TransferMediumName,
-        /*InsertBefore=*/nullptr, llvm::GlobalVariable::NotThreadLocal,
-        SharedAddressSpace);
+    // amdgcn cannot zeroinitialize LDS
+    TransferMedium =
+        (CGM.getTriple().isAMDGCN())
+            ? new llvm::GlobalVariable(
+                  M, Ty,
+                  /*isConstant=*/false, llvm::GlobalVariable::WeakAnyLinkage,
+                  llvm::UndefValue::get(Ty), TransferMediumName,
+                  /*InsertBefore=*/nullptr,
+                  llvm::GlobalVariable::NotThreadLocal, SharedAddressSpace)
+            : new llvm::GlobalVariable(
+                  M, Ty,
+                  /*isConstant=*/false, llvm::GlobalVariable::CommonLinkage,
+                  llvm::Constant::getNullValue(Ty), TransferMediumName,
+                  /*InsertBefore=*/nullptr,
+                  llvm::GlobalVariable::NotThreadLocal, SharedAddressSpace);
     CGM.addCompilerUsedGlobal(TransferMedium);
   }
 
@@ -4722,7 +4765,7 @@ void CGOpenMPRuntimeGPU::emitReduction(
 
 const VarDecl *
 CGOpenMPRuntimeGPU::translateParameter(const FieldDecl *FD,
-                                       const VarDecl *NativeParam) const {
+                                         const VarDecl *NativeParam) const {
   if (!NativeParam->getType()->isReferenceType())
     return NativeParam;
   QualType ArgType = NativeParam->getType();
@@ -4878,6 +4921,7 @@ llvm::Function *CGOpenMPRuntimeGPU::createParallelDataSharingWrapper(
   Address ZeroAddr = CGF.CreateDefaultAlignTempAlloca(CGF.Int32Ty,
                                                       /*Name=*/".zero.addr");
   CGF.InitTempAlloca(ZeroAddr, CGF.Builder.getInt32(/*C*/ 0));
+
   // Get the array of arguments.
   SmallVector<llvm::Value *, 8> Args;
 
@@ -5433,13 +5477,22 @@ void CGOpenMPRuntimeGPU::clear() {
     if (!SharedStaticRD->field_empty()) {
       QualType StaticTy = C.getRecordType(SharedStaticRD);
       llvm::Type *LLVMStaticTy = CGM.getTypes().ConvertTypeForMem(StaticTy);
-      auto *GV = new llvm::GlobalVariable(
-          CGM.getModule(), LLVMStaticTy,
-          /*isConstant=*/false, llvm::GlobalValue::WeakAnyLinkage,
-          llvm::UndefValue::get(LLVMStaticTy),
-          "_openmp_shared_static_glob_rd_$_", /*InsertBefore=*/nullptr,
-          llvm::GlobalValue::NotThreadLocal,
-          C.getTargetAddressSpace(LangAS::cuda_shared));
+      auto *GV =
+          (CGM.getTriple().isAMDGCN())
+              ? new llvm::GlobalVariable(
+                    CGM.getModule(), LLVMStaticTy,
+                    /*isConstant=*/false, llvm::GlobalValue::WeakAnyLinkage,
+                    llvm::UndefValue::get(LLVMStaticTy),
+                    "_openmp_shared_static_glob_rd_$_",
+                    /*InsertBefore=*/nullptr, llvm::GlobalValue::NotThreadLocal,
+                    C.getTargetAddressSpace(LangAS::cuda_shared))
+              : new llvm::GlobalVariable(
+                    CGM.getModule(), LLVMStaticTy,
+                    /*isConstant=*/false, llvm::GlobalValue::CommonLinkage,
+                    llvm::Constant::getNullValue(LLVMStaticTy),
+                    "_openmp_shared_static_glob_rd_$_",
+                    /*InsertBefore=*/nullptr, llvm::GlobalValue::NotThreadLocal,
+                    C.getTargetAddressSpace(LangAS::cuda_shared));
       auto *Replacement = llvm::ConstantExpr::getPointerBitCastOrAddrSpaceCast(
           GV, CGM.VoidPtrTy);
       for (const GlobalPtrSizeRecsTy *Rec : SharedRecs) {
@@ -5460,12 +5513,16 @@ void CGOpenMPRuntimeGPU::clear() {
           C.getConstantArrayType(Arr1Ty, Size2, nullptr, ArrayType::Normal,
                                  /*IndexTypeQuals=*/0);
       llvm::Type *LLVMArr2Ty = CGM.getTypes().ConvertTypeForMem(Arr2Ty);
+      llvm::GlobalValue::LinkageTypes Linkage =
+          (CGM.getTriple().isAMDGCN())
+              ? llvm::GlobalValue::PrivateLinkage
+              : llvm::GlobalValue::InternalLinkage;
       // FIXME: nvlink does not handle weak linkage correctly (object with the
       // different size are reported as erroneous).
       // Restore CommonLinkage as soon as nvlink is fixed.
-      auto *GV = new llvm::GlobalVariable(
-          CGM.getModule(), LLVMArr2Ty,
-          /*isConstant=*/false, llvm::GlobalValue::InternalLinkage,
+      auto *GV =
+          new llvm::GlobalVariable(CGM.getModule(), LLVMArr2Ty,
+          /*isConstant=*/false, Linkage,
           llvm::Constant::getNullValue(LLVMArr2Ty),
           "_openmp_static_glob_rd_$_");
       auto *Replacement = llvm::ConstantExpr::getPointerBitCastOrAddrSpaceCast(
@@ -5495,12 +5552,16 @@ void CGOpenMPRuntimeGPU::clear() {
     QualType StaticTy = C.getRecordType(StaticRD);
     llvm::Type *LLVMReductionsBufferTy =
         CGM.getTypes().ConvertTypeForMem(StaticTy);
+    llvm::GlobalValue::LinkageTypes Linkage =
+        (CGM.getTriple().isAMDGCN())
+            ? llvm::GlobalValue::PrivateLinkage
+            : llvm::GlobalValue::InternalLinkage;
     // FIXME: nvlink does not handle weak linkage correctly (object with the
     // different size are reported as erroneous).
     // Restore CommonLinkage as soon as nvlink is fixed.
     auto *GV = new llvm::GlobalVariable(
         CGM.getModule(), LLVMReductionsBufferTy,
-        /*isConstant=*/false, llvm::GlobalValue::InternalLinkage,
+        /*isConstant=*/false, Linkage,
         llvm::Constant::getNullValue(LLVMReductionsBufferTy),
         "_openmp_teams_reductions_buffer_$_");
     KernelTeamsReductionPtr->setInitializer(
