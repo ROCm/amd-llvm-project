@@ -380,6 +380,7 @@ static bool buildSelectFunction(Module *MOUT, LLVMContext &Ctx) {
   llvm::ReturnInst::Create(Ctx, nullptr, exitbb);
   Fn->setCallingConv(CallingConv::C);
   Fn->removeFnAttr(llvm::Attribute::OptimizeNone);
+  Fn->removeFnAttr(llvm::Attribute::NoInline);
   Fn->addFnAttr(llvm::Attribute::AlwaysInline);
   Fn->setLinkage(llvm::GlobalValue::LinkOnceODRLinkage);
   if (llvm::verifyFunction(*Fn)) {
@@ -413,6 +414,7 @@ static bool convertExternsToLinkOnce(Module *MOUT, LLVMContext &Ctx) {
         F->setLinkage(GlobalValue::LinkOnceODRLinkage);
         F->setVisibility(GlobalValue::ProtectedVisibility);
         F->removeFnAttr(llvm::Attribute::OptimizeNone);
+        F->removeFnAttr(llvm::Attribute::NoInline);
         F->addFnAttr(llvm::Attribute::AlwaysInline);
       }
     }
@@ -460,11 +462,11 @@ int main(int argc, char **argv) {
 
   Module *MOUT = &*Composite;
   if (DirectCalls) {
-    if (!rewriteSelectCalls(MOUT, Context))
+    if (false && !rewriteSelectCalls(MOUT, Context))
       return 1;
   }
 
-  if (!buildSelectFunction(MOUT, Context))
+  if (false && !buildSelectFunction(MOUT, Context))
     return 1;
 
   if (!convertExternsToLinkOnce(MOUT, Context))

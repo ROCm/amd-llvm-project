@@ -145,7 +145,7 @@ static cl::opt<bool, true> EnableAMDGPUFixedFunctionABIOpt(
   "amdgpu-fixed-function-abi",
   cl::desc("Enable all implicit function arguments"),
   cl::location(AMDGPUTargetMachine::EnableFixedFunctionABI),
-  cl::init(false),
+  cl::init(true), // think this has to be set on every library + openmp codegen
   cl::Hidden);
 
 // Enable lib calls simplifications
