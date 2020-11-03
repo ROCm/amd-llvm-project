@@ -1037,7 +1037,9 @@ __DEVICE__
 double pow(double __x, double __y) { return __ocml_pow_f64(__x, __y); }
 
 __DEVICE__
-double powi(double __x, int __y) { return __ocml_pown_f64(__x, __y); }
+double powi(double __x, int __y) {
+  // return =__ocml_pown_f64(__x, __y);  FIXME: __ocml_pown_f64 is broke
+  return __ocml_pow_f64(__x, (double) __y); }
 
 __DEVICE__
 double rcbrt(double __x) { return __ocml_rcbrt_f64(__x); }
