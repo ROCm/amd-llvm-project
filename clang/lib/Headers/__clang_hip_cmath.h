@@ -152,6 +152,8 @@ template <class __T> struct __hip_enable_if<true, __T> { typedef __T type; };
 
 #pragma push_macro("__DEF_FUN1")
 #pragma push_macro("__DEF_FUN1I")
+#pragma push_macro("__DEF_FUN1I_CAST")
+#pragma push_macro("__DEF_FUN1UL")
 #pragma push_macro("__DEF_FUN2")
 #pragma push_macro("__DEF_FUN2_FI")
 
@@ -160,6 +162,12 @@ template <class __T> struct __hip_enable_if<true, __T> { typedef __T type; };
   __DEVICE__                                                                   \
   __retty __func(float __x) { return __func##f(__x); }
 
+#define __DEF_FUN1I_CAST(__retty, __func)                                      \
+  __DEVICE__                                                                   \
+  __retty __func(int __x) { return __func##f((float) __x); }
+#define __DEF_FUN1UL(__retty, __func)                                          \
+  __DEVICE__                                                                   \
+  __retty __func(unsigned long __x) { return __func##f((float)__x); }
 #define __DEF_FUN1I(__retty, __func)                                           \
   __DEVICE__                                                                   \
   __retty __func(int __x) { return __func##fi(__x); }
@@ -194,6 +202,7 @@ __DEF_FUN1(float, cosh)
 __DEF_FUN1(float, erf)
 __DEF_FUN1(float, erfc)
 __DEF_FUN1(float, exp)
+__DEF_FUN1I_CAST(float, exp)
 __DEF_FUN1(float, exp2)
 __DEF_FUN1(float, expm1)
 __DEF_FUN1(float, fabs)
@@ -228,6 +237,7 @@ __DEF_FUN1(float, sin)
 __DEF_FUN1(float, sinh)
 __DEF_FUN1(float, sqrt)
 __DEF_FUN1I(float, sqrt)
+__DEF_FUN1UL(float, sqrt)
 __DEF_FUN1(float, tan)
 __DEF_FUN1(float, tanh)
 __DEF_FUN1(float, tgamma)
@@ -235,6 +245,8 @@ __DEF_FUN1(float, trunc)
 
 #pragma pop_macro("__DEF_FUN1")
 #pragma pop_macro("__DEF_FUN1I")
+#pragma pop_macro("__DEF_FUN1I_CAST")
+#pragma pop_macro("__DEF_FUN1UL")
 #pragma pop_macro("__DEF_FUN2")
 #pragma pop_macro("__DEF_FUN2_FI")
 
