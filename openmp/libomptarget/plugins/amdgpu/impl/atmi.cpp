@@ -3,9 +3,9 @@
  *
  * This file is distributed under the MIT License. See LICENSE.txt for details.
  *===------------------------------------------------------------------------*/
-#include "rt.h"
 #include "atmi_runtime.h"
 #include "internal.h"
+#include "rt.h"
 #include <hsa.h>
 #include <hsa_ext_amd.h>
 #include <memory>
@@ -89,14 +89,15 @@ atmi_status_t atmi_memcpy_h2d(hsa_signal_t signal, void *deviceDest,
   atmi_mem_place_t CPU = ATMI_MEM_PLACE_CPU_MEM(0, 0, 0);
   atmi_status_t ret = atmi_malloc(&tempHostPtr, size, CPU);
   if (ret != ATMI_STATUS_SUCCESS) {
-    DEBUG_PRINT("atmi_malloc: Unable to alloc %d bytes for temp scratch\n", size);
+    DEBUG_PRINT("atmi_malloc: Unable to alloc %d bytes for temp scratch\n",
+                size);
     return ret;
   }
   std::unique_ptr<void, atmiFreePtrDeletor> del(tempHostPtr);
   memcpy(tempHostPtr, hostSrc, size);
 
-  if (invoke_hsa_copy(signal, deviceDest,  tempHostPtr, size, agent)
-      != HSA_STATUS_SUCCESS) {
+  if (invoke_hsa_copy(signal, deviceDest, tempHostPtr, size, agent) !=
+      HSA_STATUS_SUCCESS) {
     return ATMI_STATUS_ERROR;
   }
   return ATMI_STATUS_SUCCESS;
@@ -114,18 +115,18 @@ atmi_status_t atmi_memcpy_d2h(hsa_signal_t signal, void *dest,
     return ATMI_STATUS_SUCCESS;
   }
 
-
   void *tempHostPtr;
   atmi_mem_place_t CPU = ATMI_MEM_PLACE_CPU_MEM(0, 0, 0);
   atmi_status_t ret = atmi_malloc(&tempHostPtr, size, CPU);
   if (ret != ATMI_STATUS_SUCCESS) {
-    DEBUG_PRINT("atmi_malloc: Unable to alloc %d bytes for temp scratch\n", size);
+    DEBUG_PRINT("atmi_malloc: Unable to alloc %d bytes for temp scratch\n",
+                size);
     return ret;
   }
   std::unique_ptr<void, atmiFreePtrDeletor> del(tempHostPtr);
 
-  if (invoke_hsa_copy(signal, tempHostPtr,  deviceSrc, size, agent)
-      != HSA_STATUS_SUCCESS) {
+  if (invoke_hsa_copy(signal, tempHostPtr, deviceSrc, size, agent) !=
+      HSA_STATUS_SUCCESS) {
     return ATMI_STATUS_ERROR;
   }
 
