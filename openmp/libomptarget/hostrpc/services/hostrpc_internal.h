@@ -203,6 +203,8 @@ typedef struct {
     uint64_t ready_stack;
     /** Number of LSBs in the tagged pointer can index into the packet arrays */
     uint32_t index_size;
+    /** Device ID */
+    uint32_t device_id;
 } buffer_t;
 
 #include "../../plugins/amdgpu/impl/atmi_runtime.h"

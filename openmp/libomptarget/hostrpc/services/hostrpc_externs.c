@@ -38,6 +38,7 @@ struct atl_hcq_element_s {
   buffer_t *hcb;
   hsa_queue_t *hsa_q;
   atl_hcq_element_t *next_ptr;
+  uint32_t device_id;
 };
 
 //  Persistent static values for the hcq linked list
@@ -62,6 +63,7 @@ static atl_hcq_element_t *atl_hcq_push(buffer_t *hcb, hsa_queue_t *hsa_q,
   }
   atl_hcq_rear->hcb = hcb;
   atl_hcq_rear->hsa_q = hsa_q;
+  atl_hcq_rear->device_id = devid;
   atl_hcq_rear->next_ptr = NULL;
   atl_hcq_count++;
   return atl_hcq_rear;

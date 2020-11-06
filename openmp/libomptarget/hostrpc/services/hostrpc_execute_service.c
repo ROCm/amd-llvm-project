@@ -186,15 +186,14 @@ static void hostrpc_handler_SERVICE_MALLOC_PRINTF(uint64_t *payload) {
   payload[1] = (uint64_t)ptr;
 }
 
-static void hostrpc_handler_SERVICE_MALLOC(uint64_t *payload) {
+static void hostrpc_handler_SERVICE_MALLOC(uint64_t *payload, uint32_t device_id) {
   void *ptr = NULL;
-  int device_id = 0;
   atmi_mem_place_t place = ATMI_MEM_PLACE_GPU_MEM(0, device_id, 0);
   atmi_status_t err = atmi_malloc(&ptr, payload[0], place);
   payload[0] = (uint64_t)err;
   payload[1] = (uint64_t)ptr;
 }
-static void hostrpc_handler_SERVICE_FREE(uint64_t *payload) {
+static void hostrpc_handler_SERVICE_FREE(uint64_t *payload, uint32_t device_id) {
   char *device_buffer = (char *)payload[0];
   atmi_free(device_buffer);
 }
@@ -274,8 +273,8 @@ static void hostrpc_abort(int rc){
 // The architecture-specific implementation of hostrpc will 
 // call this single external function for each service request. 
 // Host service functions are architecturally independent.
-extern void hostrpc_execute_service(uint32_t service, uint64_t *payload) {
-  
+extern void hostrpc_execute_service(uint32_t service, uint64_t *payload, uint32_t device_id) {
+
   // split the 32-bit service number into service_id and VRM to be checked
   // if device hostrpc or stubs are ahead of this host runtime.
   uint service_id = (service <<16 ) >> 16;
@@ -305,10 +304,10 @@ extern void hostrpc_execute_service(uint32_t service, uint64_t *payload) {
     hostrpc_handler_SERVICE_MALLOC_PRINTF(payload);
     break;
   case HOSTRPC_SERVICE_MALLOC:
-    hostrpc_handler_SERVICE_MALLOC(payload);
+    hostrpc_handler_SERVICE_MALLOC(payload, device_id);
     break;
   case HOSTRPC_SERVICE_FREE:
-    hostrpc_handler_SERVICE_FREE(payload);
+    hostrpc_handler_SERVICE_FREE(payload, device_id);
     break;
   case HOSTRPC_SERVICE_FUNCTIONCALL:
     hostrpc_handler_SERVICE_FUNCTIONCALL(payload);
