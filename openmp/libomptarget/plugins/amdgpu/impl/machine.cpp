@@ -41,7 +41,7 @@ hsa_amd_memory_pool_t get_memory_pool(const ATLProcessor &proc,
                                       const int mem_id) {
   hsa_amd_memory_pool_t pool;
   const std::vector<ATLMemory> &mems = proc.memories();
-  assert(mems.size() && mem_id >= 0 && mem_id < mems.size() &&
+  assert(mems.size() && mem_id >= 0 && (unsigned)mem_id < mems.size() &&
          "Invalid memory pools for this processor");
   pool = mems[mem_id].memory();
   return pool;
