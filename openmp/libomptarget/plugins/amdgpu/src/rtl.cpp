@@ -44,6 +44,8 @@ extern "C" hsa_status_t hostrpc_terminate();
 
 #include "omptargetplugin.h"
 
+#include "trace.h"
+
 // Get static gpu grid values from clang target-specific constants managed
 // in the clang header file GpuGridValues.h
 #include "llvm/Frontend/OpenMP/OMPGridValues.h"
