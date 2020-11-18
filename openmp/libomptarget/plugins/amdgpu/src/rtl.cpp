@@ -754,9 +754,16 @@ int32_t __tgt_rtl_init_device(int device_id) {
     DP("Default number of teams set according to environment %d\n",
        DeviceInfo.EnvNumTeams);
   } else {
-    // default number of teams is 1:1 with number of compute units.
-    DeviceInfo.NumTeams[device_id] = DeviceInfo.ComputeUnits[device_id];
-    DP("Default number of teams set according to number of compute units %d\n",
+    char *TeamsPerCUEnvStr = getenv("AMDGPU_TEAMS_PER_CU");
+    int TeamsPerCU = 1; // default number of teams per CU is 1
+    if (TeamsPerCUEnvStr) {
+      TeamsPerCU = std::stoi(TeamsPerCUEnvStr);
+    }
+   
+    DeviceInfo.NumTeams[device_id] =
+      TeamsPerCU * DeviceInfo.ComputeUnits[device_id];
+    DP("Default number of teams = %d * number of compute units %d\n",
+       TeamsPerCU,
        DeviceInfo.ComputeUnits[device_id]);
   }
 
