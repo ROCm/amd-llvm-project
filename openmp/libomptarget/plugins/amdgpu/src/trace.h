@@ -99,31 +99,32 @@ template <typename... Ts> constexpr auto fmtTuple() {
 // are the same type, worked around using the longer spelling.
 // Writing the contents of fmtStr::get() inline in log_t is simpler, but puts
 // a ~100 byte object on the stack and calls memcpy on it.
-template <typename... Ts> class fmtStr {
+template <typename R, typename... Ts> class fmtStr {
   static constexpr auto get() {
-    // Call function: time ms (some, number, of, arguments)
-    return cat(toArray("Call %35s: %8" PRId64 " ms "), fmtTuple<Ts...>(),
-               toArray("\n\0"));
+    // Call function: 123ms result (some, number, of, arguments)
+    return cat(cat(toArray("Call %35s: %8" PRId64 "ms "),
+                   fmt<typename std::decay<R>::type>::value(), toArray(" ")),
+               cat(fmtTuple<Ts...>(), toArray("\n\0")));
   }
 
 public:
   static constexpr size_t size() { return get().size(); }
-  static constexpr const std::array<const char, fmtStr<Ts...>::size()> value =
-      get();
+  static constexpr const std::array<const char, fmtStr<R, Ts...>::size()>
+      value = get();
   static constexpr const char *data() { return value.data(); }
 };
-template <typename... Ts>
-constexpr const std::array<const char, fmtStr<Ts...>::size()>
-    fmtStr<Ts...>::value;
+template <typename R, typename... Ts>
+constexpr const std::array<const char, fmtStr<R, Ts...>::size()>
+    fmtStr<R, Ts...>::value;
 
-template <typename... Ts> struct log_t {
+template <typename R, typename... Ts> struct log_t {
   using clock_ty = std::chrono::high_resolution_clock;
   std::chrono::time_point<clock_ty> start, end;
 
   const char *func;
   std::tuple<Ts...> args;
   bool active;
-
+  R result;
   log_t(const char *func, Ts &&... args)
       : func(func), args(std::forward<Ts>(args)...) {
     active = print_kernel_trace == 2;
@@ -135,11 +136,14 @@ template <typename... Ts> struct log_t {
     start = clock_ty::now();
   }
 
+  void res(R r) { result = r; }
+
   template <size_t... Is>
   int printUnpack(int64_t t, std::tuple<Ts...> const &tup,
                   std::index_sequence<Is...>) {
 
-    return printf(fmtStr<Ts...>::data(), func, t, std::get<Is>(tup)...);
+    return printf(fmtStr<R, Ts...>::data(), func, t, result,
+                  std::get<Is>(tup)...);
   }
 
   ~log_t() {
@@ -156,8 +160,9 @@ template <typename... Ts> struct log_t {
   }
 };
 
-template <typename... Ts> log_t<Ts...> log(const char *func, Ts &&... ts) {
-  return log_t<Ts...>(func, std::forward<Ts>(ts)...);
+template <typename R, typename... Ts>
+log_t<R, Ts...> log(const char *func, Ts &&... ts) {
+  return log_t<R, Ts...>(func, std::forward<Ts>(ts)...);
 }
 
 } // namespace detail
@@ -169,15 +174,19 @@ extern "C" {
 
 static void *__tgt_rtl_data_alloc_impl(int device_id, int64_t size, void *ptr);
 void *__tgt_rtl_data_alloc(int device_id, int64_t size, void *ptr) {
-  auto t = detail::log(__func__, device_id, size, ptr);
-  return __tgt_rtl_data_alloc_impl(device_id, size, ptr);
+  auto t = detail::log<void *>(__func__, device_id, size, ptr);
+  void *r = __tgt_rtl_data_alloc_impl(device_id, size, ptr);
+  t.res(r);
+  return r;
 }
 #define __tgt_rtl_data_alloc(...) __tgt_rtl_data_alloc_impl(__VA_ARGS__)
 
 static int32_t __tgt_rtl_data_delete_impl(int device_id, void *tgt_ptr);
 int32_t __tgt_rtl_data_delete(int device_id, void *tgt_ptr) {
-  auto t = detail::log(__func__, device_id, tgt_ptr);
-  return __tgt_rtl_data_delete_impl(device_id, tgt_ptr);
+  auto t = detail::log<int32_t>(__func__, device_id, tgt_ptr);
+  int32_t r = __tgt_rtl_data_delete_impl(device_id, tgt_ptr);
+  t.res(r);
+  return r;
 }
 #define __tgt_rtl_data_delete(...) __tgt_rtl_data_delete_impl(__VA_ARGS__)
 
@@ -185,8 +194,10 @@ static int32_t __tgt_rtl_data_retrieve_impl(int device_id, void *hst_ptr,
                                             void *tgt_ptr, int64_t size);
 int32_t __tgt_rtl_data_retrieve(int device_id, void *hst_ptr, void *tgt_ptr,
                                 int64_t size) {
-  auto t = detail::log(__func__, device_id, hst_ptr, tgt_ptr, size);
-  return __tgt_rtl_data_retrieve_impl(device_id, hst_ptr, tgt_ptr, size);
+  auto t = detail::log<int32_t>(__func__, device_id, hst_ptr, tgt_ptr, size);
+  int32_t r = __tgt_rtl_data_retrieve_impl(device_id, hst_ptr, tgt_ptr, size);
+  t.res(r);
+  return r;
 }
 #define __tgt_rtl_data_retrieve(...) __tgt_rtl_data_retrieve_impl(__VA_ARGS__)
 
@@ -197,10 +208,12 @@ __tgt_rtl_data_retrieve_async_impl(int device_id, void *hst_ptr, void *tgt_ptr,
 int32_t __tgt_rtl_data_retrieve_async(int device_id, void *hst_ptr,
                                       void *tgt_ptr, int64_t size,
                                       __tgt_async_info *async_info_ptr) {
-  auto t =
-      detail::log(__func__, device_id, hst_ptr, tgt_ptr, size, async_info_ptr);
-  return __tgt_rtl_data_retrieve_async_impl(device_id, hst_ptr, tgt_ptr, size,
-                                            async_info_ptr);
+  auto t = detail::log<int32_t>(__func__, device_id, hst_ptr, tgt_ptr, size,
+                                async_info_ptr);
+  int32_t r = __tgt_rtl_data_retrieve_async_impl(device_id, hst_ptr, tgt_ptr,
+                                                 size, async_info_ptr);
+  t.res(r);
+  return r;
 }
 #define __tgt_rtl_data_retrieve_async(...)                                     \
   __tgt_rtl_data_retrieve_async_impl(__VA_ARGS__)
@@ -209,8 +222,10 @@ static int32_t __tgt_rtl_data_submit_impl(int device_id, void *tgt_ptr,
                                           void *hst_ptr, int64_t size);
 int32_t __tgt_rtl_data_submit(int device_id, void *tgt_ptr, void *hst_ptr,
                               int64_t size) {
-  auto t = detail::log(__func__, device_id, tgt_ptr, hst_ptr, size);
-  return __tgt_rtl_data_submit_impl(device_id, tgt_ptr, hst_ptr, size);
+  auto t = detail::log<int32_t>(__func__, device_id, tgt_ptr, hst_ptr, size);
+  int32_t r = __tgt_rtl_data_submit_impl(device_id, tgt_ptr, hst_ptr, size);
+  t.res(r);
+  return r;
 }
 #define __tgt_rtl_data_submit(...) __tgt_rtl_data_submit_impl(__VA_ARGS__)
 
@@ -220,31 +235,40 @@ static int32_t __tgt_rtl_data_submit_async_impl(int32_t ID, void *TargetPtr,
 int32_t __tgt_rtl_data_submit_async(int32_t ID, void *TargetPtr, void *HostPtr,
                                     int64_t Size,
                                     __tgt_async_info *AsyncInfoPtr) {
-  auto t = detail::log(__func__, ID, TargetPtr, HostPtr, Size, AsyncInfoPtr);
-  return __tgt_rtl_data_submit_async_impl(ID, TargetPtr, HostPtr, Size,
-                                          AsyncInfoPtr);
+  auto t = detail::log<int32_t>(__func__, ID, TargetPtr, HostPtr, Size,
+                                AsyncInfoPtr);
+  int32_t r = __tgt_rtl_data_submit_async_impl(ID, TargetPtr, HostPtr, Size,
+                                               AsyncInfoPtr);
+  t.res(r);
+  return r;
 }
 #define __tgt_rtl_data_submit_async(...)                                       \
   __tgt_rtl_data_submit_async_impl(__VA_ARGS__)
 
 static int32_t __tgt_rtl_init_device_impl(int device_id);
 int32_t __tgt_rtl_init_device(int device_id) {
-  auto t = detail::log(__func__, device_id);
-  return __tgt_rtl_init_device_impl(device_id);
+  auto t = detail::log<int32_t>(__func__, device_id);
+  int32_t r = __tgt_rtl_init_device_impl(device_id);
+  t.res(r);
+  return r;
 }
 #define __tgt_rtl_init_device(...) __tgt_rtl_init_device_impl(__VA_ARGS__)
 
 static int64_t __tgt_rtl_init_requires_impl(int64_t RequiresFlags);
 int64_t __tgt_rtl_init_requires(int64_t RequiresFlags) {
-  auto t = detail::log(__func__, RequiresFlags);
-  return __tgt_rtl_init_requires_impl(RequiresFlags);
+  auto t = detail::log<int64_t>(__func__, RequiresFlags);
+  int64_t r = __tgt_rtl_init_requires_impl(RequiresFlags);
+  t.res(r);
+  return r;
 }
 #define __tgt_rtl_init_requires(...) __tgt_rtl_init_requires_impl(__VA_ARGS__)
 
 static int32_t __tgt_rtl_is_valid_binary_impl(__tgt_device_image *image);
 int32_t __tgt_rtl_is_valid_binary(__tgt_device_image *image) {
-  auto t = detail::log(__func__, image);
-  return __tgt_rtl_is_valid_binary_impl(image);
+  auto t = detail::log<int32_t>(__func__, image);
+  int32_t r = __tgt_rtl_is_valid_binary_impl(image);
+  t.res(r);
+  return r;
 }
 #define __tgt_rtl_is_valid_binary(...)                                         \
   __tgt_rtl_is_valid_binary_impl(__VA_ARGS__)
@@ -253,15 +277,19 @@ static __tgt_target_table *
 __tgt_rtl_load_binary_impl(int32_t device_id, __tgt_device_image *image);
 __tgt_target_table *__tgt_rtl_load_binary(int32_t device_id,
                                           __tgt_device_image *image) {
-  auto t = detail::log(__func__, device_id, image);
-  return __tgt_rtl_load_binary_impl(device_id, image);
+  auto t = detail::log<__tgt_target_table *>(__func__, device_id, image);
+  __tgt_target_table *r = __tgt_rtl_load_binary_impl(device_id, image);
+  t.res(r);
+  return r;
 }
 #define __tgt_rtl_load_binary(...) __tgt_rtl_load_binary_impl(__VA_ARGS__)
 
 static int __tgt_rtl_number_of_devices_impl();
 int __tgt_rtl_number_of_devices() {
-  auto t = detail::log(__func__);
-  return __tgt_rtl_number_of_devices_impl();
+  auto t = detail::log<int>(__func__);
+  int r = __tgt_rtl_number_of_devices_impl();
+  t.res(r);
+  return r;
 }
 #define __tgt_rtl_number_of_devices(...)                                       \
   __tgt_rtl_number_of_devices_impl(__VA_ARGS__)
@@ -274,10 +302,12 @@ static int32_t __tgt_rtl_run_target_region_impl(int32_t device_id,
 int32_t __tgt_rtl_run_target_region(int32_t device_id, void *tgt_entry_ptr,
                                     void **tgt_args, ptrdiff_t *tgt_offsets,
                                     int32_t arg_num) {
-  auto t = detail::log(__func__, device_id, tgt_entry_ptr, tgt_args,
-                       tgt_offsets, arg_num);
-  return __tgt_rtl_run_target_region_impl(device_id, tgt_entry_ptr, tgt_args,
-                                          tgt_offsets, arg_num);
+  auto t = detail::log<int32_t>(__func__, device_id, tgt_entry_ptr, tgt_args,
+                                tgt_offsets, arg_num);
+  int32_t r = __tgt_rtl_run_target_region_impl(device_id, tgt_entry_ptr,
+                                               tgt_args, tgt_offsets, arg_num);
+  t.res(r);
+  return r;
 }
 #define __tgt_rtl_run_target_region(...)                                       \
   __tgt_rtl_run_target_region_impl(__VA_ARGS__)
@@ -290,10 +320,12 @@ int32_t __tgt_rtl_run_target_region_async(int32_t device_id,
                                           ptrdiff_t *tgt_offsets,
                                           int32_t arg_num,
                                           __tgt_async_info *async_info_ptr) {
-  auto t = detail::log(__func__, device_id, tgt_entry_ptr, tgt_args,
-                       tgt_offsets, arg_num, async_info_ptr);
-  return __tgt_rtl_run_target_region_async_impl(
+  auto t = detail::log<int32_t>(__func__, device_id, tgt_entry_ptr, tgt_args,
+                                tgt_offsets, arg_num, async_info_ptr);
+  int32_t r = __tgt_rtl_run_target_region_async_impl(
       device_id, tgt_entry_ptr, tgt_args, tgt_offsets, arg_num, async_info_ptr);
+  t.res(r);
+  return r;
 }
 #define __tgt_rtl_run_target_region_async(...)                                 \
   __tgt_rtl_run_target_region_async_impl(__VA_ARGS__)
@@ -308,12 +340,14 @@ int32_t __tgt_rtl_run_target_team_region(int32_t device_id, void *tgt_entry_ptr,
                                          int32_t arg_num, int32_t num_teams,
                                          int32_t thread_limit,
                                          uint64_t loop_tripcount) {
-  auto t =
-      detail::log(__func__, device_id, tgt_entry_ptr, tgt_args, tgt_offsets,
-                  arg_num, num_teams, thread_limit, loop_tripcount);
-  return __tgt_rtl_run_target_team_region_impl(
+  auto t = detail::log<int32_t>(__func__, device_id, tgt_entry_ptr, tgt_args,
+                                tgt_offsets, arg_num, num_teams, thread_limit,
+                                loop_tripcount);
+  int32_t r = __tgt_rtl_run_target_team_region_impl(
       device_id, tgt_entry_ptr, tgt_args, tgt_offsets, arg_num, num_teams,
       thread_limit, loop_tripcount);
+  t.res(r);
+  return r;
 }
 #define __tgt_rtl_run_target_team_region(...)                                  \
   __tgt_rtl_run_target_team_region_impl(__VA_ARGS__)
@@ -322,8 +356,10 @@ static int32_t __tgt_rtl_synchronize_impl(int32_t device_id,
                                           __tgt_async_info *async_info_ptr);
 int32_t __tgt_rtl_synchronize(int32_t device_id,
                               __tgt_async_info *async_info_ptr) {
-  auto t = detail::log(__func__, device_id, async_info_ptr);
-  return __tgt_rtl_synchronize_impl(device_id, async_info_ptr);
+  auto t = detail::log<int32_t>(__func__, device_id, async_info_ptr);
+  int32_t r = __tgt_rtl_synchronize_impl(device_id, async_info_ptr);
+  t.res(r);
+  return r;
 }
 #define __tgt_rtl_synchronize(...) __tgt_rtl_synchronize_impl(__VA_ARGS__)
 
