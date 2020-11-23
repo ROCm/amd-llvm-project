@@ -1180,7 +1180,6 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
       uint16_t TSize;
       uint16_t WG_Size;
       uint8_t Mode;
-      uint8_t HostServices;
       uint8_t MaxParallelLevel;
     };
     struct KernDescValType KernDescVal;
@@ -1212,7 +1211,6 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
       DP("KernDesc: TSize: %d\n", KernDescVal.TSize);
       DP("KernDesc: WG_Size: %d\n", KernDescVal.WG_Size);
       DP("KernDesc: Mode: %d\n", KernDescVal.Mode);
-      DP("KernDesc: HostServices: %x\n", KernDescVal.HostServices);
       DP("KernDesc: MaxParallelLevel: %x\n", KernDescVal.MaxParallelLevel);
 
       // gather location of callStack and size of struct
