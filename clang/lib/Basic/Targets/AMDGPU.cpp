@@ -312,6 +312,8 @@ AMDGPUTargetInfo::AMDGPUTargetInfo(const llvm::Triple &Triple,
   HasLegalHalfType = true;
   HasFloat16 = true;
 
+  VLASupported = false;
+
   // Set pointer width and alignment for target address space 0.
   PointerWidth = PointerAlign = DataLayout->getPointerSizeInBits();
   if (getMaxPointerWidth() == 64) {
