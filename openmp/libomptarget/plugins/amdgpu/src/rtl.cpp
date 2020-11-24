@@ -681,7 +681,7 @@ int32_t __tgt_rtl_init_device(int device_id) {
   else {
     DeviceInfo.GPUName[device_id] = GetInfoName;
   }
-  if (print_kernel_trace > 1)
+  if (print_kernel_trace == 4)
     fprintf(stderr, "Device#%-2d CU's: %2d %s\n", device_id,
             DeviceInfo.ComputeUnits[device_id],
             DeviceInfo.GPUName[device_id].c_str());
@@ -1388,7 +1388,7 @@ void getLaunchVals(int &threadsPerGroup, int &num_groups, int ConstWGSize,
   if (Max_Teams > DeviceInfo.HardTeamLimit)
     Max_Teams = DeviceInfo.HardTeamLimit;
 
-  if (print_kernel_trace > 1) {
+  if (print_kernel_trace == 4) {
     fprintf(stderr, "RTLDeviceInfoTy::Max_Teams: %d\n",
             RTLDeviceInfoTy::Max_Teams);
     fprintf(stderr, "Max_Teams: %d\n", Max_Teams);
@@ -1421,7 +1421,7 @@ void getLaunchVals(int &threadsPerGroup, int &num_groups, int ConstWGSize,
     DP("Reduced threadsPerGroup to flat-attr-group-size limit %d\n",
        threadsPerGroup);
   }
-  if (print_kernel_trace > 1)
+  if (print_kernel_trace == 4)
     fprintf(stderr, "threadsPerGroup: %d\n", threadsPerGroup);
   DP("Preparing %d threads\n", threadsPerGroup);
 
@@ -1434,7 +1434,7 @@ void getLaunchVals(int &threadsPerGroup, int &num_groups, int ConstWGSize,
     num_groups = Max_Teams;
   DP("Set default num of groups %d\n", num_groups);
 
-  if (print_kernel_trace > 1) {
+  if (print_kernel_trace == 4) {
     fprintf(stderr, "num_groups: %d\n", num_groups);
     fprintf(stderr, "num_teams: %d\n", num_teams);
   }
@@ -1454,7 +1454,7 @@ void getLaunchVals(int &threadsPerGroup, int &num_groups, int ConstWGSize,
   if (num_teams > 0) {
     num_groups = (num_teams < num_groups) ? num_teams : num_groups;
   }
-  if (print_kernel_trace > 1) {
+  if (print_kernel_trace == 4) {
     fprintf(stderr, "num_groups: %d\n", num_groups);
     fprintf(stderr, "DeviceInfo.EnvNumTeams %d\n", DeviceInfo.EnvNumTeams);
     fprintf(stderr, "DeviceInfo.EnvTeamLimit %d\n", DeviceInfo.EnvTeamLimit);
@@ -1487,13 +1487,13 @@ void getLaunchVals(int &threadsPerGroup, int &num_groups, int ConstWGSize,
     }
     if (num_groups > Max_Teams) {
       num_groups = Max_Teams;
-      if (print_kernel_trace > 1)
+      if (print_kernel_trace == 4)
         fprintf(stderr, "Limiting num_groups %d to Max_Teams %d \n", num_groups,
                 Max_Teams);
     }
     if (num_groups > num_teams && num_teams > 0) {
       num_groups = num_teams;
-      if (print_kernel_trace > 1)
+      if (print_kernel_trace == 4)
         fprintf(stderr, "Limiting num_groups %d to clause num_teams %d \n",
                 num_groups, num_teams);
     }
@@ -1507,7 +1507,7 @@ void getLaunchVals(int &threadsPerGroup, int &num_groups, int ConstWGSize,
         num_groups > DeviceInfo.EnvMaxTeamsDefault)
       num_groups = DeviceInfo.EnvMaxTeamsDefault;
   }
-  if (print_kernel_trace > 1) {
+  if (print_kernel_trace == 4) {
     fprintf(stderr, "threadsPerGroup: %d\n", threadsPerGroup);
     fprintf(stderr, "num_groups: %d\n", num_groups);
     fprintf(stderr, "loop_tripcount: %ld\n", loop_tripcount);
@@ -1587,7 +1587,7 @@ int32_t __tgt_rtl_run_target_team_region_locked(
                 loop_tripcount // From run_region arg
   );
 
-  if (print_kernel_trace > 0)
+  if (print_kernel_trace == 4)
     // enum modes are SPMD, GENERIC, NONE 0,1,2
     fprintf(stderr,
             "DEVID:%2d SGN:%1d ConstWGSize:%-4d args:%2d teamsXthrds:(%4dX%4d) "
@@ -1595,6 +1595,12 @@ int32_t __tgt_rtl_run_target_team_region_locked(
             device_id, KernelInfo->ExecutionMode, KernelInfo->ConstWGSize,
             arg_num, num_groups, threadsPerGroup, num_teams, thread_limit,
             KernelInfo->Name);
+  if ((print_kernel_trace == 2) || (print_kernel_trace == 1))
+    printf("DEVID:%2d SGN:%1d ConstWGSize:%-4d args:%2d teamsXthrds:(%4dX%4d) "
+           "reqd:(%4dX%4d) n:%s\n",
+           device_id, KernelInfo->ExecutionMode, KernelInfo->ConstWGSize,
+           arg_num, num_groups, threadsPerGroup, num_teams, thread_limit,
+           KernelInfo->Name);
 
   // Run on the device.
   {
