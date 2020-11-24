@@ -996,7 +996,7 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
     if (si.size != sizeof(host_device_env)) {
       return ATMI_STATUS_ERROR;
     }
-    DP("Setting global device environment %lu bytes\n", si.size);
+    DP("Setting global device environment %u bytes\n", si.size);
     uint64_t offset = (char *)si.addr - (char *)image->ImageStart;
     void *pos = (char *)data + offset;
     memcpy(pos, &host_device_env, sizeof(host_device_env));

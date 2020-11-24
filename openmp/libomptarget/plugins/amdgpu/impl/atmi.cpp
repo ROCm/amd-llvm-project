@@ -89,7 +89,7 @@ atmi_status_t atmi_memcpy_h2d(hsa_signal_t signal, void *deviceDest,
   atmi_mem_place_t CPU = ATMI_MEM_PLACE_CPU_MEM(0, 0, 0);
   atmi_status_t ret = atmi_malloc(&tempHostPtr, size, CPU);
   if (ret != ATMI_STATUS_SUCCESS) {
-    DEBUG_PRINT("atmi_malloc: Unable to alloc %d bytes for temp scratch\n",
+    DEBUG_PRINT("atmi_malloc: Unable to alloc %zu bytes for temp scratch\n",
                 size);
     return ret;
   }
@@ -119,7 +119,7 @@ atmi_status_t atmi_memcpy_d2h(hsa_signal_t signal, void *dest,
   atmi_mem_place_t CPU = ATMI_MEM_PLACE_CPU_MEM(0, 0, 0);
   atmi_status_t ret = atmi_malloc(&tempHostPtr, size, CPU);
   if (ret != ATMI_STATUS_SUCCESS) {
-    DEBUG_PRINT("atmi_malloc: Unable to alloc %d bytes for temp scratch\n",
+    DEBUG_PRINT("atmi_malloc: Unable to alloc %zu bytes for temp scratch\n",
                 size);
     return ret;
   }
