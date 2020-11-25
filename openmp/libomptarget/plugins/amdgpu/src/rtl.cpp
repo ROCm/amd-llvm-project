@@ -754,7 +754,7 @@ int32_t __tgt_rtl_init_device(int device_id) {
     DP("Default number of teams set according to environment %d\n",
        DeviceInfo.EnvNumTeams);
   } else {
-    char *TeamsPerCUEnvStr = getenv("OMP_TARGET_DEFAULT_TEAMS_PER_PROC");
+    char *TeamsPerCUEnvStr = getenv("OMP_TARGET_TEAMS_PER_PROC");
     int TeamsPerCU = 1; // default number of teams per CU is 1
     if (TeamsPerCUEnvStr) {
       TeamsPerCU = std::stoi(TeamsPerCUEnvStr);
