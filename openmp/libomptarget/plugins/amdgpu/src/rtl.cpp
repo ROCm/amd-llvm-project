@@ -968,6 +968,27 @@ __tgt_target_table *__tgt_rtl_load_binary(int32_t device_id,
 
 __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
                                                  __tgt_device_image *image) {
+  // This function loads the device image onto gpu[device_id] and does other
+  // per-image initialization work. Specifically:
+  //
+  // - Initialize an omptarget_device_environmentTy instance embedded in the
+  //   image at the symbol "omptarget_device_environment"
+  //   Fields debug_level, device_num, num_devices. Used by the deviceRTL.
+  //
+  // - Allocate a large array per-gpu (could be moved to init_device)
+  //   - Read a uint64_t at symbol omptarget_nvptx_device_State_size
+  //   - Allocate at least that many bytes of gpu memory
+  //   - Zero initialize it
+  //   - Write the pointer to the symbol omptarget_nvptx_device_State
+  //
+  // - Pulls some per-kernel information together from various sources and
+  //   records it in the KernelsList for quicker access later
+  //
+  // The initialization can be done before or after loading the image onto the
+  // gpu. This function presently does a mixture. Using the hsa api to get/set
+  // the information is simpler to implement, in exchange for more complicated
+  // runtime behaviour. E.g. launching a kernel or using dma to get eight bytes
+  // back from the gpu vs a hashtable lookup on the host.
 
   const size_t img_size = (char *)image->ImageEnd - (char *)image->ImageStart;
 
