@@ -78,6 +78,8 @@
   // Create a generational value x10 for expansion
   #if defined(__gfx601__)
     #define _DEVICE_GPU 6010
+  #elif defined(__gfx602__)
+    #define _DEVICE_GPU 6020
   #elif defined(__gfx700__)
     #define _DEVICE_GPU 7000
   #elif defined(__gfx701__)
@@ -86,12 +88,16 @@
     #define _DEVICE_GPU 7020
   #elif defined(__gfx703__)
     #define _DEVICE_GPU 7030
+  #elif defined(__gfx705__)
+    #define _DEVICE_GPU 7050
   #elif defined(__gfx801__)
     #define _DEVICE_GPU 8010
   #elif defined(__gfx802__)
     #define _DEVICE_GPU 8020
   #elif defined(__gfx803__)
     #define _DEVICE_GPU 8030
+  #elif defined(__gfx805__)
+    #define _DEVICE_GPU 8050
   #elif defined(__gfx810__)
     #define _DEVICE_GPU 8100
   #elif defined(__gfx900__)
@@ -106,12 +112,24 @@
     #define _DEVICE_GPU 9080
   #elif defined(__gfx909__)
     #define _DEVICE_GPU 9090
+  #elif defined(__gfx90c__)
+    #define _DEVICE_GPU 9093
+  #elif defined(__gfx90C__)
+    #define _DEVICE_GPU 9093
   #elif defined(__gfx1010__)
     #define _DEVICE_GPU 10100
   #elif defined(__gfx1011__)
     #define _DEVICE_GPU 10110
   #elif defined(__gfx1012__)
     #define _DEVICE_GPU 10120
+  #elif defined(__gfx1030__)
+    #define _DEVICE_GPU 10300
+  #elif defined(__gfx1031__)
+    #define _DEVICE_GPU 10310
+  #elif defined(__gfx1032__)
+    #define _DEVICE_GPU 10320
+  #elif defined(__gfx1033__)
+    #define _DEVICE_GPU 10330
   #else
     #define _DEVICE_GPU UNKNOWN
   #endif
