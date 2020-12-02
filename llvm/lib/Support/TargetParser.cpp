@@ -30,7 +30,7 @@ struct GPUInfo {
   unsigned Features;
 };
 
-constexpr GPUInfo R600GPUs[26] = {
+constexpr GPUInfo R600GPUs[] = {
   // Name       Canonical    Kind        Features
   //            Name
   {{"r600"},    {"r600"},    GK_R600,    FEATURE_NONE },
@@ -63,16 +63,17 @@ constexpr GPUInfo R600GPUs[26] = {
 
 // This table should be sorted by the value of GPUKind
 // Don't bother listing the implicitly true features
-constexpr GPUInfo AMDGCNGPUs[38] = {
+constexpr GPUInfo AMDGCNGPUs[] = {
   // Name         Canonical    Kind        Features
   //              Name
   {{"gfx600"},    {"gfx600"},  GK_GFX600,  FEATURE_FAST_FMA_F32},
   {{"tahiti"},    {"gfx600"},  GK_GFX600,  FEATURE_FAST_FMA_F32},
   {{"gfx601"},    {"gfx601"},  GK_GFX601,  FEATURE_NONE},
-  {{"hainan"},    {"gfx601"},  GK_GFX601,  FEATURE_NONE},
-  {{"oland"},     {"gfx601"},  GK_GFX601,  FEATURE_NONE},
   {{"pitcairn"},  {"gfx601"},  GK_GFX601,  FEATURE_NONE},
   {{"verde"},     {"gfx601"},  GK_GFX601,  FEATURE_NONE},
+  {{"gfx602"},    {"gfx602"},  GK_GFX602,  FEATURE_NONE},
+  {{"hainan"},    {"gfx602"},  GK_GFX602,  FEATURE_NONE},
+  {{"oland"},     {"gfx602"},  GK_GFX602,  FEATURE_NONE},
   {{"gfx700"},    {"gfx700"},  GK_GFX700,  FEATURE_NONE},
   {{"kaveri"},    {"gfx700"},  GK_GFX700,  FEATURE_NONE},
   {{"gfx701"},    {"gfx701"},  GK_GFX701,  FEATURE_FAST_FMA_F32},
@@ -83,27 +84,34 @@ constexpr GPUInfo AMDGCNGPUs[38] = {
   {{"mullins"},   {"gfx703"},  GK_GFX703,  FEATURE_NONE},
   {{"gfx704"},    {"gfx704"},  GK_GFX704,  FEATURE_NONE},
   {{"bonaire"},   {"gfx704"},  GK_GFX704,  FEATURE_NONE},
-  {{"gfx801"},    {"gfx801"},  GK_GFX801,  FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32},
-  {{"carrizo"},   {"gfx801"},  GK_GFX801,  FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32},
-  {{"gfx802"},    {"gfx802"},  GK_GFX802,  FEATURE_FAST_DENORMAL_F32},
-  {{"iceland"},   {"gfx802"},  GK_GFX802,  FEATURE_FAST_DENORMAL_F32},
-  {{"tonga"},     {"gfx802"},  GK_GFX802,  FEATURE_FAST_DENORMAL_F32},
-  {{"gfx803"},    {"gfx803"},  GK_GFX803,  FEATURE_FAST_DENORMAL_F32},
-  {{"fiji"},      {"gfx803"},  GK_GFX803,  FEATURE_FAST_DENORMAL_F32},
-  {{"polaris10"}, {"gfx803"},  GK_GFX803,  FEATURE_FAST_DENORMAL_F32},
-  {{"polaris11"}, {"gfx803"},  GK_GFX803,  FEATURE_FAST_DENORMAL_F32},
-  {{"gfx810"},    {"gfx810"},  GK_GFX810,  FEATURE_FAST_DENORMAL_F32},
-  {{"stoney"},    {"gfx810"},  GK_GFX810,  FEATURE_FAST_DENORMAL_F32},
-  {{"gfx900"},    {"gfx900"},  GK_GFX900,  FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32},
-  {{"gfx902"},    {"gfx902"},  GK_GFX902,  FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32},
-  {{"gfx904"},    {"gfx904"},  GK_GFX904,  FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32},
-  {{"gfx906"},    {"gfx906"},  GK_GFX906,  FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32},
-  {{"gfx908"},    {"gfx908"},  GK_GFX908,  FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32},
-  {{"gfx909"},    {"gfx909"},  GK_GFX909,  FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32},
-  {{"gfx1010"},   {"gfx1010"}, GK_GFX1010, FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_WAVE32},
-  {{"gfx1011"},   {"gfx1011"}, GK_GFX1011, FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_WAVE32},
-  {{"gfx1012"},   {"gfx1012"}, GK_GFX1012, FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_WAVE32},
+  {{"gfx705"},    {"gfx705"},  GK_GFX705,  FEATURE_NONE},
+  {{"gfx801"},    {"gfx801"},  GK_GFX801,  FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK},
+  {{"carrizo"},   {"gfx801"},  GK_GFX801,  FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK},
+  {{"gfx802"},    {"gfx802"},  GK_GFX802,  FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK},
+  {{"iceland"},   {"gfx802"},  GK_GFX802,  FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK},
+  {{"tonga"},     {"gfx802"},  GK_GFX802,  FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK},
+  {{"gfx803"},    {"gfx803"},  GK_GFX803,  FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK},
+  {{"fiji"},      {"gfx803"},  GK_GFX803,  FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK},
+  {{"polaris10"}, {"gfx803"},  GK_GFX803,  FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK},
+  {{"polaris11"}, {"gfx803"},  GK_GFX803,  FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK},
+  {{"gfx805"},    {"gfx805"},  GK_GFX805,  FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK},
+  {{"tongapro"},  {"gfx805"},  GK_GFX805,  FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK},
+  {{"gfx810"},    {"gfx810"},  GK_GFX810,  FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK},
+  {{"stoney"},    {"gfx810"},  GK_GFX810,  FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK},
+  {{"gfx900"},    {"gfx900"},  GK_GFX900,  FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK},
+  {{"gfx902"},    {"gfx902"},  GK_GFX902,  FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK},
+  {{"gfx904"},    {"gfx904"},  GK_GFX904,  FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK},
+  {{"gfx906"},    {"gfx906"},  GK_GFX906,  FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK},
+  {{"gfx908"},    {"gfx908"},  GK_GFX908,  FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK},
+  {{"gfx909"},    {"gfx909"},  GK_GFX909,  FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK},
+  {{"gfx90c"},    {"gfx90c"},  GK_GFX90C,  FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_XNACK},
+  {{"gfx1010"},   {"gfx1010"}, GK_GFX1010, FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_WAVE32|FEATURE_XNACK},
+  {{"gfx1011"},   {"gfx1011"}, GK_GFX1011, FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_WAVE32|FEATURE_XNACK},
+  {{"gfx1012"},   {"gfx1012"}, GK_GFX1012, FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_WAVE32|FEATURE_XNACK},
   {{"gfx1030"},   {"gfx1030"}, GK_GFX1030, FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_WAVE32},
+  {{"gfx1031"},   {"gfx1031"}, GK_GFX1031, FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_WAVE32},
+  {{"gfx1032"},   {"gfx1032"}, GK_GFX1032, FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_WAVE32},
+  {{"gfx1033"},   {"gfx1033"}, GK_GFX1033, FEATURE_FAST_FMA_F32|FEATURE_FAST_DENORMAL_F32|FEATURE_WAVE32},
 };
 
 const GPUInfo *getArchEntry(AMDGPU::GPUKind AK, ArrayRef<GPUInfo> Table) {
@@ -187,14 +195,17 @@ AMDGPU::IsaVersion AMDGPU::getIsaVersion(StringRef GPU) {
   switch (AK) {
   case GK_GFX600:  return {6, 0, 0};
   case GK_GFX601:  return {6, 0, 1};
+  case GK_GFX602:  return {6, 0, 2};
   case GK_GFX700:  return {7, 0, 0};
   case GK_GFX701:  return {7, 0, 1};
   case GK_GFX702:  return {7, 0, 2};
   case GK_GFX703:  return {7, 0, 3};
   case GK_GFX704:  return {7, 0, 4};
+  case GK_GFX705:  return {7, 0, 5};
   case GK_GFX801:  return {8, 0, 1};
   case GK_GFX802:  return {8, 0, 2};
   case GK_GFX803:  return {8, 0, 3};
+  case GK_GFX805:  return {8, 0, 5};
   case GK_GFX810:  return {8, 1, 0};
   case GK_GFX900:  return {9, 0, 0};
   case GK_GFX902:  return {9, 0, 2};
@@ -202,10 +213,14 @@ AMDGPU::IsaVersion AMDGPU::getIsaVersion(StringRef GPU) {
   case GK_GFX906:  return {9, 0, 6};
   case GK_GFX908:  return {9, 0, 8};
   case GK_GFX909:  return {9, 0, 9};
+  case GK_GFX90C:  return {9, 0, 12};
   case GK_GFX1010: return {10, 1, 0};
   case GK_GFX1011: return {10, 1, 1};
   case GK_GFX1012: return {10, 1, 2};
   case GK_GFX1030: return {10, 3, 0};
+  case GK_GFX1031: return {10, 3, 1};
+  case GK_GFX1032: return {10, 3, 2};
+  case GK_GFX1033: return {10, 3, 3};
   default:         return {0, 0, 0};
   }
 }
