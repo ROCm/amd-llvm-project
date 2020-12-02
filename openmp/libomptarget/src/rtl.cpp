@@ -10,9 +10,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "rtl.h"
 #include "device.h"
 #include "private.h"
-#include "rtl.h"
 
 #include <cassert>
 #include <cstdlib>
@@ -81,11 +81,6 @@ __attribute__((destructor(101))) void deinit() {
 }
 
 void RTLsTy::LoadRTLs() {
-#ifdef OMPTARGET_DEBUG
-  if (char *envStr = getenv("LIBOMPTARGET_DEBUG")) {
-    DebugLevel = std::stoi(envStr);
-  }
-#endif // OMPTARGET_DEBUG
 
   // FIXME this is amdgcn specific.
   // Propogate HIP_VISIBLE_DEVICES if set to ROCR_VISIBLE_DEVICES.
