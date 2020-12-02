@@ -1,5 +1,5 @@
 #ifdef OMPD_SUPPORT
-#include "../ompd-specific.h"   
+#include "../ompd-specific.h"
 #include "../omptarget.h"
 /**
    * Declaration of symbols to hold struct size and member offset information

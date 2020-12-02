@@ -14,6 +14,7 @@
 #define _OMPTARGET_PRIVATE_H
 
 #include <omptarget.h>
+#include <Debug.h>
 
 #include <cstdint>
 
@@ -62,23 +63,6 @@ struct MapperComponentsTy {
   std::vector<MapComponentInfoTy> Components;
 };
 
-////////////////////////////////////////////////////////////////////////////////
-// implementation for fatal messages
-////////////////////////////////////////////////////////////////////////////////
-
-#define FATAL_MESSAGE0(_num, _str)                                    \
-  do {                                                                \
-    fprintf(stderr, "Libomptarget fatal error %d: %s\n", _num, _str); \
-    exit(1);                                                          \
-  } while (0)
-
-#define FATAL_MESSAGE(_num, _str, ...)                              \
-  do {                                                              \
-    fprintf(stderr, "Libomptarget fatal error %d:" _str "\n", _num, \
-            __VA_ARGS__);                                           \
-    exit(1);                                                        \
-  } while (0)
-
 // Implemented in libomp, they are called from within __tgt_* functions.
 #ifdef __cplusplus
 extern "C" {
@@ -92,17 +76,7 @@ int __kmpc_get_target_offload(void) __attribute__((weak));
 }
 #endif
 
-#ifdef OMPTARGET_DEBUG
-extern int DebugLevel;
-
-#define DP(...) \
-  do { \
-    if (DebugLevel > 0) { \
-      DEBUGP("Libomptarget", __VA_ARGS__); \
-    } \
-  } while (false)
-#else // OMPTARGET_DEBUG
-#define DP(...) {}
-#endif // OMPTARGET_DEBUG
+#define TARGET_NAME Libomptarget
+#define DEBUG_PREFIX GETNAME(TARGET_NAME)
 
 #endif
