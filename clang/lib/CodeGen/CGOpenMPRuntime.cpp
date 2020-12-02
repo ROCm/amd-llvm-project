@@ -3339,7 +3339,7 @@ void CGOpenMPRuntime::emitStructureKernelDesc(CodeGenModule &CGM,
   // Create all device images
   llvm::Constant *AttrData[] = {
       llvm::ConstantInt::get(CGM.Int16Ty, 2), // Version
-      llvm::ConstantInt::get(CGM.Int16Ty, 8), // Size in bytes
+      llvm::ConstantInt::get(CGM.Int16Ty, 7), // Size in bytes
       llvm::ConstantInt::get(CGM.Int16Ty, WG_Size),
       llvm::ConstantInt::get(CGM.Int8Ty, Mode)}; // 0 => SPMD, 1 => GENERIC
 
