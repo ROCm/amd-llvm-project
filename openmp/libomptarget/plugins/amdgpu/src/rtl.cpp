@@ -201,7 +201,7 @@ struct KernelTy {
   int8_t ExecutionMode;
   int16_t ConstWGSize;
   int32_t device_id;
-  void *CallStackAddr;
+  void *CallStackAddr = nullptr;
   const char *Name;
 
   KernelTy(int8_t _ExecutionMode, int16_t _ConstWGSize,
@@ -342,7 +342,8 @@ public:
   std::vector<std::pair<std::unique_ptr<void, atmiFreePtrDeletor>, uint64_t>>
       deviceStateStore;
 
-  static const int HardTeamLimit = 1 << 20; // 1 Meg
+  static const unsigned HardTeamLimit =
+      (1 << 16) - 1; // 64K needed to fit in uint16
   static const int DefaultNumTeams = 128;
   static const int Max_Teams =
       llvm::omp::AMDGPUGpuGridValues[llvm::omp::GVIDX::GV_Max_Teams];
@@ -862,7 +863,7 @@ const Elf64_Sym *elf_lookup(Elf *elf, char *base, Elf64_Shdr *section_hash,
   return nullptr;
 }
 
-typedef struct {
+typedef struct symbol_info {
   void *addr = nullptr;
   uint32_t size = UINT32_MAX;
 } symbol_info;
@@ -1213,7 +1214,7 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
 
     void *KernDescPtr;
     uint32_t KernDescSize;
-    void *CallStackAddr;
+    void *CallStackAddr = nullptr;
     err = interop_get_symbol_info((char *)image->ImageStart, img_size,
                                   KernDescName, &KernDescPtr, &KernDescSize);
 

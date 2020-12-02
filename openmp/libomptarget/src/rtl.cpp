@@ -215,7 +215,7 @@ void RTLsTy::LoadRTLs() {
     // The RTL is valid! Will save the information in the RTLs list.
     AllRTLs.push_back(R);
   }
-  delete libomptarget_dir_name;
+  delete[] libomptarget_dir_name;
   DP("RTLs loaded!\n");
 
   return;
