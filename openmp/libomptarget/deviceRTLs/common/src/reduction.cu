@@ -191,6 +191,17 @@ int32_t __kmpc_nvptx_parallel_reduce_nowait_v2(
       checkSPMDMode(loc), checkRuntimeUninitialized(loc));
 }
 
+
+// This apparently unused function is currently called by flang
+EXTERN
+int32_t __kmpc_nvptx_parallel_reduce_nowait_simple_spmd(
+    int32_t global_tid, int32_t num_vars, size_t reduce_size, void *reduce_data,
+    kmp_ShuffleReductFctPtr shflFct, kmp_InterWarpCopyFctPtr cpyFct) {
+  return nvptx_parallel_reduce_nowait(
+      global_tid, num_vars, reduce_size, reduce_data, shflFct, cpyFct,
+      /*isSPMDExecutionMode=*/true, /*isRuntimeUninitialized=*/true);
+}
+
 INLINE static bool isMaster(kmp_Ident *loc, uint32_t ThreadId) {
   return checkGenericMode(loc) || IsTeamMaster(ThreadId);
 }
