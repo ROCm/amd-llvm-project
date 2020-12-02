@@ -36,9 +36,12 @@ const char *getPlaceStr(atmi_devtype_t type) {
 ATLProcessor &get_processor_by_mem_place(atmi_mem_place_t place) {
   int dev_id = place.dev_id;
   switch (place.dev_type) {
+  case ATMI_DEVTYPE_ALL:
   case ATMI_DEVTYPE_CPU:
     return g_atl_machine.processors<ATLCPUProcessor>()[dev_id];
   case ATMI_DEVTYPE_GPU:
+  case ATMI_DEVTYPE_iGPU:
+  case ATMI_DEVTYPE_dGPU:
     return g_atl_machine.processors<ATLGPUProcessor>()[dev_id];
   }
 }

@@ -41,6 +41,7 @@ enum : unsigned {
   EF_AMDGPU_SRAM_ECC = 0x200,
 };
 
+/*  These functions commented out till we use them in rtl.cpp
 static bool get_elf_mach_sram_ecc(__tgt_device_image *image) {
   uint32_t EFlags = elf_flags(image);
   return (EF_AMDGPU_SRAM_ECC & EFlags) != 0;
@@ -50,6 +51,7 @@ static bool get_elf_mach_xnack(__tgt_device_image *image) {
   uint32_t EFlags = elf_flags(image);
   return (EF_AMDGPU_XNACK & EFlags) != 0;
 }
+*/
 
 static int get_elf_mach_gfx(__tgt_device_image *image) {
   uint32_t EFlags = elf_flags(image);
