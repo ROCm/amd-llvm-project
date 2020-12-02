@@ -244,10 +244,9 @@ EXTERN void __kmpc_serialized_parallel(kmp_Ident *loc, uint32_t global_tid) {
   // get current task
   omptarget_nvptx_TaskDescr *currTaskDescr = getMyTopTaskDescriptor(threadId);
   currTaskDescr->SaveLoopData();
-  int ParLev = currTaskDescr->ParLev();
+
   // allocate new task descriptor and copy value from current one, set prev to
   // it
-
   omptarget_nvptx_TaskDescr *newTaskDescr =
       (omptarget_nvptx_TaskDescr *)SafeMalloc(sizeof(omptarget_nvptx_TaskDescr),
                                               "new seq parallel task");
@@ -257,7 +256,6 @@ EXTERN void __kmpc_serialized_parallel(kmp_Ident *loc, uint32_t global_tid) {
   // - each thread becomes ID 0 in its serialized parallel, and
   // - there is only one thread per team
   newTaskDescr->ThreadId() = 0;
-  newTaskDescr->ParLev() = ParLev + 1;
 
 #ifdef OMPD_SUPPORT
   // Set ompd parallel info for the next parallel region in the previous task
