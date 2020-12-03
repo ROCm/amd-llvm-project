@@ -10,6 +10,6 @@
 
 extern int get_elf_mach_gfx(__tgt_device_image *image);
 
-extern const char* get_elf_mach_gfx_name(__tgt_device_image *image);
+extern const char *get_elf_mach_gfx_name(__tgt_device_image *image);
 
 extern bool elf_machine_id_is_amdgcn(__tgt_device_image *image);

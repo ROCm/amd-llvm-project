@@ -9,9 +9,9 @@
 #include <cstring>
 #include <string>
 
-#include "llvm/BinaryFormat/ELF.h"
-#include "omptarget.h"
 #include "Debug.h"
+#include "omptarget.h"
+#include "llvm/BinaryFormat/ELF.h"
 
 #ifndef TARGET_NAME
 #define TARGET_NAME AMDHSA
@@ -29,24 +29,39 @@ int get_elf_mach_gfx(__tgt_device_image *image) {
   return Gfx;
 }
 
-const char* get_elf_mach_gfx_name(__tgt_device_image *image) {
+const char *get_elf_mach_gfx_name(__tgt_device_image *image) {
   uint32_t Gfx = get_elf_mach_gfx(image);
-  switch  (Gfx) {
-  case EF_AMDGPU_MACH_AMDGCN_GFX801 :  return "gfx801" ;
-  case EF_AMDGPU_MACH_AMDGCN_GFX802 :  return "gfx802" ;
-  case EF_AMDGPU_MACH_AMDGCN_GFX803 :  return "gfx803" ;
-  case EF_AMDGPU_MACH_AMDGCN_GFX810 :  return "gfx810" ;
-  case EF_AMDGPU_MACH_AMDGCN_GFX900 :  return "gfx900" ;
-  case EF_AMDGPU_MACH_AMDGCN_GFX902 :  return "gfx902" ;
-  case EF_AMDGPU_MACH_AMDGCN_GFX904 :  return "gfx904" ;
-  case EF_AMDGPU_MACH_AMDGCN_GFX906 :  return "gfx906" ;
-  case EF_AMDGPU_MACH_AMDGCN_GFX908 :  return "gfx908" ;
-  case EF_AMDGPU_MACH_AMDGCN_GFX909 :  return "gfx909" ;
-  case EF_AMDGPU_MACH_AMDGCN_GFX1010 :  return "gfx1010" ;
-  case EF_AMDGPU_MACH_AMDGCN_GFX1011 :  return "gfx1011" ;
-  case EF_AMDGPU_MACH_AMDGCN_GFX1012 :  return "gfx1012" ;
-  case EF_AMDGPU_MACH_AMDGCN_GFX1030 :  return "gfx1030" ;
-  default: return "--unknown gfx";
+  switch (Gfx) {
+  case EF_AMDGPU_MACH_AMDGCN_GFX801:
+    return "gfx801";
+  case EF_AMDGPU_MACH_AMDGCN_GFX802:
+    return "gfx802";
+  case EF_AMDGPU_MACH_AMDGCN_GFX803:
+    return "gfx803";
+  case EF_AMDGPU_MACH_AMDGCN_GFX810:
+    return "gfx810";
+  case EF_AMDGPU_MACH_AMDGCN_GFX900:
+    return "gfx900";
+  case EF_AMDGPU_MACH_AMDGCN_GFX902:
+    return "gfx902";
+  case EF_AMDGPU_MACH_AMDGCN_GFX904:
+    return "gfx904";
+  case EF_AMDGPU_MACH_AMDGCN_GFX906:
+    return "gfx906";
+  case EF_AMDGPU_MACH_AMDGCN_GFX908:
+    return "gfx908";
+  case EF_AMDGPU_MACH_AMDGCN_GFX909:
+    return "gfx909";
+  case EF_AMDGPU_MACH_AMDGCN_GFX1010:
+    return "gfx1010";
+  case EF_AMDGPU_MACH_AMDGCN_GFX1011:
+    return "gfx1011";
+  case EF_AMDGPU_MACH_AMDGCN_GFX1012:
+    return "gfx1012";
+  case EF_AMDGPU_MACH_AMDGCN_GFX1030:
+    return "gfx1030";
+  default:
+    return "--unknown gfx";
   }
 }
 
@@ -58,4 +73,3 @@ bool elf_machine_id_is_amdgcn(__tgt_device_image *image) {
   }
   return r;
 }
-

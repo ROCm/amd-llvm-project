@@ -190,12 +190,11 @@ struct KernelTy {
   void *CallStackAddr = nullptr;
   const char *Name;
 
-  KernelTy(int8_t _ExecutionMode, int16_t _ConstWGSize,
-           int32_t _device_id, void *_CallStackAddr, const char *_Name,
+  KernelTy(int8_t _ExecutionMode, int16_t _ConstWGSize, int32_t _device_id,
+           void *_CallStackAddr, const char *_Name,
            uint32_t _kernarg_segment_size)
       : ExecutionMode(_ExecutionMode), ConstWGSize(_ConstWGSize),
-        device_id(_device_id),
-        CallStackAddr(_CallStackAddr), Name(_Name) {
+        device_id(_device_id), CallStackAddr(_CallStackAddr), Name(_Name) {
     DP("Construct kernelinfo: ExecMode %d\n", ExecutionMode);
 
     std::string N(_Name);
@@ -742,12 +741,11 @@ int32_t __tgt_rtl_init_device(int device_id) {
     if (TeamsPerCUEnvStr) {
       TeamsPerCU = std::stoi(TeamsPerCUEnvStr);
     }
-   
+
     DeviceInfo.NumTeams[device_id] =
-      TeamsPerCU * DeviceInfo.ComputeUnits[device_id];
+        TeamsPerCU * DeviceInfo.ComputeUnits[device_id];
     DP("Default number of teams = %d * number of compute units %d\n",
-       TeamsPerCU,
-       DeviceInfo.ComputeUnits[device_id]);
+       TeamsPerCU, DeviceInfo.ComputeUnits[device_id]);
   }
 
   if (DeviceInfo.NumTeams[device_id] > DeviceInfo.GroupsPerDevice[device_id]) {
@@ -1307,8 +1305,8 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
       check("Loading WGSize computation property", err);
     }
 
-    KernelsList.push_back(KernelTy(ExecModeVal, WGSizeVal,
-                                   device_id, CallStackAddr, e->name,
+    KernelsList.push_back(KernelTy(ExecModeVal, WGSizeVal, device_id,
+                                   CallStackAddr, e->name,
                                    kernarg_segment_size));
     __tgt_offload_entry entry = *e;
     entry.addr = (void *)&KernelsList.back();
@@ -1594,11 +1592,10 @@ int32_t __tgt_rtl_run_target_team_region_locked(
   getLaunchVals(threadsPerGroup, num_groups, KernelInfo->ConstWGSize,
                 KernelInfo->ExecutionMode, DeviceInfo.EnvTeamLimit,
                 DeviceInfo.EnvNumTeams,
-                num_teams,     // From run_region arg
-                thread_limit,  // From run_region arg
+                num_teams,      // From run_region arg
+                thread_limit,   // From run_region arg
                 loop_tripcount, // From run_region arg
-                KernelInfo->device_id
-  );
+                KernelInfo->device_id);
 
   if (print_kernel_trace == 4)
     // enum modes are SPMD, GENERIC, NONE 0,1,2
