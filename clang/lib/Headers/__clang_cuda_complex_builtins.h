@@ -16,7 +16,7 @@
 // to work with CUDA and OpenMP target offloading [in C and C++ mode].)
 
 #pragma push_macro("__DEVICE__")
-#ifdef _OPENMP
+#ifdef __OPENMP_NVPTX__
 #pragma omp declare target
 #define __DEVICE__ __attribute__((noinline, nothrow, cold, weak))
 #else
@@ -299,7 +299,7 @@ __DEVICE__ float _Complex __divsc3(float __a, float __b, float __c, float __d) {
 #undef _fmaxd
 #undef _fmaxf
 
-#ifdef _OPENMP
+#ifdef __OPENMP_NVPTX__
 #pragma omp end declare target
 #endif
 
