@@ -28,26 +28,26 @@ extern "C" {
  * at least once. The user may initialize difference device types at different
  * regions in the program in order for optimization purposes.
  *
- * @retval ::ATMI_STATUS_SUCCESS The function has executed successfully.
+ * @retval ::HSA_STATUS_SUCCESS The function has executed successfully.
  *
- * @retval ::ATMI_STATUS_ERROR The function encountered errors.
+ * @retval ::HSA_STATUS_ERROR The function encountered errors.
  *
  * @retval ::ATMI_STATUS_UNKNOWN The function encountered errors.
  */
-atmi_status_t atmi_init();
+hsa_status_t atmi_init();
 
 /**
  * @brief Finalize the ATMI runtime environment.
  *
  * @detail ATMI runtime functions will fail if called after finalize.
  *
- * @retval ::ATMI_STATUS_SUCCESS The function has executed successfully.
+ * @retval ::HSA_STATUS_SUCCESS The function has executed successfully.
  *
- * @retval ::ATMI_STATUS_ERROR The function encountered errors.
+ * @retval ::HSA_STATUS_ERROR The function encountered errors.
  *
  * @retval ::ATMI_STATUS_UNKNOWN The function encountered errors.
  */
-atmi_status_t atmi_finalize();
+hsa_status_t atmi_finalize();
 /** @} */
 
 /** \defgroup module_functions ATMI Module
@@ -77,16 +77,16 @@ atmi_status_t atmi_finalize();
  *
  * @param[in] cb_state void* passed to on_deserialized_data callback
  *
- * @retval ::ATMI_STATUS_SUCCESS The function has executed successfully.
+ * @retval ::HSA_STATUS_SUCCESS The function has executed successfully.
  *
- * @retval ::ATMI_STATUS_ERROR The function encountered errors.
+ * @retval ::HSA_STATUS_ERROR The function encountered errors.
  *
  * @retval ::ATMI_STATUS_UNKNOWN The function encountered errors.
  *
  */
-atmi_status_t atmi_module_register_from_memory_to_place(
+hsa_status_t atmi_module_register_from_memory_to_place(
     void *module_bytes, size_t module_size, atmi_place_t place,
-    atmi_status_t (*on_deserialized_data)(void *data, size_t size,
+    hsa_status_t (*on_deserialized_data)(void *data, size_t size,
                                           void *cb_state),
     void *cb_state);
 
@@ -128,14 +128,14 @@ atmi_machine_t *atmi_machine_get_info();
  *
  * @param[in] place The memory place in the system to perform the allocation.
  *
- * @retval ::ATMI_STATUS_SUCCESS The function has executed successfully.
+ * @retval ::HSA_STATUS_SUCCESS The function has executed successfully.
  *
- * @retval ::ATMI_STATUS_ERROR The function encountered errors.
+ * @retval ::HSA_STATUS_ERROR The function encountered errors.
  *
  * @retval ::ATMI_STATUS_UNKNOWN The function encountered errors.
  *
  */
-atmi_status_t atmi_malloc(void **ptr, size_t size, atmi_mem_place_t place);
+hsa_status_t atmi_malloc(void **ptr, size_t size, atmi_mem_place_t place);
 
 /**
  * @brief Frees memory that was previously allocated.
@@ -146,24 +146,24 @@ atmi_status_t atmi_malloc(void **ptr, size_t size, atmi_mem_place_t place);
  *
  * @param[in] ptr The pointer to the memory that has to be freed.
  *
- * @retval ::ATMI_STATUS_SUCCESS The function has executed successfully.
+ * @retval ::HSA_STATUS_SUCCESS The function has executed successfully.
  *
- * @retval ::ATMI_STATUS_ERROR The function encountered errors.
+ * @retval ::HSA_STATUS_ERROR The function encountered errors.
  *
  * @retval ::ATMI_STATUS_UNKNOWN The function encountered errors.
  *
  */
-atmi_status_t atmi_free(void *ptr);
+hsa_status_t atmi_free(void *ptr);
 
-atmi_status_t atmi_memcpy_h2d(hsa_signal_t signal, void *deviceDest,
+hsa_status_t atmi_memcpy_h2d(hsa_signal_t signal, void *deviceDest,
                               const void *hostSrc, size_t size,
                               hsa_agent_t agent);
 
-atmi_status_t atmi_memcpy_d2h(hsa_signal_t sig, void *hostDest,
+hsa_status_t atmi_memcpy_d2h(hsa_signal_t sig, void *hostDest,
                               const void *deviceSrc, size_t size,
                               hsa_agent_t agent);
 
-atmi_status_t atmi_memcpy_no_signal(void *dest, const void *src, size_t size,
+hsa_status_t atmi_memcpy_no_signal(void *dest, const void *src, size_t size,
                                     bool host2Device);
 /** @} */
 

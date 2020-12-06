@@ -13,9 +13,9 @@
 /*
  * Initialize/Finalize
  */
-atmi_status_t atmi_init() { return core::Runtime::Initialize(); }
+hsa_status_t atmi_init() { return core::Runtime::Initialize(); }
 
-atmi_status_t atmi_finalize() { return core::Runtime::Finalize(); }
+hsa_status_t atmi_finalize() { return core::Runtime::Finalize(); }
 
 /*
  * Machine Info
@@ -27,9 +27,9 @@ atmi_machine_t *atmi_machine_get_info() {
 /*
  * Modules
  */
-atmi_status_t atmi_module_register_from_memory_to_place(
+hsa_status_t atmi_module_register_from_memory_to_place(
     void *module_bytes, size_t module_size, atmi_place_t place,
-    atmi_status_t (*on_deserialized_data)(void *data, size_t size,
+    hsa_status_t (*on_deserialized_data)(void *data, size_t size,
                                           void *cb_state),
     void *cb_state) {
   return core::Runtime::getInstance().RegisterModuleFromMemory(
@@ -73,7 +73,7 @@ struct atmiFreePtrDeletor {
   }
 };
 
-atmi_status_t atmi_memcpy_h2d(hsa_signal_t signal, void *deviceDest,
+hsa_status_t atmi_memcpy_h2d(hsa_signal_t signal, void *deviceDest,
                               const void *hostSrc, size_t size,
                               hsa_agent_t agent) {
   hsa_status_t rc = hsa_memory_copy(deviceDest, hostSrc, size);
@@ -82,13 +82,13 @@ atmi_status_t atmi_memcpy_h2d(hsa_signal_t signal, void *deviceDest,
   // allocate + copy succeeds. Looks like it might be related to
   // locking part of a read only segment. Fall back for now.
   if (rc == HSA_STATUS_SUCCESS) {
-    return ATMI_STATUS_SUCCESS;
+    return HSA_STATUS_SUCCESS;
   }
 
   void *tempHostPtr;
   atmi_mem_place_t CPU = ATMI_MEM_PLACE_CPU_MEM(0, 0, 0);
-  atmi_status_t ret = atmi_malloc(&tempHostPtr, size, CPU);
-  if (ret != ATMI_STATUS_SUCCESS) {
+  hsa_status_t ret = atmi_malloc(&tempHostPtr, size, CPU);
+  if (ret != HSA_STATUS_SUCCESS) {
     DEBUG_PRINT("atmi_malloc: Unable to alloc %zu bytes for temp scratch\n",
                 size);
     return ret;
@@ -98,12 +98,12 @@ atmi_status_t atmi_memcpy_h2d(hsa_signal_t signal, void *deviceDest,
 
   if (invoke_hsa_copy(signal, deviceDest, tempHostPtr, size, agent) !=
       HSA_STATUS_SUCCESS) {
-    return ATMI_STATUS_ERROR;
+    return HSA_STATUS_ERROR;
   }
-  return ATMI_STATUS_SUCCESS;
+  return HSA_STATUS_SUCCESS;
 }
 
-atmi_status_t atmi_memcpy_d2h(hsa_signal_t signal, void *dest,
+hsa_status_t atmi_memcpy_d2h(hsa_signal_t signal, void *dest,
                               const void *deviceSrc, size_t size,
                               hsa_agent_t agent) {
   hsa_status_t rc = hsa_memory_copy(dest, deviceSrc, size);
@@ -112,13 +112,13 @@ atmi_status_t atmi_memcpy_d2h(hsa_signal_t signal, void *dest,
   // allocate + copy succeeds. Looks like it might be related to
   // locking part of a read only segment. Fall back for now.
   if (rc == HSA_STATUS_SUCCESS) {
-    return ATMI_STATUS_SUCCESS;
+    return HSA_STATUS_SUCCESS;
   }
 
   void *tempHostPtr;
   atmi_mem_place_t CPU = ATMI_MEM_PLACE_CPU_MEM(0, 0, 0);
-  atmi_status_t ret = atmi_malloc(&tempHostPtr, size, CPU);
-  if (ret != ATMI_STATUS_SUCCESS) {
+  hsa_status_t ret = atmi_malloc(&tempHostPtr, size, CPU);
+  if (ret != HSA_STATUS_SUCCESS) {
     DEBUG_PRINT("atmi_malloc: Unable to alloc %zu bytes for temp scratch\n",
                 size);
     return ret;
@@ -127,15 +127,15 @@ atmi_status_t atmi_memcpy_d2h(hsa_signal_t signal, void *dest,
 
   if (invoke_hsa_copy(signal, tempHostPtr, deviceSrc, size, agent) !=
       HSA_STATUS_SUCCESS) {
-    return ATMI_STATUS_ERROR;
+    return HSA_STATUS_ERROR;
   }
 
   memcpy(dest, tempHostPtr, size);
-  return ATMI_STATUS_SUCCESS;
+  return HSA_STATUS_SUCCESS;
 }
 
-atmi_status_t atmi_free(void *ptr) { return core::Runtime::Memfree(ptr); }
+hsa_status_t atmi_free(void *ptr) { return core::Runtime::Memfree(ptr); }
 
-atmi_status_t atmi_malloc(void **ptr, size_t size, atmi_mem_place_t place) {
+hsa_status_t atmi_malloc(void **ptr, size_t size, atmi_mem_place_t place) {
   return core::Runtime::Malloc(ptr, size, place);
 }

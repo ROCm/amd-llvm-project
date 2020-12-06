@@ -192,7 +192,7 @@ private:
 extern std::vector<hsa_amd_memory_pool_t> atl_gpu_kernarg_pools;
 
 namespace core {
-atmi_status_t atl_init_gpu_context();
+hsa_status_t atl_init_gpu_context();
 
 hsa_status_t init_hsa();
 hsa_status_t finalize_hsa();
@@ -234,12 +234,12 @@ void allow_access_to_all_gpu_agents(void *ptr);
 } // namespace core
 
 const char *get_error_string(hsa_status_t err);
-const char *get_atmi_error_string(atmi_status_t err);
+const char *get_error_string(hsa_status_t err);
 
 #define ATMIErrorCheck(msg, status)                                            \
-  if (status != ATMI_STATUS_SUCCESS) {                                         \
+  if (status != HSA_STATUS_SUCCESS) {                                         \
     printf("[%s:%d] %s failed: %s\n", __FILE__, __LINE__, #msg,                \
-           get_atmi_error_string(status));                                     \
+           get_error_string(status));                                     \
     exit(1);                                                                   \
   } else {                                                                     \
     /*  printf("%s succeeded.\n", #msg);*/                                     \

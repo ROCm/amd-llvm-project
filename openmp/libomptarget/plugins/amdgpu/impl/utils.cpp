@@ -16,22 +16,6 @@
 #include <sched.h>
 #include <stdio.h>
 
-/*
- * Helper functions
- */
-const char *get_atmi_error_string(atmi_status_t err) {
-  switch (err) {
-  case ATMI_STATUS_SUCCESS:
-    return "ATMI_STATUS_SUCCESS";
-  case ATMI_STATUS_UNKNOWN:
-    return "ATMI_STATUS_UNKNOWN";
-  case ATMI_STATUS_ERROR:
-    return "ATMI_STATUS_ERROR";
-  default:
-    return "";
-  }
-}
-
 const char *get_error_string(hsa_status_t err) {
   switch (err) {
   case HSA_STATUS_SUCCESS:

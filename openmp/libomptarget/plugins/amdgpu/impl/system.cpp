@@ -196,20 +196,20 @@ void allow_access_to_all_gpu_agents(void *ptr) {
   ErrorCheck(Allow agents ptr access, err);
 }
 
-atmi_status_t Runtime::Initialize() {
+hsa_status_t Runtime::Initialize() {
   atmi_devtype_t devtype = ATMI_DEVTYPE_GPU;
   if (atl_is_atmi_initialized())
-    return ATMI_STATUS_SUCCESS;
+    return HSA_STATUS_SUCCESS;
 
   if (devtype == ATMI_DEVTYPE_ALL || devtype & ATMI_DEVTYPE_GPU) {
     ATMIErrorCheck(GPU context init, atl_init_gpu_context());
   }
 
   atl_set_atmi_initialized();
-  return ATMI_STATUS_SUCCESS;
+  return HSA_STATUS_SUCCESS;
 }
 
-atmi_status_t Runtime::Finalize() {
+hsa_status_t Runtime::Finalize() {
   // TODO(ashwinma): Finalize all processors, queues, signals, kernarg memory
   // regions
   hsa_status_t err;
@@ -232,7 +232,7 @@ atmi_status_t Runtime::Finalize() {
   err = hsa_shut_down();
   ErrorCheck(Shutting down HSA, err);
 
-  return ATMI_STATUS_SUCCESS;
+  return HSA_STATUS_SUCCESS;
 }
 
 void atmi_init_context_structs() {
@@ -587,16 +587,16 @@ hsa_status_t callbackEvent(const hsa_amd_event_t *event, void *data) {
   return HSA_STATUS_SUCCESS;
 }
 
-atmi_status_t atl_init_gpu_context() {
+hsa_status_t atl_init_gpu_context() {
   if (atlc.struct_initialized == false)
     atmi_init_context_structs();
   if (atlc.g_gpu_initialized != false)
-    return ATMI_STATUS_SUCCESS;
+    return HSA_STATUS_SUCCESS;
 
   hsa_status_t err;
   err = init_hsa();
   if (err != HSA_STATUS_SUCCESS)
-    return ATMI_STATUS_ERROR;
+    return HSA_STATUS_ERROR;
 
   if (context_init_time_init == 0) {
     clock_gettime(CLOCK_MONOTONIC_RAW, &context_init_time);
@@ -608,7 +608,7 @@ atmi_status_t atl_init_gpu_context() {
 
     init_tasks();
     atlc.g_gpu_initialized = true;
-    return ATMI_STATUS_SUCCESS;
+    return HSA_STATUS_SUCCESS;
 }
 
 bool isImplicit(KernelArgMD::ValueKind value_kind) {
@@ -1012,9 +1012,9 @@ static hsa_status_t populate_InfoTables(hsa_executable_t executable,
   return HSA_STATUS_SUCCESS;
 }
 
-atmi_status_t Runtime::RegisterModuleFromMemory(
+hsa_status_t Runtime::RegisterModuleFromMemory(
     void *module_bytes, size_t module_size, atmi_place_t place,
-    atmi_status_t (*on_deserialized_data)(void *data, size_t size,
+    hsa_status_t (*on_deserialized_data)(void *data, size_t size,
                                           void *cb_state),
     void *cb_state) {
   hsa_status_t err;
@@ -1057,7 +1057,7 @@ atmi_status_t Runtime::RegisterModuleFromMemory(
       // Mutating the device image here avoids another allocation & memcpy
       void *code_object_alloc_data =
           reinterpret_cast<void *>(code_object.handle);
-      atmi_status_t atmi_err =
+      hsa_status_t atmi_err =
           on_deserialized_data(code_object_alloc_data, module_size, cb_state);
       ATMIErrorCheck(Error in deserialized_data callback, atmi_err);
 
@@ -1082,9 +1082,9 @@ atmi_status_t Runtime::RegisterModuleFromMemory(
 
     // save the executable and destroy during finalize
     g_executables.push_back(executable);
-    return ATMI_STATUS_SUCCESS;
+    return HSA_STATUS_SUCCESS;
   } else {
-    return ATMI_STATUS_ERROR;
+    return HSA_STATUS_ERROR;
   }
 }
 

@@ -64,7 +64,7 @@ uint32_t TgtStackItemSize = 0;
 #undef check // Drop definition from internal.h
 #ifdef OMPTARGET_DEBUG
 #define check(msg, status)                                                     \
-  if (status != ATMI_STATUS_SUCCESS) {                                         \
+  if (status != HSA_STATUS_SUCCESS) {                                         \
     /* fprintf(stderr, "[%s:%d] %s failed.\n", __FILE__, __LINE__, #msg);*/    \
     DP(#msg " failed\n");                                                      \
     /*assert(0);*/                                                             \
@@ -339,26 +339,26 @@ public:
   static const int Default_WG_Size =
       llvm::omp::AMDGPUGpuGridValues[llvm::omp::GVIDX::GV_Default_WG_Size];
 
-  using MemcpyFunc = atmi_status_t (*)(hsa_signal_t, void *, const void *,
+  using MemcpyFunc = hsa_status_t (*)(hsa_signal_t, void *, const void *,
                                        size_t size, hsa_agent_t);
-  atmi_status_t freesignalpool_memcpy(void *dest, const void *src, size_t size,
+  hsa_status_t freesignalpool_memcpy(void *dest, const void *src, size_t size,
                                       MemcpyFunc Func, int32_t deviceId) {
     hsa_agent_t agent = HSAAgents[deviceId];
     hsa_signal_t s = FreeSignalPool.pop();
     if (s.handle == 0) {
-      return ATMI_STATUS_ERROR;
+      return HSA_STATUS_ERROR;
     }
-    atmi_status_t r = Func(s, dest, src, size, agent);
+    hsa_status_t r = Func(s, dest, src, size, agent);
     FreeSignalPool.push(s);
     return r;
   }
 
-  atmi_status_t freesignalpool_memcpy_d2h(void *dest, const void *src,
+  hsa_status_t freesignalpool_memcpy_d2h(void *dest, const void *src,
                                           size_t size, int32_t deviceId) {
     return freesignalpool_memcpy(dest, src, size, atmi_memcpy_d2h, deviceId);
   }
 
-  atmi_status_t freesignalpool_memcpy_h2d(void *dest, const void *src,
+  hsa_status_t freesignalpool_memcpy_h2d(void *dest, const void *src,
                                           size_t size, int32_t deviceId) {
     return freesignalpool_memcpy(dest, src, size, atmi_memcpy_h2d, deviceId);
   }
@@ -431,8 +431,8 @@ public:
       print_kernel_trace = 0;
 
     DP("Start initializing HSA-ATMI\n");
-    atmi_status_t err = atmi_init();
-    if (err != ATMI_STATUS_SUCCESS) {
+    hsa_status_t err = atmi_init();
+    if (err != HSA_STATUS_SUCCESS) {
       DP("Error when initializing HSA-ATMI\n");
       return;
     }
@@ -549,7 +549,7 @@ int32_t dataRetrieve(int32_t DeviceId, void *HstPtr, void *TgtPtr, int64_t Size,
   // Return success if we are not copying back to host from target.
   if (!HstPtr)
     return OFFLOAD_SUCCESS;
-  atmi_status_t err;
+  hsa_status_t err;
   DP("Retrieve data %ld bytes, (tgt:%016llx) -> (hst:%016llx).\n", Size,
      (long long unsigned)(Elf64_Addr)TgtPtr,
      (long long unsigned)(Elf64_Addr)HstPtr);
@@ -557,7 +557,7 @@ int32_t dataRetrieve(int32_t DeviceId, void *HstPtr, void *TgtPtr, int64_t Size,
   err = DeviceInfo.freesignalpool_memcpy_d2h(HstPtr, TgtPtr, (size_t)Size,
                                              DeviceId);
 
-  if (err != ATMI_STATUS_SUCCESS) {
+  if (err != HSA_STATUS_SUCCESS) {
     DP("Error when copying data from device to host. Pointers: "
        "host = 0x%016lx, device = 0x%016lx, size = %lld\n",
        (Elf64_Addr)HstPtr, (Elf64_Addr)TgtPtr, (unsigned long long)Size);
@@ -572,7 +572,7 @@ int32_t dataRetrieve(int32_t DeviceId, void *HstPtr, void *TgtPtr, int64_t Size,
 int32_t dataSubmit(int32_t DeviceId, void *TgtPtr, void *HstPtr, int64_t Size,
                    __tgt_async_info *AsyncInfoPtr) {
   assert(AsyncInfoPtr && "AsyncInfoPtr is nullptr");
-  atmi_status_t err;
+  hsa_status_t err;
   assert(DeviceId < DeviceInfo.NumberOfDevices && "Device ID too large");
   // Return success if we are not doing host to target.
   if (!HstPtr)
@@ -583,7 +583,7 @@ int32_t dataSubmit(int32_t DeviceId, void *TgtPtr, void *HstPtr, int64_t Size,
      (long long unsigned)(Elf64_Addr)TgtPtr);
   err = DeviceInfo.freesignalpool_memcpy_h2d(TgtPtr, HstPtr, (size_t)Size,
                                              DeviceId);
-  if (err != ATMI_STATUS_SUCCESS) {
+  if (err != HSA_STATUS_SUCCESS) {
     DP("Error when copying data from host to device. Pointers: "
        "host = 0x%016lx, device = 0x%016lx, size = %lld\n",
        (Elf64_Addr)HstPtr, (Elf64_Addr)TgtPtr, (unsigned long long)Size);
@@ -883,7 +883,7 @@ int get_symbol_info_without_loading(char *base, size_t img_size,
   return 1;
 }
 
-atmi_status_t interop_get_symbol_info(char *base, size_t img_size,
+hsa_status_t interop_get_symbol_info(char *base, size_t img_size,
                                       const char *symname, void **var_addr,
                                       uint32_t *var_size) {
   symbol_info si;
@@ -891,17 +891,17 @@ atmi_status_t interop_get_symbol_info(char *base, size_t img_size,
   if (rc == 0) {
     *var_addr = si.addr;
     *var_size = si.size;
-    return ATMI_STATUS_SUCCESS;
+    return HSA_STATUS_SUCCESS;
   } else {
-    return ATMI_STATUS_ERROR;
+    return HSA_STATUS_ERROR;
   }
 }
 
 template <typename C>
-atmi_status_t module_register_from_memory_to_place(void *module_bytes,
+hsa_status_t module_register_from_memory_to_place(void *module_bytes,
                                                    size_t module_size,
                                                    atmi_place_t place, C cb) {
-  auto L = [](void *data, size_t size, void *cb_state) -> atmi_status_t {
+  auto L = [](void *data, size_t size, void *cb_state) -> hsa_status_t {
     C *unwrapped = static_cast<C *>(cb_state);
     return (*unwrapped)(data, size);
   };
@@ -946,12 +946,12 @@ __tgt_target_table *__tgt_rtl_load_binary(int32_t device_id,
   return res;
 }
 
-static atmi_status_t atmi_calloc(void **ret_ptr, size_t size,
+static hsa_status_t atmi_calloc(void **ret_ptr, size_t size,
                                  atmi_mem_place_t place) {
   uint64_t rounded = 4 * ((size + 3) / 4);
   void *ptr;
-  atmi_status_t err = atmi_malloc(&ptr, rounded, place);
-  if (err != ATMI_STATUS_SUCCESS) {
+  hsa_status_t err = atmi_malloc(&ptr, rounded, place);
+  if (err != HSA_STATUS_SUCCESS) {
     return err;
   }
 
@@ -959,11 +959,11 @@ static atmi_status_t atmi_calloc(void **ret_ptr, size_t size,
   if (rc != HSA_STATUS_SUCCESS) {
     fprintf(stderr, "zero fill device_state failed with %u\n", rc);
     atmi_free(ptr);
-    return ATMI_STATUS_ERROR;
+    return HSA_STATUS_ERROR;
   }
 
   *ret_ptr = ptr;
-  return ATMI_STATUS_SUCCESS;
+  return HSA_STATUS_SUCCESS;
 }
 
 __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
@@ -1011,7 +1011,7 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
   }
 #endif
 
-  auto on_deserialized_data = [&](void *data, size_t size) -> atmi_status_t {
+  auto on_deserialized_data = [&](void *data, size_t size) -> hsa_status_t {
     const char *device_env_Name = "omptarget_device_environment";
     symbol_info si;
     int rc = get_symbol_info_without_loading((char *)image->ImageStart,
@@ -1020,26 +1020,26 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
       DP("Finding global device environment '%s' - symbol missing.\n",
          device_env_Name);
       // no need to return FAIL, consider this is a not a device debug build.
-      return ATMI_STATUS_SUCCESS;
+      return HSA_STATUS_SUCCESS;
     }
     if (si.size != sizeof(host_device_env)) {
-      return ATMI_STATUS_ERROR;
+      return HSA_STATUS_ERROR;
     }
     DP("Setting global device environment %u bytes\n", si.size);
     uint64_t offset = (char *)si.addr - (char *)image->ImageStart;
     void *pos = (char *)data + offset;
     memcpy(pos, &host_device_env, sizeof(host_device_env));
-    return ATMI_STATUS_SUCCESS;
+    return HSA_STATUS_SUCCESS;
   };
 
-  atmi_status_t err;
+  hsa_status_t err;
   {
     err = module_register_from_memory_to_place(
         (void *)image->ImageStart, img_size, get_gpu_place(device_id),
         on_deserialized_data);
 
     check("Module registering", err);
-    if (err != ATMI_STATUS_SUCCESS) {
+    if (err != HSA_STATUS_SUCCESS) {
       fprintf(stderr,
               "Possible gpu arch mismatch: device:%s, image:%s please check"
               " compiler flag: -march=<gpu>\n",
@@ -1061,9 +1061,9 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
     if (dss.first.get() == nullptr) {
       assert(dss.second == 0);
       void *ptr = NULL;
-      atmi_status_t err =
+      hsa_status_t err =
           atmi_calloc(&ptr, device_State_bytes, get_gpu_mem_place(device_id));
-      if (err != ATMI_STATUS_SUCCESS) {
+      if (err != HSA_STATUS_SUCCESS) {
         fprintf(stderr, "Failed to allocate device_state array\n");
         return NULL;
       }
@@ -1083,7 +1083,7 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
                                            "omptarget_nvptx_device_State",
                                            &state_ptr, &state_ptr_size);
 
-    if (err != ATMI_STATUS_SUCCESS) {
+    if (err != HSA_STATUS_SUCCESS) {
       fprintf(stderr, "failed to find device_state ptr\n");
       return NULL;
     }
@@ -1096,7 +1096,7 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
     // write ptr to device memory so it can be used by later kernels
     err = DeviceInfo.freesignalpool_memcpy_h2d(state_ptr, &ptr, sizeof(void *),
                                                device_id);
-    if (err != ATMI_STATUS_SUCCESS) {
+    if (err != HSA_STATUS_SUCCESS) {
       fprintf(stderr, "memcpy install of state_ptr failed\n");
       return NULL;
     }
@@ -1133,7 +1133,7 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
       err = atmi_interop_hsa_get_symbol_info(get_gpu_mem_place(device_id),
                                              e->name, &varptr, &varsize);
 
-      if (err != ATMI_STATUS_SUCCESS) {
+      if (err != HSA_STATUS_SUCCESS) {
         DP("Loading global '%s' (Failed)\n", e->name);
         // Inform the user what symbol prevented offloading
         fprintf(stderr, "Loading global '%s' (Failed)\n", e->name);
@@ -1159,7 +1159,7 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
         // need for device copies.
         err = DeviceInfo.freesignalpool_memcpy_h2d(varptr, e->addr,
                                                    sizeof(void *), device_id);
-        if (err != ATMI_STATUS_SUCCESS)
+        if (err != HSA_STATUS_SUCCESS)
           DP("Error when copying USM\n");
         DP("Copy linked variable host address (" DPxMOD ")"
            "to device address (" DPxMOD ")\n",
@@ -1210,7 +1210,7 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
     err = interop_get_symbol_info((char *)image->ImageStart, img_size,
                                   KernDescName, &KernDescPtr, &KernDescSize);
 
-    if (err == ATMI_STATUS_SUCCESS) {
+    if (err == HSA_STATUS_SUCCESS) {
       if ((size_t)KernDescSize != sizeof(KernDescVal))
         DP("Loading global computation properties '%s' - size mismatch (%u != "
            "%lu)\n",
@@ -1252,7 +1252,7 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
       err = interop_get_symbol_info((char *)image->ImageStart, img_size,
                                     ExecModeName, &ExecModePtr, &varsize);
 
-      if (err == ATMI_STATUS_SUCCESS) {
+      if (err == HSA_STATUS_SUCCESS) {
         if ((size_t)varsize != sizeof(int8_t)) {
           DP("Loading global computation properties '%s' - size mismatch(%u != "
              "%lu)\n",
@@ -1289,7 +1289,7 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
       err = interop_get_symbol_info((char *)image->ImageStart, img_size,
                                     WGSizeName, &WGSizePtr, &WGSize);
 
-      if (err == ATMI_STATUS_SUCCESS) {
+      if (err == HSA_STATUS_SUCCESS) {
         if ((size_t)WGSize != sizeof(int16_t)) {
           DP("Loading global computation properties '%s' - size mismatch (%u "
              "!= "
@@ -1333,10 +1333,10 @@ __tgt_target_table *__tgt_rtl_load_binary_locked(int32_t device_id,
 void *__tgt_rtl_data_alloc(int device_id, int64_t size, void *) {
   void *ptr = NULL;
   assert(device_id < DeviceInfo.NumberOfDevices && "Device ID too large");
-  atmi_status_t err = atmi_malloc(&ptr, size, get_gpu_mem_place(device_id));
+  hsa_status_t err = atmi_malloc(&ptr, size, get_gpu_mem_place(device_id));
   DP("Tgt alloc data %ld bytes, (tgt:%016llx).\n", size,
      (long long unsigned)(Elf64_Addr)ptr);
-  ptr = (err == ATMI_STATUS_SUCCESS) ? ptr : NULL;
+  ptr = (err == HSA_STATUS_SUCCESS) ? ptr : NULL;
   return ptr;
 }
 
@@ -1385,10 +1385,10 @@ int32_t __tgt_rtl_data_retrieve_async(int device_id, void *hst_ptr,
 
 int32_t __tgt_rtl_data_delete(int device_id, void *tgt_ptr) {
   assert(device_id < DeviceInfo.NumberOfDevices && "Device ID too large");
-  atmi_status_t err;
+  hsa_status_t err;
   DP("Tgt free data (tgt:%016llx).\n", (long long unsigned)(Elf64_Addr)tgt_ptr);
   err = atmi_free(tgt_ptr);
-  if (err != ATMI_STATUS_SUCCESS) {
+  if (err != HSA_STATUS_SUCCESS) {
     DP("Error when freeing CUDA memory\n");
     return OFFLOAD_FAIL;
   }
@@ -1789,17 +1789,17 @@ int32_t __tgt_rtl_synchronize(int32_t device_id,
 }
 
 // This method is only used by hostrpc demo
-atmi_status_t atmi_memcpy_no_signal(void *dest, const void *src, size_t size,
+hsa_status_t atmi_memcpy_no_signal(void *dest, const void *src, size_t size,
                                     bool host2Device) {
   hsa_signal_t sig;
   hsa_status_t err = hsa_signal_create(0, 0, NULL, &sig);
   if (err != HSA_STATUS_SUCCESS) {
-    return ATMI_STATUS_ERROR;
+    return HSA_STATUS_ERROR;
   }
 
   const int deviceId = 0;
   hsa_agent_t agent = DeviceInfo.HSAAgents[deviceId];
-  atmi_status_t r;
+  hsa_status_t r;
   if (host2Device)
     r = atmi_memcpy_h2d(sig, dest, src, size, agent);
   else
@@ -1807,12 +1807,12 @@ atmi_status_t atmi_memcpy_no_signal(void *dest, const void *src, size_t size,
 
   hsa_status_t rc = hsa_signal_destroy(sig);
 
-  if (r != ATMI_STATUS_SUCCESS) {
+  if (r != HSA_STATUS_SUCCESS) {
     return r;
   }
   if (rc != HSA_STATUS_SUCCESS) {
-    return ATMI_STATUS_ERROR;
+    return HSA_STATUS_ERROR;
   }
 
-  return ATMI_STATUS_SUCCESS;
+  return HSA_STATUS_SUCCESS;
 }
