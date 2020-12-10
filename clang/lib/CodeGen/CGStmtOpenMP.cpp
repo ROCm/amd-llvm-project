@@ -486,7 +486,8 @@ static llvm::Function *emitOutlinedFunctionPrologue(
                 ->getAs<ReferenceType>()
                 ->getPointeeType()
                 .getTypePtr()
-                ->isAnyPointerType())
+                ->isPointerType() &&
+            CapVar->hasAttrs() && CapVar->hasAttr<AlignedAttr>())
           ArgType = ArgType.getNonLValueExprType(Ctx);
       }
     }
