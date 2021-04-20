@@ -101,13 +101,10 @@ macro(add_openmp_library libname archname dir)
     -fopenmp-targets=${triple}
     -Xopenmp-target=${triple}
     -march=${GPU}
+    -nogpulib
     -c 
     -I${CMAKE_CURRENT_SOURCE_DIR}/src
-    -I${ROCM_DIR}/include
-    -I${CMAKE_CURRENT_BINARY_DIR}/../../runtime/src
-    -I${ROCDL_INC_OCKL}
-    -I${ROCDL_INC_OCML}
-    -I${ROCDL_INC_IRIF})
+    -I${CMAKE_CURRENT_BINARY_DIR}/../../runtime/src)
 
   if(NOT ${AOMP_STANDALONE_BUILD})
     set(openmp_args "${openmp_args};--hip-device-lib-path=${ROCM_DIR}/amdgcn/bitcode")
